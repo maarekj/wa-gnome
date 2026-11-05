@@ -1,6 +1,7 @@
 // API HTTP + SSE locale du démon, consommée par l'application GJS.
 //   GET  /status                    état de la connexion (QR code d'appairage)
 //   GET  /chats                     discussions, la plus récente d'abord
+//   GET  /lists                     listes (favoris, listes personnalisées)
 //   GET  /chats/:id/messages        derniers messages (?limit, ?before en secondes)
 //   POST /chats/:id/messages        envoi d'un texte { text }
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
@@ -86,6 +87,9 @@ export function startServer(opts: { host: string; port: number; token: string; s
     switch (route) {
       case 'GET /status':
         json(res, 200, opts.wa().status);
+        return;
+      case 'GET /lists':
+        json(res, 200, opts.store.lists());
         return;
       case 'GET /chats':
         json(res, 200, opts.store.chats());

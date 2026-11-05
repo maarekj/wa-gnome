@@ -53,8 +53,22 @@ export const Chat = z.object({
   pinned: z.number(),
   /** marquée comme non lue (pastille sans nombre) */
   markedUnread: z.boolean(),
+  /** listes (étiquettes) de la discussion */
+  labels: z.array(z.string()),
+  /** dans les favoris */
+  favorite: z.boolean(),
 });
 export type Chat = z.infer<typeof Chat>;
+
+/** Genre d'une liste de WhatsApp (proto.SyncActionValue.LabelEditAction.ListType). */
+export const ListKind = z.enum(['unread', 'groups', 'favorites', 'custom', 'other']);
+export type ListKind = z.infer<typeof ListKind>;
+const LIST_KINDS: Readonly<Record<number, ListKind>> = { 0: 'custom', 1: 'unread', 2: 'groups', 3: 'favorites', 5: 'custom' };
+export const listKind = (t: number): ListKind => LIST_KINDS[t] ?? 'other';
+
+/** Liste de discussions (« Ajouter à la liste ») ; `GET /lists`. */
+export const ChatList = z.object({ id: z.string(), name: z.string(), color: z.number(), kind: ListKind });
+export type ChatList = z.infer<typeof ChatList>;
 
 /** Mode silencieux actif à l'instant `now` (ms). */
 export const isMuted = (c: Pick<Chat, 'mutedUntil'>, now = Date.now()): boolean => c.mutedUntil === -1 || c.mutedUntil > now;
@@ -75,6 +89,9 @@ export const ChatAction = z.discriminatedUnion('action', [
   z.object({ action: z.literal('delete') }),
   /** quitter le groupe */
   z.object({ action: z.literal('leave') }),
+  z.object({ action: z.literal('favorite'), value: z.boolean() }),
+  /** ajouter à / retirer d'une liste personnalisée */
+  z.object({ action: z.literal('label'), labelId: z.string(), value: z.boolean() }),
 ]);
 export type ChatAction = z.infer<typeof ChatAction>;
 
@@ -125,6 +142,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('chat.cleared'), id: z.string() }),
   /** photo de profil changée ou retirée : à recharger */
   z.object({ type: z.literal('picture'), id: z.string() }),
+  /** listes modifiées (liste complète) */
+  z.object({ type: z.literal('lists'), lists: z.array(ChatList) }),
   z.object({ type: z.literal('message'), message: Message }),
 ]);
 export type Event = z.infer<typeof Event>;

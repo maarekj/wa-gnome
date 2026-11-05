@@ -6,7 +6,7 @@ import GLib from 'gi://GLib';
 import Gdk from 'gi://Gdk?version=4.0';
 import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
-import { type Chat, type ChatAction, isMuted, MAX_PINNED } from '../shared/api.ts';
+import { type Chat, type ChatAction, type ChatList, isMuted, MAX_PINNED } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Store } from '../shared/store.ts';
 
@@ -20,7 +20,7 @@ export const MUTE_CHOICES = [
 ] as const;
 
 /** Modèle du menu d'une discussion (actions `chat.*`, cible : son identifiant). */
-export function chatMenu(chat: Chat, pinnedCount: number, now = Date.now()): Gio.Menu {
+export function chatMenu(chat: Chat, pinnedCount: number, lists: readonly ChatList[] = [], now = Date.now()): Gio.Menu {
   const target = new GLib.Variant('s', chat.id);
   const item = (label: string, action: string): Gio.MenuItem => {
     const it = Gio.MenuItem.new(label, null);
@@ -40,6 +40,18 @@ export function chatMenu(chat: Chat, pinnedCount: number, now = Date.now()): Gio
   // limite de WhatsApp atteinte : entrée absente plutôt qu'une erreur
   else if (pinnedCount < MAX_PINNED) main.append_item(item('Épingler la discussion', 'pin'));
   main.append_item(chat.unread > 0 || chat.markedUnread ? item('Marquer comme lue', 'read') : item('Marquer comme non lue', 'unread'));
+  main.append_item(chat.favorite ? item('Retirer des favoris', 'unfavorite') : item('Ajouter aux favoris', 'favorite'));
+  const custom = lists.filter((l) => l.kind === 'custom');
+  if (custom.length > 0) {
+    const sub = new Gio.Menu();
+    for (const l of custom) {
+      // cible « discussion|liste » ; coche devant les listes de la discussion
+      const it = Gio.MenuItem.new(`${chat.labels.includes(l.id) ? '✓ ' : ''}${l.name}`, null);
+      it.set_action_and_target_value('chat.toggle-label', new GLib.Variant('s', `${chat.id}|${l.id}`));
+      sub.append_item(it);
+    }
+    main.append_submenu('Ajouter à la liste', sub);
+  }
   const danger = new Gio.Menu();
   danger.append_item(item('Effacer la discussion…', 'clear'));
   danger.append_item(chat.group ? item('Quitter le groupe…', 'leave') : item('Supprimer la discussion…', 'delete'));
@@ -90,6 +102,12 @@ export function attachChatMenu(list: Gtk.ListBox, store: Store, toast: (text: st
     clear: (id) => confirm(id, { action: 'clear' }),
     delete: (id) => confirm(id, { action: 'delete' }),
     leave: (id) => confirm(id, { action: 'leave' }),
+    favorite: (id) => run(id, { action: 'favorite', value: true }),
+    unfavorite: (id) => run(id, { action: 'favorite', value: false }),
+    'toggle-label': (target) => {
+      const [id = '', labelId = ''] = target.split('|');
+      run(id, { action: 'label', labelId, value: store.chat(id)?.labels.includes(labelId) !== true });
+    },
   };
   for (const c of MUTE_CHOICES) actions[c.action] = (id) => run(id, { action: 'mute', until: c.until(Date.now()) });
   const group = new Gio.SimpleActionGroup();
@@ -109,7 +127,7 @@ export function attachChatMenu(list: Gtk.ListBox, store: Store, toast: (text: st
     if (row === null || chat === undefined) return false;
     const pinned = store.chats.peek().filter((c) => c.pinned > 0).length;
     // sous-menus déroulés à côté (comme WhatsApp Web), pas en glissement
-    const menu = Gtk.PopoverMenu.new_from_model_full(chatMenu(chat, pinned), Gtk.PopoverMenuFlags.NESTED);
+    const menu = Gtk.PopoverMenu.new_from_model_full(chatMenu(chat, pinned, store.lists.peek()), Gtk.PopoverMenuFlags.NESTED);
     menu.hasArrow = false;
     menu.halign = Gtk.Align.START;
     menu.set_parent(row);

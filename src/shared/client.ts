@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, DEFAULT_PORT, Event, Message, Status, TOKEN_FILE } from './api.ts';
+import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, Status, TOKEN_FILE } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -79,6 +79,10 @@ export class WaClient {
 
   chats(): Promise<Chat[]> {
     return this.request('GET', '/chats', z.array(Chat));
+  }
+
+  lists(): Promise<ChatList[]> {
+    return this.request('GET', '/lists', z.array(ChatList));
   }
 
   messages(chatId: string, limit = 50, before?: number): Promise<Message[]> {

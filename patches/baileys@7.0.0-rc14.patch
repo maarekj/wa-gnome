@@ -1,0 +1,95 @@
+diff --git a/lib/Types/Events.d.ts b/lib/Types/Events.d.ts
+index f55c4c325b08b8c25dc9d17032514ce5c80ad3fd..616084578c984993af7eb1d123a6c97814bad52b 100644
+--- a/lib/Types/Events.d.ts
++++ b/lib/Types/Events.d.ts
+@@ -124,6 +124,13 @@ export type BaileysEventMap = {
+     /** Receive an update on a call, including when the call was received, rejected, accepted */
+     call: WACallEvent[];
+     'labels.edit': Label;
++    /** wa-gnome : discussions favorites (favoritesAction), avec l'index, la collection et la version de l'action */
++    'favorites.set': {
++        ids: string[];
++        index: string[];
++        collection?: string;
++        version?: number;
++    };
+     'labels.association': {
+         association: LabelAssociation;
+         type: 'add' | 'remove';
+diff --git a/lib/Types/Label.d.ts b/lib/Types/Label.d.ts
+index 89e1c213b7e259bfd78f1f4875133f286846d5fb..83a861f44aa1290304c1da59748742e8bf320422 100644
+--- a/lib/Types/Label.d.ts
++++ b/lib/Types/Label.d.ts
+@@ -9,6 +9,11 @@ export interface Label {
+     deleted: boolean;
+     /** WhatsApp has 5 predefined labels (New customer, New order & etc) */
+     predefinedId?: string;
++    /** wa-gnome : type de liste (proto.SyncActionValue.LabelEditAction.ListType) */
++    listType?: number;
++    orderIndex?: number;
++    isActive?: boolean;
++    isImmutable?: boolean;
+ }
+ export interface LabelActionBody {
+     id: string;
+diff --git a/lib/Utils/chat-utils.js b/lib/Utils/chat-utils.js
+index c30265d36671bacd25a8c456cafedcd9fc2fdd9a..a4e110defa66d3b27385af4ba9d1b6c2580d14c1 100644
+--- a/lib/Utils/chat-utils.js
++++ b/lib/Utils/chat-utils.js
+@@ -302,7 +302,8 @@ export const decodeSyncdSnapshot = async (name, snapshot, getAppStateSyncKey, mi
+     const { hash, indexValueMap } = await decodeSyncdMutations(snapshot.records, newState, getAppStateSyncKey, areMutationsRequired
+         ? mutation => {
+             const index = mutation.syncAction.index?.toString();
+-            mutationMap[index] = mutation;
++            // wa-gnome : collection d'origine (pour réécrire une action ignorée en amont)
++            mutationMap[index] = { ...mutation, collection: name };
+         }
+         : () => { }, validateMacs);
+     newState.hash = hash;
+@@ -351,7 +352,8 @@ export const decodePatches = async (name, syncds, initial, getAppStateSyncKey, o
+             decodeResult = await decodeSyncdPatch(syncd, name, newState, getAppStateSyncKey, shouldMutate
+                 ? mutation => {
+                     const index = mutation.syncAction.index?.toString();
+-                    mutationMap[index] = mutation;
++                    // wa-gnome : collection d'origine (pour réécrire une action ignorée en amont)
++                    mutationMap[index] = { ...mutation, collection: name };
+                 }
+                 : () => { }, validateMacs);
+         }
+@@ -769,13 +771,18 @@ export const processSyncAction = (syncAction, ev, me, initialSyncOpts, logger) =
+         }
+     }
+     else if (action?.labelEditAction) {
+-        const { name, color, deleted, predefinedId } = action.labelEditAction;
++        const { name, color, deleted, predefinedId, type: listType, orderIndex, isActive, isImmutable } = action.labelEditAction;
++        // wa-gnome : type de liste (favoris, personnalisée…), ordre et état, absents en amont
+         ev.emit('labels.edit', {
+             id: id,
+             name: name,
+             color: color,
+             deleted: deleted,
+-            predefinedId: predefinedId ? String(predefinedId) : undefined
++            predefinedId: predefinedId ? String(predefinedId) : undefined,
++            listType: listType ?? undefined,
++            orderIndex: orderIndex ?? undefined,
++            isActive: isActive ?? undefined,
++            isImmutable: isImmutable ?? undefined
+         });
+     }
+     else if (action?.labelAssociationAction) {
+@@ -795,6 +802,15 @@ export const processSyncAction = (syncAction, ev, me, initialSyncOpts, logger) =
+                 }
+         });
+     }
++    else if (action?.favoritesAction) {
++        // wa-gnome : discussions favorites (liste ordonnée), ignorées en amont
++        ev.emit('favorites.set', {
++            ids: (action.favoritesAction.favorites || []).map(f => f.id).filter(Boolean),
++            index: syncAction.index,
++            collection: syncAction.collection,
++            version: syncAction.syncAction?.version ?? undefined
++        });
++    }
+     else if (action?.localeSetting?.locale) {
+         ev.emit('settings.update', { setting: 'locale', value: action.localeSetting.locale });
+     }

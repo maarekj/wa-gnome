@@ -185,8 +185,9 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     <Adw.NavigationPage title={chat((c) => c?.name ?? 'WhatsApp')} tag="conversation">
       <Adw.ToolbarView>
         <Adw.HeaderBar $type="top">
-          <Gtk.Box $type="title" spacing={10} visible={chat((c) => c !== null)}>
+          <Gtk.Box $type="title" spacing={10}>
             <Adw.Avatar
+              visible={chat((c) => c !== null)}
               size={32}
               text={chat((c) => avatarText(c?.name ?? ''))}
               showInitials={chat((c) => /\p{L}/u.test(c?.name ?? ''))}
@@ -200,7 +201,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                 )
               }
             />
-            <Gtk.Label label={chat((c) => c?.name ?? '')} ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
+            <Gtk.Label label={chat((c) => c?.name ?? 'WhatsApp')} ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
           </Gtk.Box>
         </Adw.HeaderBar>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>

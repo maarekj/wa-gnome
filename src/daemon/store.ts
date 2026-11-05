@@ -3,7 +3,7 @@
 // sont écrits ici, l'app ne lit que cette base (via l'API HTTP).
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
-import { type Chat, formatPhone, Media, type Message, MessageKind, previewOf } from '../shared/api.ts';
+import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, previewOf } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -49,6 +49,26 @@ CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+-- listes de discussions de WhatsApp (étiquettes : favoris, listes personnalisées…)
+CREATE TABLE IF NOT EXISTS labels (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  color INTEGER NOT NULL DEFAULT 0,
+  -- proto.SyncActionValue.LabelEditAction.ListType (3 : favoris, 5 : personnalisée…)
+  list_type INTEGER NOT NULL DEFAULT 0,
+  order_index INTEGER NOT NULL DEFAULT 0,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS chat_labels (
+  chat_id TEXT NOT NULL,
+  label_id TEXT NOT NULL,
+  PRIMARY KEY (chat_id, label_id)
+);
+-- favoris (favoritesAction), dans l'ordre de WhatsApp
+CREATE TABLE IF NOT EXISTS favorites (
+  chat_id TEXT PRIMARY KEY,
+  position INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS lid_map (
   lid TEXT PRIMARY KEY,
   pn TEXT NOT NULL
@@ -65,6 +85,8 @@ const ChatRow = z.object({
   muted_until: z.number(),
   pinned: z.number(),
   marked_unread: z.number(),
+  labels: z.nullable(z.string()),
+  favorite: z.number(),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
   last_kind: z.nullable(z.string()),
@@ -85,6 +107,8 @@ const MessageRow = z.object({
   notify: z.nullable(z.string()),
 });
 
+const LabelRow = z.object({ id: z.string(), name: z.string(), color: z.number(), list_type: z.number(), order_index: z.number() });
+
 /** Média JSON de la base, ignoré s'il est invalide. */
 const parseMedia = (json: string | null): Media | null => {
   if (json === null) return null;
@@ -97,7 +121,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 3;
+const VERSION = 4;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -146,6 +170,10 @@ export class Store {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
     }
+    if (!fresh && version < 4) {
+      // listes et favoris ignorés jusqu'ici : nouvelle relecture de l'état de WhatsApp
+      this.setFlag('resync-chat-state', true);
+    }
     if (!fresh && version < 3) {
       this.#db.exec(`
         ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
@@ -179,6 +207,12 @@ export class Store {
    */
   canonical(jid: string): string {
     return this.#pn.get(jid) ?? jid;
+  }
+
+  /** Identifiant anonyme (lid) d'un numéro, s'il est connu : forme utilisée par WhatsApp dans ses listes. */
+  lidOf(pn: string): string | null {
+    for (const [lid, p] of this.#pn) if (p === pn) return lid;
+    return null;
   }
 
   /** Identifiants anonymes présents dans la base sans numéro connu. */
@@ -221,6 +255,10 @@ export class Store {
     db.prepare('UPDATE OR IGNORE messages SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
     db.prepare('DELETE FROM messages WHERE chat_id = ?').run(lid);
     db.prepare('UPDATE messages SET sender = ? WHERE sender = ?').run(pn, lid);
+    db.prepare('UPDATE OR IGNORE chat_labels SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
+    db.prepare('DELETE FROM chat_labels WHERE chat_id = ?').run(lid);
+    db.prepare('UPDATE OR IGNORE favorites SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
+    db.prepare('DELETE FROM favorites WHERE chat_id = ?').run(lid);
     db.prepare(
       `INSERT INTO contacts (id, name, notify) SELECT ?, name, notify FROM contacts WHERE id = ?
        ON CONFLICT (id) DO UPDATE SET name = coalesce(contacts.name, excluded.name), notify = coalesce(excluded.notify, contacts.notify)`,
@@ -250,6 +288,15 @@ export class Store {
   setFlag(key: string, on: boolean): void {
     if (on) this.#db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')").run(key);
     else this.#db.prepare('DELETE FROM meta WHERE key = ?').run(key);
+  }
+
+  meta(key: string): string | null {
+    const row = this.#db.prepare('SELECT value FROM meta WHERE key = ?').get(key);
+    return typeof row?.['value'] === 'string' ? row['value'] : null;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.#db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
   }
 
   close(): void {
@@ -283,6 +330,52 @@ export class Store {
         pinned: c.pinned ?? null,
         marked: flag(c.markedUnread),
       });
+  }
+
+  // ------------------------------------------------------------------ listes
+
+  /** Liste créée ou modifiée ; champs absents inchangés. */
+  upsertLabel(l: { id: string; name?: string | null; color?: number | null; listType?: number | null; orderIndex?: number | null; deleted?: boolean | null }): void {
+    this.#db
+      .prepare(
+        `INSERT INTO labels (id, name, color, list_type, order_index, deleted)
+         VALUES (:id, coalesce(:name, ''), coalesce(:color, 0), coalesce(:type, 0), coalesce(:ord, 0), coalesce(:deleted, 0))
+         ON CONFLICT (id) DO UPDATE SET
+           name = coalesce(:name, labels.name), color = coalesce(:color, labels.color),
+           list_type = coalesce(:type, labels.list_type), order_index = coalesce(:ord, labels.order_index),
+           deleted = coalesce(:deleted, labels.deleted)`,
+      )
+      .run({ id: l.id, name: l.name ?? null, color: l.color ?? null, type: l.listType ?? null, ord: l.orderIndex ?? null, deleted: flag(l.deleted) });
+  }
+
+  setChatLabel(chatId: string, labelId: string, on: boolean): void {
+    if (on) this.#db.prepare('INSERT OR IGNORE INTO chat_labels (chat_id, label_id) VALUES (?, ?)').run(chatId, labelId);
+    else this.#db.prepare('DELETE FROM chat_labels WHERE chat_id = ? AND label_id = ?').run(chatId, labelId);
+  }
+
+  /** Favoris remplacés (liste complète, dans l'ordre). */
+  setFavorites(ids: readonly string[]): void {
+    this.transaction(() => {
+      this.#db.exec('DELETE FROM favorites');
+      const ins = this.#db.prepare('INSERT OR IGNORE INTO favorites (chat_id, position) VALUES (?, ?)');
+      for (const [i, id] of ids.entries()) ins.run(id, i);
+    });
+  }
+
+  favorites(): string[] {
+    return this.#db
+      .prepare('SELECT chat_id FROM favorites ORDER BY position')
+      .all()
+      .flatMap((r) => (typeof r['chat_id'] === 'string' ? [r['chat_id']] : []));
+  }
+
+  /** Listes non supprimées, dans l'ordre de WhatsApp. */
+  lists(): ChatList[] {
+    return this.#db
+      .prepare('SELECT id, name, color, list_type, order_index FROM labels WHERE deleted = 0 ORDER BY order_index, name')
+      .all()
+      .map((r) => z.parse(LabelRow, r))
+      .map((r) => ({ id: r.id, name: r.name, color: r.color, kind: listKind(r.list_type) }));
   }
 
   /** Messages d'une discussion effacés (la discussion reste). */
@@ -344,7 +437,7 @@ export class Store {
 
   /** Tout effacer (déconnexion du compte). */
   clear(): void {
-    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map;');
+    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM labels; DELETE FROM chat_labels; DELETE FROM favorites;');
     this.#pn.clear();
   }
 
@@ -374,6 +467,8 @@ export class Store {
     const rows = this.#db
       .prepare(
         `SELECT c.id, c.name, c.unread, c.timestamp, c.archived, c.muted_until, c.pinned, c.marked_unread,
+                (SELECT group_concat(label_id, ',') FROM chat_labels cl WHERE cl.chat_id = c.id) AS labels,
+                EXISTS (SELECT 1 FROM favorites f WHERE f.chat_id = c.id) AS favorite,
                 ct.name AS contact, ct.notify,
                 m.kind AS last_kind, m.text AS last_text
          FROM chats c
@@ -396,6 +491,8 @@ export class Store {
       mutedUntil: r.muted_until,
       pinned: r.pinned,
       markedUnread: r.marked_unread !== 0,
+      labels: r.labels === null ? [] : r.labels.split(','),
+      favorite: r.favorite !== 0,
     }));
   }
 

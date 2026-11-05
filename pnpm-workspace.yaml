@@ -13,3 +13,5 @@ overrides:
   "@girs/giounix-2.0": 5.5.0
   "@girs/soup-3.0": 5.5.0
   "@girs/pango-1.0": 5.5.0
+patchedDependencies:
+  baileys@7.0.0-rc14: patches/baileys@7.0.0-rc14.patch

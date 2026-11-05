@@ -123,6 +123,11 @@ add(NEWS, false, 'Ramassage des encombrants jeudi', 5 * H, BOB, 'Bob');
 add(NEWS, false, 'Merci pour l’info', 4 * H, ALICE, 'Alice');
 store.upsertChat({ id: NEWS, unread: 2 });
 store.upsertChat({ id: ALICE, pinned: Date.now() });
+// listes, comme celles de WhatsApp : filtres prédéfinis et une liste personnalisée
+for (const [i, [name, type]] of ([['Non lues', 1], ['Favoris', 3], ['Groupes', 2], ['Voisinage', 5]] as const).entries()) store.upsertLabel({ id: String(i + 1), name, listType: type, orderIndex: i });
+store.setChatLabel(NEWS, '4', true);
+store.setChatLabel(BOB, '4', true);
+store.setFavorites([GROUP]);
 
 let server: Server | null = null;
 const emit = (e: Event): void => server?.emit(e);
@@ -174,6 +179,14 @@ const backend: Backend = {
         emit({ type: 'chats.delete', ids: [chatId] });
         return Promise.resolve();
       case 'leave':
+        break;
+      case 'favorite': {
+        const ids = store.favorites().filter((id) => id !== chatId);
+        store.setFavorites(a.value ? [...ids, chatId] : ids);
+        break;
+      }
+      case 'label':
+        store.setChatLabel(chatId, a.labelId, a.value);
         break;
       default:
         a satisfies never;

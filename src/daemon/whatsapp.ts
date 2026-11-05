@@ -24,6 +24,7 @@ import {
   type WASocket,
 } from 'baileys';
 import pino from 'pino';
+import * as z from 'zod/mini';
 import { type ChatAction, type Event, MAX_PINNED, type Status } from '../shared/api.ts';
 import { mediaOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
@@ -189,6 +190,25 @@ export class WhatsApp {
         this.#emit({ type: 'message', message: m });
         this.#emitChats([m.chatId]);
       }
+    });
+
+    // listes (étiquettes) : favoris, listes personnalisées
+    sock.ev.on('labels.edit', (l) => {
+      this.#store.upsertLabel({ id: l.id, name: l.name, color: l.color, listType: l.listType ?? null, orderIndex: l.orderIndex ?? null, deleted: l.deleted });
+      this.#emit({ type: 'lists', lists: this.#store.lists() });
+    });
+    sock.ev.on('labels.association', ({ type, association }) => {
+      // associations à un message : non gérées
+      if ('messageId' in association) return;
+      const id = this.#jid(association.chatId);
+      this.#store.setChatLabel(id, association.labelId, type === 'add');
+      this.#emitChats([id]);
+    });
+    sock.ev.on('favorites.set', ({ ids, index, collection, version: apiVersion }) => {
+      this.#store.setFavorites(ids.map((id) => this.#jid(id)));
+      // forme de l'action telle que WhatsApp l'écrit : reprise pour modifier les favoris
+      this.#store.setMeta('favorites-patch', JSON.stringify({ index, collection: collection ?? null, version: apiVersion ?? null, ids }));
+      this.#emit({ type: 'chats', chats: this.#store.chats() });
     });
 
     // groupe renommé
@@ -430,6 +450,31 @@ export class WhatsApp {
     return { jid: last.key.remoteJid ?? chatId, lastMessages: [{ key: last.key, messageTimestamp: seconds(last.messageTimestamp) }] };
   }
 
+  /** Identifiant d'une discussion dans les listes de WhatsApp : lid si connu (forme actuelle), sinon tel quel. */
+  #listJid(chatId: string, fallback: string): string {
+    return chatId.endsWith('@s.whatsapp.net') ? (this.#store.lidOf(chatId) ?? fallback) : fallback;
+  }
+
+  /**
+   * Favoris : WhatsApp garde une seule action (`favoritesAction`, liste complète et ordonnée) ;
+   * réécrite avec la discussion ajoutée ou retirée, sous la forme reçue (index, collection, version).
+   */
+  async #setFavorite(sock: WASocket, chatId: string, on: boolean): Promise<void> {
+    const saved = FavoritesPatch.safeParse(JSON.parse(this.#store.meta('favorites-patch') ?? 'null'));
+    const shape = saved.success ? saved.data : { index: ['favorites'], collection: 'regular_high' as const, version: 7, ids: [] };
+    const kept = shape.ids.filter((id) => this.#jid(id) !== chatId);
+    const ids = on ? [...kept, this.#listJid(chatId, this.#target(chatId).jid)] : kept;
+    await sock.appPatch({
+      syncAction: { favoritesAction: { favorites: ids.map((id) => ({ id })) }, timestamp: Date.now() },
+      index: shape.index,
+      type: shape.collection,
+      apiVersion: shape.version,
+      operation: proto.SyncdMutation.SyncdOperation.SET,
+    });
+    this.#store.setMeta('favorites-patch', JSON.stringify({ ...shape, ids }));
+    this.#store.setFavorites(ids.map((id) => this.#jid(id)));
+  }
+
   /** Photo de profil d'une discussion (personne ou groupe), null sans photo. */
   picture(chatId: string): Promise<Buffer | null> {
     return this.#pictures.get(chatId);
@@ -472,6 +517,13 @@ export class WhatsApp {
       case 'leave':
         await sock.groupLeave(chatId);
         break;
+      case 'favorite':
+        await this.#setFavorite(sock, chatId, a.value);
+        break;
+      case 'label':
+        await sock.chatModify(a.value ? { addChatLabel: { labelId: a.labelId } } : { removeChatLabel: { labelId: a.labelId } }, this.#listJid(chatId, jid));
+        this.#store.setChatLabel(chatId, a.labelId, a.value);
+        break;
       default:
         a satisfies never;
     }
@@ -513,6 +565,14 @@ export class WhatsApp {
     this.#sock = null;
   }
 }
+
+/** Forme de l'action des favoris reçue de WhatsApp (voir le patch de Baileys). */
+const FavoritesPatch = z.object({
+  index: z.array(z.string()),
+  collection: z.enum(ALL_WA_PATCH_NAMES),
+  version: z.number(),
+  ids: z.array(z.string()),
+});
 
 /** Fin du mode silencieux en ms (-1 : toujours, 0 : non) ; certaines sources la donnent en secondes. */
 const muteEnd = (t: number | { toNumber: () => number } | null | undefined): number => {

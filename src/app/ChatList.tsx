@@ -5,7 +5,7 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Chat, isMuted } from '../shared/api.ts';
+import { type Chat, type ChatList as WaList, isMuted } from '../shared/api.ts';
 import { fmtShortDate } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { attachChatMenu } from './ChatMenu.ts';
@@ -51,18 +51,46 @@ function ChatRow(chat: Chat, live: Accessor<Chat>, pictures: Pictures): Gtk.Widg
   );
 }
 
-/** Discussions affichées : archivées ou non, filtrées par la recherche (qui porte sur toutes). */
-export function visibleChats(all: readonly Chat[], query: string, archived: boolean): readonly Chat[] {
+/** Filtre de la liste principale : « all » (toutes) ou l'identifiant d'une liste de WhatsApp. */
+export type Filter = string;
+
+/** Discussion retenue par une liste de WhatsApp. */
+export function inList(c: Chat, list: WaList): boolean {
+  switch (list.kind) {
+    case 'unread':
+      return c.unread > 0 || c.markedUnread;
+    case 'groups':
+      return c.group;
+    case 'favorites':
+      return c.favorite;
+    case 'custom':
+      return c.labels.includes(list.id);
+    case 'other':
+      return false;
+    default:
+      return list.kind satisfies never;
+  }
+}
+
+/** Listes proposées en filtres, dans l'ordre de WhatsApp. */
+export const filterLists = (lists: readonly WaList[]): WaList[] => lists.filter((l) => l.kind !== 'other');
+
+/**
+ * Discussions affichées : archivées ou non, filtrées par une liste (vue principale) ou par la
+ * recherche (qui porte sur toutes, archivées comprises, comme dans WhatsApp).
+ */
+export function visibleChats(all: readonly Chat[], query: string, archived: boolean, filter: Filter = 'all', lists: readonly WaList[] = []): readonly Chat[] {
   const q = fold(query.trim());
-  // une recherche porte aussi sur les archivées, comme dans WhatsApp
   if (q !== '') return all.filter((c) => fold(c.name).includes(q));
-  return all.filter((c) => c.archived === archived);
+  const list = archived || filter === 'all' ? undefined : lists.find((l) => l.id === filter);
+  return all.filter((c) => c.archived === archived && (list === undefined || inList(c, list)));
 }
 
 export function ChatList({ store, pictures, toast }: { store: Store; pictures: Pictures; toast: (text: string) => void }): JSX.Element {
   const [query, setQuery] = createState('');
   const [archived, setArchived] = createState(false);
-  const shown = createMemo(() => visibleChats(store.chats(), query(), archived()));
+  const [filter, setFilter] = createState<Filter>('all');
+  const shown = createMemo(() => visibleChats(store.chats(), query(), archived(), filter(), store.lists()));
   const archivedCount = createMemo(() => store.chats().filter((c) => c.archived).length);
   // plus d'archivées : retour à la liste principale
   onCleanup(
@@ -96,8 +124,43 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
           marginBottom={6}
           onSearchChanged={(self: Gtk.SearchEntry) => setQuery(self.text)}
         />
+        {/* filtres : Toutes, puis les listes de WhatsApp (non lues, favoris, groupes, personnalisées) */}
+        <Gtk.ScrolledWindow
+          $type="top"
+          vscrollbarPolicy={Gtk.PolicyType.NEVER}
+          hscrollbarPolicy={Gtk.PolicyType.AUTOMATIC}
+          visible={createMemo(() => !archived() && query().trim() === '' && filterLists(store.lists()).length > 0)}
+        >
+          <Gtk.Box
+            spacing={6}
+            marginStart={8}
+            marginEnd={8}
+            marginBottom={6}
+            cssClasses={['list-filters']}
+            $={(self: Gtk.Box) => {
+              const build = (): void => {
+                for (let c = self.get_first_child(); c !== null; c = self.get_first_child()) self.remove(c);
+                const lists = filterLists(store.lists.peek());
+                // liste disparue : retour à « Toutes »
+                if (filter.peek() !== 'all' && !lists.some((l) => l.id === filter.peek())) setFilter('all');
+                let first: Gtk.ToggleButton | null = null;
+                for (const [id, label] of [['all', 'Toutes'] as const, ...lists.map((l) => [l.id, l.name] as const)]) {
+                  const b = new Gtk.ToggleButton({ label, active: filter.peek() === id, cssClasses: ['pill', 'filter-chip'] });
+                  if (first === null) first = b;
+                  else b.set_group(first);
+                  b.connect('toggled', () => {
+                    if (b.active) setFilter(id);
+                  });
+                  self.append(b);
+                }
+              };
+              build();
+              onCleanup(store.lists.subscribe(build));
+            }}
+          />
+        </Gtk.ScrolledWindow>
         <Gtk.Stack visibleChildName={shown((l) => (l.length === 0 ? 'empty' : 'list'))}>
-          <Adw.StatusPage $type="named" name="empty" iconName="chat-message-new-symbolic" title={createMemo(() => (query() === '' ? (archived() ? 'Aucune discussion archivée' : 'Aucune discussion') : 'Aucun résultat'))} cssClasses={['compact']} />
+          <Adw.StatusPage $type="named" name="empty" iconName="chat-message-new-symbolic" title={createMemo(() => (query() === '' ? (archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))} cssClasses={['compact']} />
           <Gtk.ScrolledWindow $type="named" name="list" hscrollbarPolicy={Gtk.PolicyType.NEVER} vexpand>
             <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
             <Gtk.Button

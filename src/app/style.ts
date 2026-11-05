@@ -47,6 +47,11 @@ export const STYLESHEET = `
   min-height: 10px;
   padding: 0;
 }
+.filter-chip {
+  padding: 2px 12px;
+  min-height: 24px;
+  font-size: 0.9em;
+}
 .archived-entry {
   padding: 8px 0;
 }

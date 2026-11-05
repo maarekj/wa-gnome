@@ -1,7 +1,7 @@
 // État de l'application, alimenté par le flux d'événements du démon.
 import Gio from 'gi://Gio';
 import { createState, type Accessor } from 'gnim';
-import type { Chat, ChatAction, Event, Message, Status } from './api.ts';
+import type { Chat, ChatAction, ChatList, Event, Message, Status } from './api.ts';
 import type { Link, WaClient } from './client.ts';
 import { errorMessage } from './errors.ts';
 
@@ -25,6 +25,8 @@ export class Store {
   readonly link: Accessor<Link>;
   readonly status: Accessor<Status>;
   readonly chats: Accessor<readonly Chat[]>;
+  /** listes de WhatsApp (filtres : non lues, favoris, groupes, listes personnalisées) */
+  readonly lists: Accessor<readonly ChatList[]>;
   /** discussion ouverte, ou null */
   readonly current: Accessor<string | null>;
   /** messages de la discussion ouverte */
@@ -37,6 +39,7 @@ export class Store {
   readonly #setLink: (l: Link) => void;
   readonly #setStatus: (s: Status) => void;
   readonly #setChats: (c: readonly Chat[]) => void;
+  readonly #setLists: (l: readonly ChatList[]) => void;
   readonly #setCurrent: (id: string | null) => void;
   readonly #setMessages: (m: readonly Message[]) => void;
   readonly #byId = new Map<string, Chat>();
@@ -47,6 +50,7 @@ export class Store {
     [this.link, this.#setLink] = createState<Link>({ state: 'connecting' });
     [this.status, this.#setStatus] = createState<Status>({ state: 'starting', qr: null, me: null, error: null });
     [this.chats, this.#setChats] = createState<readonly Chat[]>([]);
+    [this.lists, this.#setLists] = createState<readonly ChatList[]>([]);
     [this.current, this.#setCurrent] = createState<string | null>(null);
     [this.messages, this.#setMessages] = createState<readonly Message[]>([]);
   }
@@ -78,6 +82,7 @@ export class Store {
   async reload(): Promise<void> {
     try {
       this.#replaceChats(await this.client.chats());
+      this.#setLists(await this.client.lists());
       const id = this.current.peek();
       if (id !== null) this.#setMessages(await this.client.messages(id, PAGE));
     } catch (error) {
@@ -112,6 +117,9 @@ export class Store {
         for (const id of e.ids) this.#byId.delete(id);
         this.#setChats(sortChats(this.#byId.values()));
         if (e.ids.includes(this.current.peek() ?? '')) this.open(null);
+        break;
+      case 'lists':
+        this.#setLists(e.lists);
         break;
       case 'picture':
         this.onPicture?.(e.id);

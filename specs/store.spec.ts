@@ -4,13 +4,13 @@ import { formatPhone, isMuted, previewOf } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf } from '../src/app/ConversationPage.tsx';
-import { fold, visibleChats } from '../src/app/ChatList.tsx';
+import { fold, inList, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
 import { displaySize } from '../src/app/media.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, ...extra });
-const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, ...extra });
+const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
 
 describe('mergeMessage', () => {
   it('insère à sa place chronologique', () => {
@@ -37,7 +37,7 @@ describe('sortChats', () => {
 
 /** Libellés des entrées du menu d'une discussion (sections à plat). */
 const labels = (c: Chat, pinned = 0): string[] => {
-  const menu = chatMenu(c, pinned, 1000);
+  const menu = chatMenu(c, pinned, [], 1000);
   const out: string[] = [];
   for (let s = 0; s < menu.get_n_items(); s += 1) {
     const section = menu.get_item_link(s, 'section');
@@ -56,6 +56,23 @@ describe('archivées, silencieux, menu', () => {
     expect(visibleChats(all, 'boul', false).map((c) => c.id)).toEqual(['b']);
   });
 
+  it('filtres par liste (vue principale seulement)', () => {
+    const lists = [
+      { id: '1', name: 'Non lues', color: 0, kind: 'unread' },
+      { id: '2', name: 'Favoris', color: 0, kind: 'favorites' },
+      { id: '3', name: 'Groupes', color: 0, kind: 'groups' },
+      { id: '4', name: 'École', color: 0, kind: 'custom' },
+    ] as const;
+    const chats = [chat('a', 1, 'A', { unread: 2 }), chat('b', 2, 'B', { favorite: true, labels: ['4'] }), chat('g', 3, 'G', { group: true, markedUnread: true }), chat('z', 4, 'Z', { archived: true, favorite: true })];
+    const ids = (filter: string): string[] => visibleChats(chats, '', false, filter, lists).map((c) => c.id);
+    expect(ids('all')).toEqual(['a', 'b', 'g']);
+    expect(ids('1')).toEqual(['a', 'g']);
+    expect(ids('2')).toEqual(['b']);
+    expect(ids('3')).toEqual(['g']);
+    expect(ids('4')).toEqual(['b']);
+    expect(inList(chats[3] ?? chat('x', 0), lists[1])).toBeTrue();
+  });
+
   it('mode silencieux', () => {
     expect(isMuted({ mutedUntil: 0 }, 1000)).toBeFalse();
     expect(isMuted({ mutedUntil: -1 }, 1000)).toBeTrue();
@@ -64,12 +81,13 @@ describe('archivées, silencieux, menu', () => {
   });
 
   it('entrées du menu selon l’état', () => {
-    expect(labels(chat('a', 1))).toEqual(['Archiver la discussion', 'Mode silencieux', 'Épingler la discussion', 'Marquer comme non lue', 'Effacer la discussion…', 'Supprimer la discussion…']);
-    expect(labels(chat('g', 1, 'G', { group: true, archived: true, mutedUntil: -1, pinned: 5, unread: 2 }))).toEqual([
+    expect(labels(chat('a', 1))).toEqual(['Archiver la discussion', 'Mode silencieux', 'Épingler la discussion', 'Marquer comme non lue', 'Ajouter aux favoris', 'Effacer la discussion…', 'Supprimer la discussion…']);
+    expect(labels(chat('g', 1, 'G', { group: true, archived: true, mutedUntil: -1, pinned: 5, unread: 2, favorite: true }))).toEqual([
       'Désarchiver la discussion',
       'Réactiver les notifications',
       'Désépingler la discussion',
       'Marquer comme lue',
+      'Retirer des favoris',
       'Effacer la discussion…',
       'Quitter le groupe…',
     ]);
