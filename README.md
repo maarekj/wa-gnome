@@ -25,9 +25,6 @@ Puis lancer « WhatsApp » depuis GNOME et scanner le QR code.
 
 Journal du démon : `journalctl --user -u wa-gnome-daemon -f`.
 
-## À venir
+## Feuille de route
 
-- Médias : affichage des images, téléchargement des documents, envoi de fichiers.
-- Réponses, réactions, accusés de lecture affichés, messages modifiés / supprimés.
-- Fusion des identifiants LID / numéro de téléphone (WhatsApp ≥ 2025).
-- Chargement de l'historique plus ancien (pagination vers le haut).
+Voir les [issues](https://github.com/maarekj/wa-gnome/issues).

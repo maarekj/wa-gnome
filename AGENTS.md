@@ -45,4 +45,29 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   Pour une liste ordonnée, utiliser `keyedBox` / `keyedListBox` (`src/app/KeyedBox.ts`), pas `<For>`.
 - Tout bouton à icône seule a une infobulle.
 - Baileys est non officiel : ne jamais envoyer de message automatisé depuis un vrai compte en test.
-- **Aucun commit, rebase, fusion ni push sans l'ordre explicite de l'utilisateur.**
+- Messages de commit en français, courts, au style des commits existants.
+
+## Flux de travail
+- **Aucun commit, rebase, fusion ni push sans l'ordre explicite de l'utilisateur.** Une fois
+  l'implémentation prête (`pnpm check` OK, captures faites), installer (`node scripts/install.ts`,
+  redémarre le démon), présenter ce qu'il faut tester et attendre sa validation.
+- **Une branche par issue** : `git switch -c issue-<numéro>` depuis `main` à jour
+  (`git fetch && git merge --ff-only origin/main`). Jamais de commit direct sur `main`.
+- **Fusion**, une fois l'issue validée et sur ordre de l'utilisateur :
+  1. `git fetch && git rebase origin/main`, puis `pnpm check` ;
+  2. `git push origin issue-<numéro>:main` (refusé si `main` a avancé : refaire l'étape 1) ;
+  3. `git switch main && git merge --ff-only origin/main && git branch -D issue-<numéro>`.
+- Travail en parallèle : un worktree par agent (`wa-gnome-2`, `wa-gnome-3`…), jamais deux agents
+  dans le même dossier ; chacun lance son faux démon sur son propre port (`--port`).
+
+## Suivi des fonctionnalités : issues GitHub
+Dépôt : https://github.com/maarekj/wa-gnome
+- **Chaque fonctionnalité ou correctif a son issue**, créée avant de commencer
+  (`gh issue create`), avec le besoin, la solution envisagée et les critères de validation.
+- Une issue = un seul agent : avant de commencer, vérifier qu'elle n'est pas déjà prise, puis
+  commenter « En cours dans <dossier> » sur l'issue.
+- Les commits y font référence (`#12`) ; `Closes #12` dans le commit qui la termine.
+- **Quand l'implémentation est finie, commenter l'issue** (`gh issue comment`) avec un
+  récapitulatif : ce qui a été fait, comment c'est vérifié (captures, tests), limites connues
+  et ce qui n'a pas été testé.
+- Les idées non encore planifiées restent dans `TODO.md` jusqu'à leur passage en issue.
