@@ -10,6 +10,7 @@ import { fmtShortDate } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { attachChatMenu } from './ChatMenu.ts';
 import { keyedListBox } from './KeyedBox.ts';
+import { bindAvatar, type Pictures } from './pictures.ts';
 import { asWidget } from './widgets.ts';
 
 /** Recherche insensible à la casse et aux accents. */
@@ -18,11 +19,15 @@ export const fold = (s: string): string => s.normalize('NFD').replaceAll(/\p{M}/
 /** Texte de l'avatar : sans le « ~ » des noms publics (initiales du nom). */
 export const avatarText = (name: string): string => name.replace(/^~ /u, '');
 
-function ChatRow(chat: Chat, live: Accessor<Chat>): Gtk.Widget {
+function chatRow(pictures: Pictures) {
+  return (chat: Chat, live: Accessor<Chat>): Gtk.Widget => ChatRow(chat, live, pictures);
+}
+
+function ChatRow(chat: Chat, live: Accessor<Chat>, pictures: Pictures): Gtk.Widget {
   return asWidget(
     <Gtk.ListBoxRow name={chat.id} cssClasses={['chat-row']} tooltipText={live((c) => c.name)}>
       <Gtk.Box spacing={12} marginTop={8} marginBottom={8} marginStart={8} marginEnd={8}>
-        <Adw.Avatar size={44} text={live((c) => avatarText(c.name))} showInitials={live((c) => /\p{L}/u.test(c.name))} />
+        <Adw.Avatar size={44} text={live((c) => avatarText(c.name))} showInitials={live((c) => /\p{L}/u.test(c.name))} $={(self: Adw.Avatar) => bindAvatar(self, pictures.texture(chat.id))} />
         <Gtk.Box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand spacing={2}>
           <Gtk.Box spacing={6}>
             <Gtk.Label label={live((c) => c.name)} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
@@ -54,7 +59,7 @@ export function visibleChats(all: readonly Chat[], query: string, archived: bool
   return all.filter((c) => c.archived === archived);
 }
 
-export function ChatList({ store, toast }: { store: Store; toast: (text: string) => void }): JSX.Element {
+export function ChatList({ store, pictures, toast }: { store: Store; pictures: Pictures; toast: (text: string) => void }): JSX.Element {
   const [query, setQuery] = createState('');
   const [archived, setArchived] = createState(false);
   const shown = createMemo(() => visibleChats(store.chats(), query(), archived()));
@@ -112,7 +117,7 @@ export function ChatList({ store, toast }: { store: Store; toast: (text: string)
             <Gtk.ListBox
               cssClasses={['navigation-sidebar']}
               $={(self: Gtk.ListBox) => {
-                onCleanup(keyedListBox(self, shown, (c) => c.id, ChatRow));
+                onCleanup(keyedListBox(self, shown, (c) => c.id, chatRow(pictures)));
                 self.connect('row-activated', (_l: Gtk.ListBox, row: Gtk.ListBoxRow) => store.open(row.name));
                 // sélection suivie depuis le store (ouverture par notification, déconnexion)
                 const select = (): void => {

@@ -181,6 +181,8 @@ const backend: Backend = {
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
     return Promise.resolve();
   },
+  // photo : Alice (paysage) et le groupe Famille (autocollant) ; les autres n'en ont pas
+  picture: (chatId) => Promise.resolve(chatId === ALICE ? landscape(96, 96) : chatId === GROUP ? sticker(96) : null),
   media: (_chatId, id) => {
     const found = media.get(id);
     return found === undefined ? Promise.reject(new Error('média introuvable')) : Promise.resolve(found);

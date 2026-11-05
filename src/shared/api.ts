@@ -123,6 +123,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('chats.delete'), ids: z.array(z.string()) }),
   /** messages d'une discussion effacés */
   z.object({ type: z.literal('chat.cleared'), id: z.string() }),
+  /** photo de profil changée ou retirée : à recharger */
+  z.object({ type: z.literal('picture'), id: z.string() }),
   z.object({ type: z.literal('message'), message: Message }),
 ]);
 export type Event = z.infer<typeof Event>;

@@ -7,6 +7,7 @@ import type { Link } from '../shared/client.ts';
 import type { Store } from '../shared/store.ts';
 import { ChatList } from './ChatList.tsx';
 import { ConversationPage } from './ConversationPage.tsx';
+import { Pictures } from './pictures.ts';
 import { qrCode } from './QrCode.ts';
 
 /** Unité systemd du démon (scripts/install.ts). */
@@ -42,6 +43,8 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
   const screen = createMemo(() => screenOf(store.link(), store.status()));
   let overlay: Adw.ToastOverlay | null = null;
   let split: Adw.NavigationSplitView | null = null;
+  const pictures = new Pictures(store.client);
+  store.onPicture = (id) => pictures.invalidate(id);
   const toast = (text: string): void => overlay?.add_toast(new Adw.Toast({ title: text, timeout: 5 }));
   ready({ toast });
 
@@ -111,8 +114,8 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
               maxSidebarWidth={400}
               $={(self: Adw.NavigationSplitView) => {
                 split = self;
-                self.sidebar = asPage(ChatList({ store, toast }));
-                self.content = asPage(ConversationPage({ store, toast }));
+                self.sidebar = asPage(ChatList({ store, pictures, toast }));
+                self.content = asPage(ConversationPage({ store, pictures, toast }));
                 onCleanup(
                   store.current.subscribe(() => {
                     self.showContent = store.current.peek() !== null;

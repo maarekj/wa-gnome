@@ -86,6 +86,16 @@ export class WaClient {
     return this.request('GET', `/chats/${encodeURIComponent(chatId)}/messages${q}`, z.array(Message));
   }
 
+  /** Photo de profil d'une discussion, null si elle n'en a pas. */
+  async picture(chatId: string): Promise<GLib.Bytes | null> {
+    const msg = this.#message('GET', `/chats/${encodeURIComponent(chatId)}/picture`);
+    const bytes = await this.#session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const status: number = msg.get_status();
+    if (status === 404) return null;
+    if (status < 200 || status >= 300) throw new HttpError(status, `photo : HTTP ${status}`);
+    return bytes;
+  }
+
   /** Contenu d'un média (téléchargé et mis en cache par le démon). */
   async media(chatId: string, id: string): Promise<GLib.Bytes> {
     const path = `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(id)}/media`;

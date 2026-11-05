@@ -4,6 +4,7 @@
 //   GET  /chats/:id/messages        derniers messages (?limit, ?before en secondes)
 //   POST /chats/:id/messages        envoi d'un texte { text }
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
+//   GET  /chats/:id/picture         photo de profil (JPEG), 404 sans photo
 //   POST /chats/:id/read            discussion lue
 //   POST /chats/:id/action          archiver, silencieux, épingler, non lue, effacer, supprimer, quitter
 //   POST /logout                    déconnexion du compte
@@ -25,6 +26,8 @@ export interface Backend {
   send: (chatId: string, text: string) => Promise<void>;
   markRead: (chatId: string) => Promise<void>;
   chatAction: (chatId: string, action: ChatAction) => Promise<void>;
+  /** photo de profil, null sans photo */
+  picture: (chatId: string) => Promise<Buffer | null>;
   logout: () => Promise<void>;
   media: (chatId: string, id: string) => Promise<{ mimetype: string; data: Buffer }>;
 }
@@ -103,6 +106,13 @@ export function startServer(opts: { host: string; port: number; token: string; s
       case 'GET /chats/:id/messages/:mid/media': {
         const { mimetype, data } = await opts.wa().media(chatId, messageId);
         res.writeHead(200, { 'Content-Type': mimetype, 'Content-Length': data.length, 'Cache-Control': 'private, max-age=31536000, immutable' });
+        res.end(data);
+        return;
+      }
+      case 'GET /chats/:id/picture': {
+        const data = await opts.wa().picture(chatId);
+        if (data === null) throw new HttpError(404, 'pas de photo');
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': data.length, 'Cache-Control': 'private, no-cache' });
         res.end(data);
         return;
       }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import type { Message } from '../shared/api.ts';
+import { isNoPicture } from './pictures.ts';
 import { Store } from './store.ts';
 
 const LID = '111@lid';
@@ -85,5 +86,13 @@ void describe('Store : noms', () => {
       ['Alice', '~ Bob', '+33 6 00 00 00 03'],
     );
     assert.equal(store.message(GROUP, 'g1')?.senderName, '~ Bob');
+  });
+});
+
+void describe('photos de profil', () => {
+  void it('« pas de photo » distingué d’une vraie erreur', () => {
+    assert.equal(isNoPicture(new Error('item-not-found')), true);
+    assert.equal(isNoPicture(Object.assign(new Error('x'), { output: { statusCode: 401 } })), true);
+    assert.equal(isNoPicture(new Error('Timed Out')), false);
   });
 });

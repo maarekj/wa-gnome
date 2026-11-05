@@ -9,7 +9,9 @@ import { type Media, previewOf, type Message } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
+import { avatarText } from './ChatList.tsx';
 import { keyedBox } from './KeyedBox.ts';
+import { bindAvatar, type Pictures } from './pictures.ts';
 import { displaySize, type Loaded, MediaLoader, openViewer, thumbnailTexture } from './media.ts';
 import { MediaFrame } from './MediaFrame.ts';
 import { asWidget } from './widgets.ts';
@@ -170,7 +172,7 @@ function Composer({ store, chatId, toast }: { store: Store; chatId: Accessor<str
   );
 }
 
-export function ConversationPage({ store, toast }: { store: Store; toast: (text: string) => void }): JSX.Element {
+export function ConversationPage({ store, pictures, toast }: { store: Store; pictures: Pictures; toast: (text: string) => void }): JSX.Element {
   const chat = createMemo(() => {
     const id = store.current();
     // nom et type suivis : la liste des discussions est mise à jour en direct
@@ -182,7 +184,25 @@ export function ConversationPage({ store, toast }: { store: Store; toast: (text:
   return (
     <Adw.NavigationPage title={chat((c) => c?.name ?? 'WhatsApp')} tag="conversation">
       <Adw.ToolbarView>
-        <Adw.HeaderBar $type="top" />
+        <Adw.HeaderBar $type="top">
+          <Gtk.Box $type="title" spacing={10} visible={chat((c) => c !== null)}>
+            <Adw.Avatar
+              size={32}
+              text={chat((c) => avatarText(c?.name ?? ''))}
+              showInitials={chat((c) => /\p{L}/u.test(c?.name ?? ''))}
+              $={(self: Adw.Avatar) =>
+                bindAvatar(
+                  self,
+                  createMemo(() => {
+                    const c = chat();
+                    return c === null ? null : pictures.texture(c.id)();
+                  }),
+                )
+              }
+            />
+            <Gtk.Label label={chat((c) => c?.name ?? '')} ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
+          </Gtk.Box>
+        </Adw.HeaderBar>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Adw.StatusPage $type="named" name="none" iconName="chat-message-new-symbolic" title="WhatsApp pour GNOME" description="Choisissez une discussion" />
           <Gtk.Box $type="named" name="chat" orientation={Gtk.Orientation.VERTICAL}>

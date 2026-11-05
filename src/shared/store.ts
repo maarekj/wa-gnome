@@ -29,6 +29,8 @@ export class Store {
   readonly current: Accessor<string | null>;
   /** messages de la discussion ouverte */
   readonly messages: Accessor<readonly Message[]>;
+  /** photo de profil changée */
+  onPicture: ((id: string) => void) | null = null;
   /** nouveau message reçu (notifications) */
   onIncoming: ((m: Message, chat: Chat | undefined) => void) | null = null;
 
@@ -110,6 +112,9 @@ export class Store {
         for (const id of e.ids) this.#byId.delete(id);
         this.#setChats(sortChats(this.#byId.values()));
         if (e.ids.includes(this.current.peek() ?? '')) this.open(null);
+        break;
+      case 'picture':
+        this.onPicture?.(e.id);
         break;
       case 'chat.cleared':
         if (e.id === this.current.peek()) this.#setMessages([]);

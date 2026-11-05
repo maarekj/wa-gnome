@@ -26,12 +26,15 @@ import {
 import pino from 'pino';
 import { type ChatAction, type Event, MAX_PINNED, type Status } from '../shared/api.ts';
 import { mediaOf, seconds, toMessage } from './convert.ts';
+import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
 const logger = pino({ level: process.env['WA_GNOME_LOG'] ?? 'warn' });
 
 /** Délai avant reconnexion après une coupure (ms). */
 const RECONNECT_MS = 3000;
+/** Délai de réponse de WhatsApp pour une photo de profil (une requête bloquée retient la file). */
+const PICTURE_TIMEOUT_MS = 10_000;
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 /** Code HTTP d'une erreur Boom de Baileys (sans dépendre de @hapi/boom). */
@@ -46,6 +49,7 @@ export class WhatsApp {
   readonly #store: Store;
   readonly #authDir: string;
   readonly #mediaDir: string;
+  readonly #pictures: Pictures;
   readonly #emit: (e: Event) => void;
   #sock: WASocket | null = null;
   #keys: SignalKeyStore | null = null;
@@ -56,6 +60,7 @@ export class WhatsApp {
     this.#store = store;
     this.#authDir = path.join(dataDir, 'auth');
     this.#mediaDir = path.join(dataDir, 'media');
+    this.#pictures = new Pictures(path.join(dataDir, 'pictures'), (jid) => this.#open().profilePictureUrl(jid, 'preview', PICTURE_TIMEOUT_MS));
     this.#emit = emit;
   }
 
@@ -163,7 +168,16 @@ export class WhatsApp {
     });
 
     sock.ev.on('contacts.update', (contacts) => {
-      for (const c of contacts) if (c.id !== undefined) this.#saveContact({ ...c, id: c.id });
+      for (const c of contacts) {
+        if (c.id === undefined) continue;
+        this.#saveContact({ ...c, id: c.id });
+        // photo changée ou retirée (personne ou groupe)
+        if (c.imgUrl !== undefined) {
+          const id = this.#jid(c.id);
+          this.#pictures.invalidate(id);
+          this.#emit({ type: 'picture', id });
+        }
+      }
     });
 
     sock.ev.on('messages.upsert', ({ messages, type }) => {
@@ -386,6 +400,7 @@ export class WhatsApp {
   #forget(): void {
     fs.rmSync(this.#authDir, { recursive: true, force: true });
     fs.rmSync(this.#mediaDir, { recursive: true, force: true });
+    this.#pictures.clear();
     this.#store.clear();
   }
 
@@ -413,6 +428,11 @@ export class WhatsApp {
     const last = raw === null ? null : this.#parseRaw(raw);
     if (last === null) return { jid: chatId, lastMessages: [] };
     return { jid: last.key.remoteJid ?? chatId, lastMessages: [{ key: last.key, messageTimestamp: seconds(last.messageTimestamp) }] };
+  }
+
+  /** Photo de profil d'une discussion (personne ou groupe), null sans photo. */
+  picture(chatId: string): Promise<Buffer | null> {
+    return this.#pictures.get(chatId);
   }
 
   /** Action du menu d'une discussion : appliquée sur WhatsApp, puis localement. */
