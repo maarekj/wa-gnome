@@ -3,6 +3,7 @@
 //   GET  /chats                     discussions, la plus récente d'abord
 //   GET  /chats/:id/messages        derniers messages (?limit, ?before en secondes)
 //   POST /chats/:id/messages        envoi d'un texte { text }
+//   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
 //   POST /chats/:id/read            discussion lue
 //   POST /logout                    déconnexion du compte
 //   GET  /events                    flux SSE des événements (voir shared/api.ts)
@@ -23,6 +24,7 @@ export interface Backend {
   send: (chatId: string, text: string) => Promise<void>;
   markRead: (chatId: string) => Promise<void>;
   logout: () => Promise<void>;
+  media: (chatId: string, id: string) => Promise<{ mimetype: string; data: Buffer }>;
 }
 
 export interface Server {
@@ -72,8 +74,10 @@ export function startServer(opts: { host: string; port: number; token: string; s
     if (!authorized(req)) throw new HttpError(401, 'jeton invalide');
     const url = new URL(req.url ?? '/', 'http://localhost');
     const parts = url.pathname.split('/').filter((p) => p !== '').map((p) => decodeURIComponent(p));
-    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => (i === 1 && parts[0] === 'chats' ? ':id' : p)).join('/')}`;
+    // segments variables : /chats/:id/messages/:mid
+    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => (parts[0] === 'chats' && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
     const chatId = parts[1] ?? '';
+    const messageId = parts[3] ?? '';
     switch (route) {
       case 'GET /status':
         json(res, 200, opts.wa().status);
@@ -92,6 +96,12 @@ export function startServer(opts: { host: string; port: number; token: string; s
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
         await opts.wa().send(chatId, body.data.text);
         json(res, 200, {});
+        return;
+      }
+      case 'GET /chats/:id/messages/:mid/media': {
+        const { mimetype, data } = await opts.wa().media(chatId, messageId);
+        res.writeHead(200, { 'Content-Type': mimetype, 'Content-Length': data.length, 'Cache-Control': 'private, max-age=31536000, immutable' });
+        res.end(data);
         return;
       }
       case 'POST /chats/:id/read':

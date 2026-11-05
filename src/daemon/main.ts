@@ -12,7 +12,7 @@ import path from 'node:path';
 import { DEFAULT_PORT, TOKEN_FILE } from '../shared/api.ts';
 import { type Server, startServer } from './server.ts';
 import { Store } from './store.ts';
-import { authDir, WhatsApp } from './whatsapp.ts';
+import { WhatsApp } from './whatsapp.ts';
 
 const dataDir = process.env['WA_GNOME_DATA_DIR'] ?? path.join(process.env['XDG_DATA_HOME'] ?? path.join(os.homedir(), '.local', 'share'), 'wa-gnome');
 fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -33,7 +33,8 @@ function token(): string {
 
 const store = new Store(path.join(dataDir, 'wa.db'));
 let server: Server | null = null;
-const wa = new WhatsApp(store, authDir(dataDir), (e) => server?.emit(e));
+const wa = new WhatsApp(store, dataDir, (e) => server?.emit(e));
+if (store.needsMediaBackfill) wa.backfillMedia();
 server = await startServer({
   host: process.env['WA_GNOME_HOST'] ?? '127.0.0.1',
   port: Number(process.env['WA_GNOME_PORT'] ?? DEFAULT_PORT),

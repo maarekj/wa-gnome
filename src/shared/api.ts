@@ -51,6 +51,22 @@ export type Chat = z.infer<typeof Chat>;
 export const MessageKind = z.enum(['text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contact', 'reaction', 'other']);
 export type MessageKind = z.infer<typeof MessageKind>;
 
+/** Média joint à un message (contenu téléchargé à la demande : `GET …/messages/:mid/media`). */
+export const Media = z.object({
+  mimetype: z.string(),
+  /** dimensions en pixels (images, vidéos, autocollants), null si inconnues */
+  width: z.nullable(z.number()),
+  height: z.nullable(z.number()),
+  /** miniature JPEG ou PNG en base64, affichée en attendant le média complet */
+  thumbnail: z.nullable(z.string()),
+  fileName: z.nullable(z.string()),
+  /** taille en octets */
+  size: z.nullable(z.number()),
+  /** durée en secondes (audio, vidéo) */
+  seconds: z.nullable(z.number()),
+});
+export type Media = z.infer<typeof Media>;
+
 export const Message = z.object({
   id: z.string(),
   chatId: z.string(),
@@ -63,6 +79,7 @@ export const Message = z.object({
   kind: MessageKind,
   /** texte ou légende (vide pour un média sans légende) */
   text: z.string(),
+  media: z.nullable(Media),
 });
 export type Message = z.infer<typeof Message>;
 

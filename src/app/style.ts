@@ -10,6 +10,20 @@ export const STYLESHEET = `
 .bubble.outgoing {
   background: alpha(var(--accent-bg-color), 0.18);
 }
+.bubble.with-media {
+  padding: 4px 4px 4px 4px;
+}
+.bubble.with-media > label {
+  margin: 0 6px;
+}
+.sticker > label.caption {
+  background: alpha(currentColor, 0.07);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+.message-media.media-error {
+  opacity: 0.5;
+}
 .day-separator {
   background: alpha(currentColor, 0.06);
   border-radius: 999px;

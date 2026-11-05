@@ -7,3 +7,5 @@ import '@girs/gtk-4.0';
 import '@girs/adw-1';
 import '@girs/soup-3.0';
 import '@girs/pango-1.0';
+import '@girs/graphene-1.0';
+import '@girs/gsk-4.0';

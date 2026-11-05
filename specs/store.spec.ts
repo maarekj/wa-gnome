@@ -6,8 +6,9 @@ import { mergeMessage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf } from '../src/app/ConversationPage.tsx';
 import { fold } from '../src/app/ChatList.tsx';
 import { screenOf } from '../src/app/MainWindow.tsx';
+import { displaySize } from '../src/app/media.ts';
 
-const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, ...extra });
+const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, ...extra });
 const chat = (id: string, timestamp: number, name = id): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '' });
 
 describe('mergeMessage', () => {
@@ -85,5 +86,14 @@ describe('divers', () => {
     dispatch('pas du json', push);
     dispatch('{"type":"chats.delete","ids":["a"]}', push);
     expect(seen).toEqual(['chats.delete']);
+  });
+});
+
+describe('displaySize', () => {
+  it('réduit sans déformer, sans agrandir', () => {
+    expect(displaySize(1200, 600, 300)).toEqual([300, 150]);
+    expect(displaySize(600, 1200, 300)).toEqual([150, 300]);
+    expect(displaySize(100, 50, 300)).toEqual([100, 80]);
+    expect(displaySize(null, null, 300)).toEqual([300, 225]);
   });
 });

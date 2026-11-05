@@ -1,6 +1,6 @@
 // Conversion des messages Baileys (protobuf) vers le format de l'API.
 import { getContentType, isJidGroup, jidNormalizedUser, normalizeMessageContent, type proto, type WAMessage } from 'baileys';
-import type { Message, MessageKind } from '../shared/api.ts';
+import type { Media, Message, MessageKind } from '../shared/api.ts';
 
 /** Horodatage protobuf (number ou Long) en secondes. */
 export const seconds = (ts: number | { toNumber: () => number } | null | undefined): number => {
@@ -29,6 +29,44 @@ const EXTRACT: Partial<Record<keyof proto.IMessage, Extract>> = {
   reactionMessage: (c) => ({ kind: 'reaction', text: c.reactionMessage?.text ?? '' }),
 };
 
+/** Champs communs des messages média (image, vidéo, audio, document, autocollant). */
+interface MediaContent {
+  mimetype?: string | null;
+  width?: number | null;
+  height?: number | null;
+  jpegThumbnail?: Uint8Array | null;
+  pngThumbnail?: Uint8Array | null;
+  fileName?: string | null;
+  fileLength?: number | { toNumber: () => number } | null;
+  seconds?: number | null;
+}
+
+const MEDIA_TYPES = ['imageMessage', 'videoMessage', 'ptvMessage', 'audioMessage', 'documentMessage', 'stickerMessage'] as const;
+
+/** Contenu média d'un message, ou null (texte, position…). */
+export function mediaContent(content: proto.IMessage): MediaContent | null {
+  for (const t of MEDIA_TYPES) {
+    const c = content[t];
+    if (c !== null && c !== undefined) return c;
+  }
+  return null;
+}
+
+export function mediaOf(content: proto.IMessage): Media | null {
+  const c = mediaContent(content);
+  if (c === null) return null;
+  const thumb = c.jpegThumbnail ?? c.pngThumbnail ?? null;
+  return {
+    mimetype: c.mimetype ?? 'application/octet-stream',
+    width: c.width ?? null,
+    height: c.height ?? null,
+    thumbnail: thumb === null || thumb.length === 0 ? null : Buffer.from(thumb).toString('base64'),
+    fileName: c.fileName ?? null,
+    size: c.fileLength === null || c.fileLength === undefined ? null : seconds(c.fileLength),
+    seconds: c.seconds ?? null,
+  };
+}
+
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 export function toMessage(wa: WAMessage): Message | null {
   const { remoteJid, id } = wa.key;
@@ -52,5 +90,6 @@ export function toMessage(wa: WAMessage): Message | null {
     timestamp: seconds(wa.messageTimestamp),
     kind,
     text,
+    media: mediaOf(content),
   };
 }

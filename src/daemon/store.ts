@@ -3,7 +3,7 @@
 // sont écrits ici, l'app ne lit que cette base (via l'API HTTP).
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
-import { type Chat, type Message, MessageKind, previewOf } from '../shared/api.ts';
+import { type Chat, Media, type Message, MessageKind, previewOf } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS messages (
   text TEXT NOT NULL,
   -- WAMessage complet (BufferJSON) : médias, réponses, renvoi à WhatsApp (getMessage)
   raw TEXT NOT NULL,
+  -- Media de l'API (JSON), null sans média
+  media TEXT,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -53,7 +55,22 @@ const MessageRow = z.object({
   timestamp: z.number(),
   kind: z.string(),
   text: z.string(),
+  media: z.nullable(z.string()),
 });
+
+/** Média JSON de la base, ignoré s'il est invalide. */
+const parseMedia = (json: string | null): Media | null => {
+  if (json === null) return null;
+  try {
+    const parsed = Media.safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
+const VERSION = 1;
 
 const asKind = (k: string): MessageKind => {
   const parsed = MessageKind.safeParse(k);
@@ -68,10 +85,20 @@ const userPart = (jid: string): string => {
 
 export class Store {
   readonly #db: DatabaseSync;
+  /** base créée avant les médias : messages existants à reconvertir depuis `raw` */
+  readonly needsMediaBackfill: boolean;
 
   constructor(file: string) {
     this.#db = new DatabaseSync(file);
+    const version = Number(this.#db.prepare('PRAGMA user_version').get()?.['user_version'] ?? 0);
+    const fresh = this.#db.prepare("SELECT name FROM sqlite_master WHERE name = 'messages'").get() === undefined;
     this.#db.exec(SCHEMA);
+    this.needsMediaBackfill = false;
+    if (!fresh && version < 1) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
+      this.needsMediaBackfill = true;
+    }
+    this.#db.exec(`PRAGMA user_version = ${VERSION}`);
   }
 
   close(): void {
@@ -111,10 +138,10 @@ export class Store {
   upsertMessage(m: Message, raw: string): void {
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw)
-         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw)`,
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media)
+         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media)`,
       )
-      .run({ chat_id: m.chatId, id: m.id, from_me: m.fromMe ? 1 : 0, sender: m.sender, sender_name: m.senderName, timestamp: m.timestamp, kind: m.kind, text: m.text, raw });
+      .run({ chat_id: m.chatId, id: m.id, from_me: m.fromMe ? 1 : 0, sender: m.sender, sender_name: m.senderName, timestamp: m.timestamp, kind: m.kind, text: m.text, raw, media: m.media === null ? null : JSON.stringify(m.media) });
     this.upsertChat({ id: m.chatId, timestamp: m.timestamp });
   }
 
@@ -197,7 +224,27 @@ export class Store {
       timestamp: r.timestamp,
       kind: asKind(r.kind),
       text: r.text,
+      media: parseMedia(r.media),
     }));
+  }
+
+  /** Média d'un message, ou null. */
+  media(chatId: string, id: string): Media | null {
+    const row = this.#db.prepare('SELECT media FROM messages WHERE chat_id = ? AND id = ?').get(chatId, id);
+    return typeof row?.['media'] === 'string' ? parseMedia(row['media']) : null;
+  }
+
+  /** Messages média sans `media` (base antérieure) : WAMessage brut à reconvertir. */
+  mediaToBackfill(): { chatId: string; id: string; raw: string }[] {
+    // lu en entier avant les mises à jour (pas d'écriture pendant un parcours)
+    return this.#db
+      .prepare("SELECT chat_id, id, raw FROM messages WHERE media IS NULL AND kind IN ('image', 'video', 'audio', 'document', 'sticker')")
+      .all()
+      .flatMap((r) => (typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string' ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }] : []));
+  }
+
+  setMedia(chatId: string, id: string, media: Media | null): void {
+    this.#db.prepare('UPDATE messages SET media = ? WHERE chat_id = ? AND id = ?').run(media === null ? null : JSON.stringify(media), chatId, id);
   }
 
   /** WAMessage brut (BufferJSON), pour `getMessage` de Baileys (renvoi des messages). */

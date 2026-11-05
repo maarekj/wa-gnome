@@ -86,6 +86,20 @@ export class WaClient {
     return this.request('GET', `/chats/${encodeURIComponent(chatId)}/messages${q}`, z.array(Message));
   }
 
+  /** Contenu d'un média (téléchargé et mis en cache par le démon). */
+  async media(chatId: string, id: string): Promise<GLib.Bytes> {
+    const path = `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(id)}/media`;
+    const msg = this.#message('GET', path);
+    const bytes = await this.#session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const status: number = msg.get_status();
+    if (status < 200 || status >= 300) {
+      const data = bytes.get_data();
+      const parsed = z.object({ error: z.string() }).safeParse(data === null ? null : safeJson(decoder.decode(data)));
+      throw new HttpError(status, parsed.success ? parsed.data.error : `média : HTTP ${status}`);
+    }
+    return bytes;
+  }
+
   async send(chatId: string, text: string): Promise<void> {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/messages`, z.unknown(), { text });
   }
@@ -169,6 +183,14 @@ export class WaClient {
     }
   }
 }
+
+const safeJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
 
 export function dispatch(raw: string, onEvent: (e: Event) => void): void {
   let json: unknown;

@@ -1,14 +1,17 @@
 // Discussion ouverte : messages (bulles, séparateurs de jour) et zone de saisie.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { previewOf, type Message } from '../shared/api.ts';
+import { type Media, previewOf, type Message } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { displaySize, type Loaded, MediaLoader, openViewer, thumbnailTexture } from './media.ts';
+import { MediaFrame } from './MediaFrame.ts';
 import { asWidget } from './widgets.ts';
 
 /** Élément de la conversation : séparateur de jour ou message. */
@@ -34,35 +37,83 @@ export function itemsOf(messages: readonly Message[], group: boolean): Item[] {
   return items;
 }
 
-function Bubble(item: Item, live: Accessor<Item>): Gtk.Widget {
-  if (item.kind === 'day') return asWidget(<Gtk.Label label={item.label} halign={Gtk.Align.CENTER} marginTop={12} marginBottom={4} cssClasses={['day-separator', 'caption']} />);
-  const m = item.message;
-  const msg = (): Message => {
-    const it = live.peek();
-    return it.kind === 'message' ? it.message : m;
+/** Contexte du rendu des bulles. */
+interface BubbleContext {
+  readonly loader: MediaLoader;
+  readonly toast: (text: string) => void;
+  readonly chatName: () => string;
+}
+
+/** Types affichés comme image (les autres médias gardent leur libellé : #6). */
+const isPicture = (m: Message): m is Message & { media: Media } => m.media !== null && (m.kind === 'image' || m.kind === 'sticker');
+
+/** Image d'un message : miniature tout de suite, image complète une fois téléchargée ; clic : aperçu. */
+function MessagePicture(ctx: BubbleContext, m: Message & { media: Media }): Gtk.Widget {
+  const sticker = m.kind === 'sticker';
+  const [w, h] = displaySize(m.media.width, m.media.height, sticker ? 160 : 300);
+  const frame = new MediaFrame({ cssClasses: ['message-media'], tooltipText: sticker ? 'Autocollant' : 'Ouvrir l’image' });
+  frame.setup(w, h, sticker ? 'contain' : 'cover', sticker ? 0 : 8);
+  frame.setPaintable(thumbnailTexture(m.media));
+  let loaded: Loaded | null = null;
+  const load = async (): Promise<void> => {
+    try {
+      loaded = await ctx.loader.load(m);
+      frame.setPaintable(loaded.texture);
+    } catch (error) {
+      frame.tooltipText = `Image indisponible : ${errorMessage(error)}`;
+      frame.add_css_class('media-error');
+    }
   };
-  return asWidget(
-    <Gtk.Box halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
-      <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={2} cssClasses={m.fromMe ? ['bubble', 'outgoing'] : ['bubble', 'incoming']}>
-        <Gtk.Label
-          visible={live((it) => it.kind === 'message' && it.showSender)}
-          label={live(() => msg().senderName ?? msg().sender?.split('@')[0] ?? '')}
-          xalign={0}
-          cssClasses={['caption-heading', 'accent']}
-        />
-        <Gtk.Label
-          label={live(() => (msg().kind === 'text' ? msg().text : previewOf(msg())))}
-          cssClasses={live(() => (msg().kind === 'text' ? ['body'] : ['body', 'dim-label']))}
-          wrap
-          wrapMode={Pango.WrapMode.WORD_CHAR}
-          xalign={0}
-          selectable
-          maxWidthChars={60}
-        />
-        <Gtk.Label label={live(() => fmtTime(msg().timestamp))} halign={Gtk.Align.END} cssClasses={['caption', 'dim-label']} />
-      </Gtk.Box>
-    </Gtk.Box>,
-  );
+  void load();
+  if (!sticker) {
+    frame.set_cursor_from_name('pointer');
+    const click = new Gtk.GestureClick();
+    click.connect('released', () => {
+      if (loaded !== null) openViewer(frame, ctx.chatName(), m, m.media, loaded, ctx.toast);
+    });
+    frame.add_controller(click);
+  }
+  return frame;
+}
+
+function bubble(ctx: BubbleContext) {
+  return (item: Item, live: Accessor<Item>): Gtk.Widget => {
+    if (item.kind === 'day') return asWidget(<Gtk.Label label={item.label} halign={Gtk.Align.CENTER} marginTop={12} marginBottom={4} cssClasses={['day-separator', 'caption']} />);
+    const m = item.message;
+    const msg = (): Message => {
+      const it = live.peek();
+      return it.kind === 'message' ? it.message : m;
+    };
+    const picture = isPicture(m) ? MessagePicture(ctx, m) : null;
+    // autocollant : sans bulle, comme dans WhatsApp
+    const bare = picture !== null && m.kind === 'sticker';
+    const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
+    return asWidget(
+      <Gtk.Box halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
+        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={2} cssClasses={classes}>
+          <Gtk.Label
+            visible={live((it) => it.kind === 'message' && it.showSender)}
+            label={live(() => msg().senderName ?? msg().sender?.split('@')[0] ?? '')}
+            xalign={0}
+            cssClasses={['caption-heading', 'accent']}
+          />
+          {picture}
+          <Gtk.Label
+            visible={live(() => picture === null || msg().text !== '')}
+            label={live(() => (msg().kind === 'text' || picture !== null ? msg().text : previewOf(msg())))}
+            cssClasses={live(() => (msg().kind === 'text' || picture !== null ? ['body'] : ['body', 'dim-label']))}
+            wrap
+            wrapMode={Pango.WrapMode.WORD_CHAR}
+            xalign={0}
+            selectable
+            // sous une image : la légende prend la largeur de l'image au lieu d'élargir la bulle
+            maxWidthChars={picture === null ? 60 : 1}
+          />
+          <Gtk.Label label={live(() => fmtTime(msg().timestamp))} halign={Gtk.Align.END} cssClasses={['caption', 'dim-label']} />
+        </Gtk.Box>
+      </Gtk.Box>,
+    );
+  };
 }
 
 function Composer({ store, chatId, toast }: { store: Store; chatId: Accessor<string | null>; toast: (text: string) => void }): JSX.Element {
@@ -127,6 +178,7 @@ export function ConversationPage({ store, toast }: { store: Store; toast: (text:
     return id === null ? null : { id, name: c?.name ?? id.split('@')[0] ?? id, group: c?.group ?? id.endsWith('@g.us') };
   });
   const items = createMemo(() => itemsOf(store.messages(), chat()?.group ?? false));
+  const loader = new MediaLoader(store.client);
   return (
     <Adw.NavigationPage title={chat((c) => c?.name ?? 'WhatsApp')} tag="conversation">
       <Adw.ToolbarView>
@@ -141,11 +193,24 @@ export function ConversationPage({ store, toast }: { store: Store; toast: (text:
                 // collé en bas tant que l'utilisateur n'est pas remonté dans l'historique
                 const adj = self.vadjustment;
                 let stick = true;
+                let upper = adj.upper;
                 adj.connect('value-changed', () => {
+                  // changement dû à la croissance du contenu (images chargées) : pas un geste de l'utilisateur
+                  if (adj.upper !== upper) return;
                   stick = adj.value + adj.pageSize >= adj.upper - 40;
                 });
-                adj.connect('notify::upper', () => {
-                  if (stick) adj.value = adj.upper - adj.pageSize;
+                // `changed` : fin d'une reconfiguration (upper et page_size cohérents) ; position
+                // appliquée au tour suivant de la boucle, après l'allocation en cours
+                let pending = 0;
+                adj.connect('changed', () => {
+                  upper = adj.upper;
+                  if (!stick || pending !== 0) return;
+                  pending = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    pending = 0;
+                    if (stick) adj.value = adj.upper - adj.pageSize;
+                    upper = adj.upper;
+                    return GLib.SOURCE_REMOVE;
+                  });
                 });
                 onCleanup(
                   store.current.subscribe(() => {
@@ -164,7 +229,7 @@ export function ConversationPage({ store, toast }: { store: Store; toast: (text:
                   marginBottom={12}
                   cssClasses={['conversation']}
                   $={(self: Gtk.Box) => {
-                    onCleanup(keyedBox(self, items, (it) => it.key, Bubble));
+                    onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '' })));
                   }}
                 />
               </Adw.Clamp>
