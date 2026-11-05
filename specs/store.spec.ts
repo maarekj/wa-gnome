@@ -1,6 +1,6 @@
 // État de l'application : application des événements du démon, ordre des messages.
 import type { Chat, Message } from '../src/shared/api.ts';
-import { previewOf } from '../src/shared/api.ts';
+import { formatPhone, previewOf } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf } from '../src/app/ConversationPage.tsx';
@@ -64,6 +64,12 @@ describe('divers', () => {
     expect(previewOf({ kind: 'image', text: '' })).toBe('Photo');
     expect(previewOf({ kind: 'image', text: 'vacances' })).toBe('Photo · vacances');
     expect(previewOf({ kind: 'text', text: 'salut' })).toBe('salut');
+  });
+
+  it('numéros lisibles', () => {
+    expect(formatPhone('33612345678')).toBe('+33 6 12 34 56 78');
+    expect(formatPhone('972541234567')).toBe('+972 54 123 4567');
+    expect(formatPhone('4915112345678')).toBe('+4915112345678');
   });
 
   it('recherche sans accents ni casse', () => {

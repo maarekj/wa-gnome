@@ -14,7 +14,7 @@ const msg = (chatId: string, id: string, timestamp: number, sender: string | nul
 void describe('Store : lid → numéro', () => {
   void it('fusionne la discussion lid dans celle du numéro', () => {
     const store = new Store(':memory:');
-    store.upsertContact(PN, 'Alice');
+    store.upsertContact(PN, { name: 'Alice' });
     store.upsertMessage(msg(PN, 'a', 10), '{}');
     store.upsertMessage(msg(LID, 'b', 20), '{}');
     store.upsertMessage(msg(LID, 'a', 10), '{}');
@@ -60,5 +60,30 @@ void describe('Store : lid → numéro', () => {
     fs.rmSync(file, { force: true });
     fs.rmSync(`${file}-wal`, { force: true });
     fs.rmSync(`${file}-shm`, { force: true });
+  });
+});
+
+void describe('Store : noms', () => {
+  void it('carnet, sinon nom public, sinon numéro', () => {
+    const store = new Store(':memory:');
+    const BOB = '33600000002@s.whatsapp.net';
+    const ANON = '33600000003@s.whatsapp.net';
+    store.upsertContact(PN, { name: 'Alice', notify: 'Ali' });
+    store.upsertContact(BOB, { notify: 'Bob' });
+    // un nom public plus récent ne remplace pas le nom du carnet, un nom vide n'efface rien
+    store.upsertContact(PN, { notify: 'Alice B.', name: '' });
+    for (const [i, who] of [PN, BOB, ANON].entries()) {
+      store.upsertMessage(msg(who, `d${i}`, 10 + i), '{}');
+      store.upsertMessage(msg(GROUP, `g${i}`, 10 + i, who), '{}');
+    }
+    assert.deepEqual(
+      store.chats().map((c) => c.name),
+      ['1203', '+33 6 00 00 00 03', '~ Bob', 'Alice'],
+    );
+    assert.deepEqual(
+      store.messages(GROUP, 10).map((m) => m.senderName),
+      ['Alice', '~ Bob', '+33 6 00 00 00 03'],
+    );
+    assert.equal(store.message(GROUP, 'g1')?.senderName, '~ Bob');
   });
 });

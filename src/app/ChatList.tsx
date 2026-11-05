@@ -13,11 +13,14 @@ import { asWidget } from './widgets.ts';
 /** Recherche insensible à la casse et aux accents. */
 export const fold = (s: string): string => s.normalize('NFD').replaceAll(/\p{M}/gu, '').toLowerCase();
 
+/** Texte de l'avatar : sans le « ~ » des noms publics (initiales du nom). */
+export const avatarText = (name: string): string => name.replace(/^~ /u, '');
+
 function ChatRow(chat: Chat, live: Accessor<Chat>): Gtk.Widget {
   return asWidget(
     <Gtk.ListBoxRow name={chat.id} cssClasses={['chat-row']} tooltipText={live((c) => c.name)}>
       <Gtk.Box spacing={12} marginTop={8} marginBottom={8} marginStart={8} marginEnd={8}>
-        <Adw.Avatar size={44} text={live((c) => c.name)} showInitials />
+        <Adw.Avatar size={44} text={live((c) => avatarText(c.name))} showInitials={live((c) => /\p{L}/u.test(c.name))} />
         <Gtk.Box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand spacing={2}>
           <Gtk.Box spacing={6}>
             <Gtk.Label label={live((c) => c.name)} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />

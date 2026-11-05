@@ -95,6 +95,30 @@ export const Event = z.discriminatedUnion('type', [
 ]);
 export type Event = z.infer<typeof Event>;
 
+/** Chiffres découpés en blocs de tailles données (le reste en dernier bloc). */
+function groups(s: string, sizes: readonly number[]): string {
+  const out: string[] = [];
+  let i = 0;
+  for (const n of sizes) {
+    out.push(s.slice(i, i + n));
+    i += n;
+  }
+  return [...out, s.slice(i)].filter((g) => g !== '').join(' ');
+}
+
+/**
+ * Numéro international lisible (`33612345678` → `+33 6 12 34 56 78`) pour quelques pays
+ * courants ; les autres restent groupés en un bloc après l'indicatif présumé.
+ */
+export function formatPhone(digits: string): string {
+  const d = digits.replaceAll(/\D/gu, '');
+  if (d.startsWith('33') && d.length === 11) return `+33 ${groups(d.slice(2), [1, 2, 2, 2, 2])}`;
+  if (d.startsWith('972') && d.length === 12) return `+972 ${groups(d.slice(3), [2, 3, 4])}`;
+  if (d.startsWith('1') && d.length === 11) return `+1 ${groups(d.slice(1), [3, 3, 4])}`;
+  if (d.startsWith('44') && d.length === 12) return `+44 ${groups(d.slice(2), [4, 6])}`;
+  return `+${d}`;
+}
+
 /** Texte court d'un message pour la liste des discussions. */
 export function previewOf(m: Pick<Message, 'kind' | 'text'>): string {
   const label: Record<MessageKind, string> = {

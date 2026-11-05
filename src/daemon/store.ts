@@ -3,7 +3,7 @@
 // sont écrits ici, l'app ne lit que cette base (via l'API HTTP).
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
-import { type Chat, Media, type Message, MessageKind, previewOf } from '../shared/api.ts';
+import { type Chat, formatPhone, Media, type Message, MessageKind, previewOf } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -15,7 +15,10 @@ CREATE TABLE IF NOT EXISTS chats (
 );
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY,
-  name TEXT
+  -- nom du carnet d'adresses (ou nom vérifié d'une entreprise)
+  name TEXT,
+  -- nom public choisi par la personne (« pushName »), affiché « ~ nom » à défaut du carnet
+  notify TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
   chat_id TEXT NOT NULL,
@@ -48,6 +51,7 @@ const ChatRow = z.object({
   unread: z.number(),
   timestamp: z.number(),
   contact: z.nullable(z.string()),
+  notify: z.nullable(z.string()),
   last_kind: z.nullable(z.string()),
   last_text: z.nullable(z.string()),
 });
@@ -62,6 +66,8 @@ const MessageRow = z.object({
   kind: z.string(),
   text: z.string(),
   media: z.nullable(z.string()),
+  contact: z.nullable(z.string()),
+  notify: z.nullable(z.string()),
 });
 
 /** Média JSON de la base, ignoré s'il est invalide. */
@@ -76,7 +82,10 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 1;
+const VERSION = 2;
+
+/** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
+const publicName = (notify: string): string => `~ ${notify}`;
 
 const asKind = (k: string): MessageKind => {
   const parsed = MessageKind.safeParse(k);
@@ -86,7 +95,7 @@ const asKind = (k: string): MessageKind => {
 /** Partie « utilisateur » d'un JID, pour l'affichage d'un contact sans nom. */
 const userPart = (jid: string): string => {
   const user = jid.split('@')[0] ?? jid;
-  return jid.endsWith('@s.whatsapp.net') ? `+${user.split(':')[0] ?? user}` : user;
+  return jid.endsWith('@s.whatsapp.net') ? formatPhone(user.split(':')[0] ?? user) : user;
 };
 
 export class Store {
@@ -106,6 +115,16 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 2) {
+      this.#db.exec('ALTER TABLE contacts ADD COLUMN notify TEXT');
+      // noms publics des messages déjà reçus (le plus récent par personne)
+      this.#db.exec(`
+        INSERT INTO contacts (id, notify)
+          SELECT coalesce(sender, chat_id) AS who, json_extract(raw, '$.pushName') AS push
+          FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
+          WHERE push <> '' GROUP BY who
+        ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
     }
     this.#db.exec(`PRAGMA user_version = ${VERSION}`);
     for (const r of this.#db.prepare('SELECT lid, pn FROM lid_map').all()) {
@@ -163,11 +182,11 @@ export class Store {
     db.prepare('UPDATE OR IGNORE messages SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
     db.prepare('DELETE FROM messages WHERE chat_id = ?').run(lid);
     db.prepare('UPDATE messages SET sender = ? WHERE sender = ?').run(pn, lid);
-    const contact = db.prepare('SELECT name FROM contacts WHERE id = ?').get(lid);
-    if (typeof contact?.['name'] === 'string') {
-      db.prepare('INSERT INTO contacts (id, name) VALUES (?, ?) ON CONFLICT (id) DO NOTHING').run(pn, contact['name']);
-      db.prepare('DELETE FROM contacts WHERE id = ?').run(lid);
-    }
+    db.prepare(
+      `INSERT INTO contacts (id, name, notify) SELECT ?, name, notify FROM contacts WHERE id = ?
+       ON CONFLICT (id) DO UPDATE SET name = coalesce(contacts.name, excluded.name), notify = coalesce(excluded.notify, contacts.notify)`,
+    ).run(pn, lid);
+    db.prepare('DELETE FROM contacts WHERE id = ?').run(lid);
     const chat = db.prepare('SELECT name, unread, timestamp FROM chats WHERE id = ?').get(lid);
     if (chat === undefined) return false;
     db.prepare(
@@ -209,9 +228,17 @@ export class Store {
     }
   }
 
-  upsertContact(id: string, name: string | null): void {
-    if (name === null || name === '') return;
-    this.#db.prepare('INSERT INTO contacts (id, name) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name').run(id, name);
+  /** Contact créé ou mis à jour ; un nom absent (null, vide) ne remplace pas le nom connu. */
+  upsertContact(id: string, names: { name?: string | null; notify?: string | null }): void {
+    const name = names.name === '' ? null : (names.name ?? null);
+    const notify = names.notify === '' ? null : (names.notify ?? null);
+    if (name === null && notify === null) return;
+    this.#db
+      .prepare(
+        `INSERT INTO contacts (id, name, notify) VALUES (?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET name = coalesce(excluded.name, contacts.name), notify = coalesce(excluded.notify, contacts.notify)`,
+      )
+      .run(id, name, notify);
   }
 
   /** Message enregistré (remplacé s'il existe) ; la discussion est créée au besoin. */
@@ -264,7 +291,7 @@ export class Store {
   #chats(where: string, params: SQLInputValue[]): Chat[] {
     const rows = this.#db
       .prepare(
-        `SELECT c.id, c.name, c.unread, c.timestamp, ct.name AS contact,
+        `SELECT c.id, c.name, c.unread, c.timestamp, ct.name AS contact, ct.notify,
                 m.kind AS last_kind, m.text AS last_text
          FROM chats c
          LEFT JOIN contacts ct ON ct.id = c.id
@@ -277,7 +304,7 @@ export class Store {
       .map((r) => z.parse(ChatRow, r));
     return rows.map((r) => ({
       id: r.id,
-      name: r.name ?? r.contact ?? userPart(r.id),
+      name: r.name ?? r.contact ?? (r.notify === null ? userPart(r.id) : publicName(r.notify)),
       group: r.id.endsWith('@g.us'),
       unread: r.unread,
       timestamp: r.timestamp,
@@ -287,7 +314,8 @@ export class Store {
 
   chats(): Chat[] {
     // discussions sans message ni date (contacts du carnet synchronisés) : masquées
-    return this.#chats('WHERE c.timestamp > 0', []);
+    // statuts (« stories ») : hors périmètre
+    return this.#chats("WHERE c.timestamp > 0 AND c.id <> 'status@broadcast'", []);
   }
 
   chat(id: string): Chat | null {
@@ -296,20 +324,30 @@ export class Store {
 
   /** Derniers messages d'une discussion avant `before` (secondes), ordre chronologique. */
   messages(chatId: string, limit: number, before?: number): Message[] {
+    return this.#messages('m.chat_id = ? AND m.timestamp < ? ORDER BY m.timestamp DESC LIMIT ?', [chatId, before ?? Number.MAX_SAFE_INTEGER, limit]).toReversed();
+  }
+
+  /** Un message, tel que l'API le renvoie (noms résolus). */
+  message(chatId: string, id: string): Message | null {
+    return this.#messages('m.chat_id = ? AND m.id = ?', [chatId, id])[0] ?? null;
+  }
+
+  #messages(where: string, params: SQLInputValue[]): Message[] {
     const rows = this.#db
       .prepare(
-        `SELECT m.*, coalesce(m.sender_name, ct.name) AS sender_name FROM messages m
+        `SELECT m.*, ct.name AS contact, coalesce(m.sender_name, ct.notify) AS notify FROM messages m
          LEFT JOIN contacts ct ON ct.id = m.sender
-         WHERE m.chat_id = ? AND m.timestamp < ? ORDER BY m.timestamp DESC LIMIT ?`,
+         WHERE ${where}`,
       )
-      .all(chatId, before ?? Number.MAX_SAFE_INTEGER, limit)
+      .all(...params)
       .map((r) => z.parse(MessageRow, r));
-    return rows.toReversed().map((r) => ({
+    return rows.map((r) => ({
       id: r.id,
       chatId: r.chat_id,
       fromMe: r.from_me === 1,
       sender: r.sender,
-      senderName: r.sender_name,
+      // carnet, sinon nom public (« ~ nom »), sinon numéro
+      senderName: r.sender === null ? null : (r.contact ?? (r.notify === null ? userPart(r.sender) : publicName(r.notify))),
       timestamp: r.timestamp,
       kind: asKind(r.kind),
       text: r.text,

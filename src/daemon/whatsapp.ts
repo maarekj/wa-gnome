@@ -93,6 +93,7 @@ export class WhatsApp {
         const me = sock.user;
         this.#setStatus({ state: 'open', qr: null, error: null, me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null } });
         void this.#resolveLids(sock);
+        void this.#fetchGroups(sock);
       }
       if (u.connection === 'close') {
         const code = statusCode(u.lastDisconnect?.error);
@@ -170,6 +171,13 @@ export class WhatsApp {
       }
     });
 
+    // groupe renommé
+    sock.ev.on('groups.update', (groups) => {
+      const named = groups.filter((g): g is typeof g & { id: string; subject: string } => g.id !== undefined && g.subject !== undefined);
+      for (const g of named) this.#store.upsertChat({ id: g.id, name: g.subject });
+      this.#emitChats(named.map((g) => g.id));
+    });
+
     // noms de groupes : pas toujours présents dans l'historique
     sock.ev.on('groups.upsert', (groups) => {
       for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject });
@@ -182,8 +190,11 @@ export class WhatsApp {
     if (converted === null) return null;
     // discussion et auteur rangés sous le numéro quand il est connu
     const m = { ...converted, chatId: this.#jid(converted.chatId), sender: converted.sender === null ? null : this.#jid(converted.sender) };
+    // nom public de l'auteur : nom de repli d'un contact absent du carnet
+    if (!m.fromMe) this.#store.upsertContact(m.sender ?? m.chatId, { notify: wa.pushName ?? null });
     this.#store.upsertMessage(m, JSON.stringify(wa, BufferJSON.replacer));
-    return m;
+    // relu : noms résolus comme dans les réponses de l'API
+    return this.#store.message(m.chatId, m.id) ?? m;
   }
 
   // ------------------------------------------------------------------ identifiants lid / numéro
@@ -198,7 +209,7 @@ export class WhatsApp {
     const lid = [c.id, c.lid].find((j) => j?.endsWith('@lid') === true);
     const pn = [c.id, c.phoneNumber].find((j) => j?.endsWith('@s.whatsapp.net') === true);
     if (lid !== undefined && pn !== undefined) this.#learn([{ lid, pn }]);
-    this.#store.upsertContact(this.#jid(c.id), c.name ?? c.verifiedName ?? c.notify ?? null);
+    this.#store.upsertContact(this.#jid(c.id), { name: c.name ?? c.verifiedName ?? null, notify: c.notify ?? null });
   }
 
   /** Correspondances portées par la clé d'un message (identifiant « alternatif » de l'auteur). */
@@ -229,6 +240,23 @@ export class WhatsApp {
     logger.info(`lid : ${removed.length} discussion(s) fusionnée(s)`);
     this.#emit({ type: 'chats.delete', ids: removed });
     this.#emitChats(updated);
+  }
+
+  /** Noms des groupes (absents de l'historique pour les groupes sans message récent). */
+  async #fetchGroups(sock: WASocket): Promise<void> {
+    try {
+      const groups = Object.values(await sock.groupFetchAllParticipating());
+      this.#store.transaction(() => {
+        for (const g of groups) {
+          this.#store.upsertChat({ id: g.id, name: g.subject });
+          // participants : correspondances lid / numéro et noms publics éventuels
+          for (const p of g.participants) this.#saveContact(p);
+        }
+      });
+      this.#emitChats(groups.map((g) => g.id));
+    } catch (error) {
+      logger.warn({ error }, 'groupes');
+    }
   }
 
   /** Identifiants anonymes de la base sans numéro connu : demandés à Baileys (table locale). */

@@ -97,8 +97,9 @@ const add = (chatId: string, fromMe: boolean, text: string, ago: number, sender:
 const ALICE = '33600000001@s.whatsapp.net';
 const BOB = '33600000002@s.whatsapp.net';
 const GROUP = '120363000000000001@g.us';
-store.upsertContact(ALICE, 'Alice Martin');
-store.upsertContact(BOB, 'Bob');
+store.upsertContact(ALICE, { name: 'Alice Martin' });
+// absent du carnet : nom public seulement (« ~ Bob »)
+store.upsertContact(BOB, { notify: 'Bob' });
 store.upsertChat({ id: GROUP, name: 'Famille' });
 add(ALICE, false, 'Salut ! Tu es dispo ce soir ?', 30 * H);
 add(ALICE, true, 'Oui, vers 20h ça te va ?', 29 * H);
