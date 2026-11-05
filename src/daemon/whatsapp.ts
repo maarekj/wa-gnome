@@ -15,7 +15,9 @@ import {
   normalizeMessageContent,
   useMultiFileAuthState,
   proto,
+  type Contact,
   type WAMessage,
+  type WAMessageKey,
   type WASocket,
 } from 'baileys';
 import pino from 'pino';
@@ -90,6 +92,7 @@ export class WhatsApp {
       if (u.connection === 'open') {
         const me = sock.user;
         this.#setStatus({ state: 'open', qr: null, error: null, me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null } });
+        void this.#resolveLids(sock);
       }
       if (u.connection === 'close') {
         const code = statusCode(u.lastDisconnect?.error);
@@ -107,12 +110,19 @@ export class WhatsApp {
       }
     });
 
-    sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
+    sock.ev.on('lid-mapping.update', (mapping) => {
+      this.#learn([mapping]);
+    });
+
+    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings }) => {
       this.#store.transaction(() => {
-        for (const c of contacts) this.#store.upsertContact(jidNormalizedUser(c.id), c.name ?? c.verifiedName ?? c.notify ?? null);
+        // correspondances d'abord : les données suivantes sont rangées directement sous le numéro
+        this.#learn(lidPnMappings ?? [], false);
+        for (const m of messages) this.#learnFromKey(m.key);
+        for (const c of contacts) this.#saveContact(c);
         for (const c of chats) {
           if (c.id === null || c.id === undefined) continue;
-          this.#store.upsertChat({ id: jidNormalizedUser(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
+          this.#store.upsertChat({ id: this.#jid(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
         }
         for (const m of messages) this.#saveMessage(m);
       });
@@ -122,7 +132,7 @@ export class WhatsApp {
     sock.ev.on('chats.upsert', (chats) => {
       for (const c of chats) {
         if (c.id === null || c.id === undefined) continue;
-        this.#store.upsertChat({ id: jidNormalizedUser(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
+        this.#store.upsertChat({ id: this.#jid(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
       }
       this.#emitChats(chats.map((c) => c.id));
     });
@@ -130,22 +140,28 @@ export class WhatsApp {
     sock.ev.on('chats.update', (updates) => {
       for (const c of updates) {
         if (c.id === null || c.id === undefined) continue;
-        this.#store.upsertChat({ id: jidNormalizedUser(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
+        this.#store.upsertChat({ id: this.#jid(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
       }
       this.#emitChats(updates.map((c) => c.id));
     });
 
-    sock.ev.on('chats.delete', (ids) => {
+    sock.ev.on('chats.delete', (deleted) => {
+      const ids = deleted.map((id) => this.#jid(id));
       this.#store.deleteChats(ids);
       this.#emit({ type: 'chats.delete', ids });
     });
 
     sock.ev.on('contacts.upsert', (contacts) => {
-      for (const c of contacts) this.#store.upsertContact(jidNormalizedUser(c.id), c.name ?? c.verifiedName ?? c.notify ?? null);
+      for (const c of contacts) this.#saveContact(c);
+    });
+
+    sock.ev.on('contacts.update', (contacts) => {
+      for (const c of contacts) if (c.id !== undefined) this.#saveContact({ ...c, id: c.id });
     });
 
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       for (const wa of messages) {
+        this.#learnFromKey(wa.key);
         const m = this.#saveMessage(wa);
         if (m === null) continue;
         if (type === 'notify' && !m.fromMe) this.#store.incrementUnread(m.chatId);
@@ -156,15 +172,78 @@ export class WhatsApp {
 
     // noms de groupes : pas toujours présents dans l'historique
     sock.ev.on('groups.upsert', (groups) => {
-      for (const g of groups) this.#store.upsertChat({ id: g.id, name: g.subject });
+      for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject });
       this.#emitChats(groups.map((g) => g.id));
     });
   }
 
   #saveMessage(wa: WAMessage): ReturnType<typeof toMessage> {
-    const m = toMessage(wa);
-    if (m !== null) this.#store.upsertMessage(m, JSON.stringify(wa, BufferJSON.replacer));
+    const converted = toMessage(wa);
+    if (converted === null) return null;
+    // discussion et auteur rangés sous le numéro quand il est connu
+    const m = { ...converted, chatId: this.#jid(converted.chatId), sender: converted.sender === null ? null : this.#jid(converted.sender) };
+    this.#store.upsertMessage(m, JSON.stringify(wa, BufferJSON.replacer));
     return m;
+  }
+
+  // ------------------------------------------------------------------ identifiants lid / numéro
+
+  /** Identifiant retenu pour une discussion ou une personne (numéro si connu). */
+  #jid(jid: string | null | undefined): string {
+    return this.#store.canonical(jidNormalizedUser(jid ?? ''));
+  }
+
+  #saveContact(c: Partial<Contact> & { id: string }): void {
+    // un contact peut porter ses deux identifiants
+    const lid = [c.id, c.lid].find((j) => j?.endsWith('@lid') === true);
+    const pn = [c.id, c.phoneNumber].find((j) => j?.endsWith('@s.whatsapp.net') === true);
+    if (lid !== undefined && pn !== undefined) this.#learn([{ lid, pn }]);
+    this.#store.upsertContact(this.#jid(c.id), c.name ?? c.verifiedName ?? c.notify ?? null);
+  }
+
+  /** Correspondances portées par la clé d'un message (identifiant « alternatif » de l'auteur). */
+  #learnFromKey(key: WAMessageKey): void {
+    const pairs = [
+      [key.remoteJid, key.remoteJidAlt],
+      [key.participant, key.participantAlt],
+    ].flatMap(([a, b]) => {
+      const lid = [a, b].find((j) => j?.endsWith('@lid') === true);
+      const pn = [a, b].find((j) => j?.endsWith('@s.whatsapp.net') === true);
+      return lid === undefined || lid === null || pn === undefined || pn === null ? [] : [{ lid, pn }];
+    });
+    if (pairs.length > 0) this.#learn(pairs);
+  }
+
+  /**
+   * Nouvelles correspondances : fusion des discussions en double, signalée à l'app
+   * (`notify` faux pendant la synchronisation de l'historique : liste complète envoyée ensuite).
+   */
+  #learn(pairs: readonly { lid: string; pn: string }[], notify = true): void {
+    const normalized = pairs.flatMap((p) => {
+      const lid = jidNormalizedUser(p.lid.includes('@') ? p.lid : `${p.lid}@lid`);
+      const pn = jidNormalizedUser(p.pn.includes('@') ? p.pn : `${p.pn}@s.whatsapp.net`);
+      return lid.endsWith('@lid') && pn.endsWith('@s.whatsapp.net') ? [{ lid, pn }] : [];
+    });
+    const { removed, updated } = this.#store.addMappings(normalized);
+    if (!notify || removed.length === 0) return;
+    logger.info(`lid : ${removed.length} discussion(s) fusionnée(s)`);
+    this.#emit({ type: 'chats.delete', ids: removed });
+    this.#emitChats(updated);
+  }
+
+  /** Identifiants anonymes de la base sans numéro connu : demandés à Baileys (table locale). */
+  async #resolveLids(sock: WASocket): Promise<void> {
+    const lids = this.#store.unresolvedLids();
+    const CHUNK = 500;
+    try {
+      for (let i = 0; i < lids.length; i += CHUNK) {
+        // oxlint-disable-next-line no-await-in-loop -- lots successifs, sans saturer le magasin de clés
+        const found = await sock.signalRepository.lidMapping.getPNsForLIDs(lids.slice(i, i + CHUNK));
+        if (found !== null) this.#learn(found);
+      }
+    } catch (error) {
+      logger.warn({ error }, 'résolution des lid');
+    }
   }
 
   #parseRaw(raw: string): WAMessage | null {
@@ -213,14 +292,14 @@ export class WhatsApp {
 
   #rawMessage(jid: string | null | undefined, id: string | null | undefined): proto.IMessage | undefined {
     if (jid === null || jid === undefined || id === null || id === undefined) return undefined;
-    const raw = this.#store.raw(jidNormalizedUser(jid), id);
+    const raw = this.#store.raw(this.#jid(jid), id);
     return raw === null ? undefined : (this.#parseRaw(raw)?.message ?? undefined);
   }
 
   #emitChats(ids: readonly (string | null | undefined)[]): void {
     const chats = ids.flatMap((id) => {
       if (id === null || id === undefined) return [];
-      const c = this.#store.chat(jidNormalizedUser(id));
+      const c = this.#store.chat(this.#jid(id));
       return c === null || c.timestamp === 0 ? [] : [c];
     });
     if (chats.length > 0) this.#emit({ type: 'chats', chats });
@@ -265,10 +344,15 @@ export class WhatsApp {
     this.#emitChats([chatId]);
     const sock = this.#sock;
     if (sock === null || this.#status.state !== 'open') return;
+    // clés d'origine des messages (identifiants tels que reçus : lid ou numéro)
     const keys = this.#store
       .messages(chatId, 20)
       .filter((m) => !m.fromMe)
-      .map((m): proto.IMessageKey => (m.sender === null ? { remoteJid: chatId, id: m.id, fromMe: false } : { remoteJid: chatId, id: m.id, fromMe: false, participant: m.sender }));
+      .flatMap((m) => {
+        const raw = this.#store.raw(chatId, m.id);
+        const key = raw === null ? null : (this.#parseRaw(raw)?.key ?? null);
+        return key === null ? [] : [key];
+      });
     if (keys.length > 0) await sock.readMessages(keys);
   }
 

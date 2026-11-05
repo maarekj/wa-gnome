@@ -1,4 +1,4 @@
-// Tests GJS sous Xvfb, bundlés par esbuild :
+// Tests du démon (node --test, src/daemon/*.test.ts), puis tests GJS sous Xvfb, bundlés par esbuild :
 // 1. specs unitaires jasmine-gjs (specs/*.spec.ts, describe / it / expect) ;
 // 2. tests GTK (tests/*.ts) : échec sur avertissement GTK, délai dépassé (boucle infinie) ou
 //    absence de « TEST OK ».
@@ -12,6 +12,16 @@ import { GJS_EXTERNALS, GJS_TSCONFIG } from './build.ts';
 const root = path.resolve(import.meta.dirname, '..');
 const ENV = ['GDK_BACKEND=x11', 'GSK_RENDERER=cairo', 'GTK_A11Y=none'];
 const list = (dir: string, suffix: string): string[] => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(suffix)) : []);
+
+// ---------------------------------------------------------------- démon (node --test)
+const daemonTests = list(path.join(root, 'src', 'daemon'), '.test.ts').map((f) => path.join(root, 'src', 'daemon', f));
+if (process.argv.length <= 2 && daemonTests.length > 0) {
+  const node = spawnSync(process.execPath, ['--test', '--test-reporter=dot', ...daemonTests], { stdio: 'inherit' });
+  if (node.status !== 0) {
+    console.log('ÉCHEC tests du démon');
+    process.exit(1);
+  }
+}
 
 // ---------------------------------------------------------------- specs jasmine-gjs
 const only = process.argv.slice(2).filter((a) => a.endsWith('.spec.ts'));

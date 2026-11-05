@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS messages (
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
+CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender);
+-- identifiant anonyme (…@lid) → numéro (…@s.whatsapp.net) : une personne, une discussion
+CREATE TABLE IF NOT EXISTS lid_map (
+  lid TEXT PRIMARY KEY,
+  pn TEXT NOT NULL
+);
 `;
 
 // lignes SQLite validées : la base peut venir d'une version antérieure
@@ -87,6 +93,9 @@ export class Store {
   readonly #db: DatabaseSync;
   /** base créée avant les médias : messages existants à reconvertir depuis `raw` */
   readonly needsMediaBackfill: boolean;
+  /** lid → numéro, en mémoire (consulté à chaque message) */
+  readonly #pn = new Map<string, string>();
+  #depth = 0;
 
   constructor(file: string) {
     this.#db = new DatabaseSync(file);
@@ -99,6 +108,77 @@ export class Store {
       this.needsMediaBackfill = true;
     }
     this.#db.exec(`PRAGMA user_version = ${VERSION}`);
+    for (const r of this.#db.prepare('SELECT lid, pn FROM lid_map').all()) {
+      if (typeof r['lid'] === 'string' && typeof r['pn'] === 'string') this.#pn.set(r['lid'], r['pn']);
+    }
+  }
+
+  // ------------------------------------------------------------------ identifiants
+
+  /**
+   * Identifiant retenu pour une personne : son numéro s'il est connu (les contacts du carnet
+   * sont indexés par numéro), sinon l'identifiant tel quel.
+   */
+  canonical(jid: string): string {
+    return this.#pn.get(jid) ?? jid;
+  }
+
+  /** Identifiants anonymes présents dans la base sans numéro connu. */
+  unresolvedLids(): string[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT id AS lid FROM chats WHERE id LIKE '%@lid'
+         UNION SELECT DISTINCT sender FROM messages WHERE sender LIKE '%@lid'
+         UNION SELECT id FROM contacts WHERE id LIKE '%@lid'`,
+      )
+      .all();
+    return rows.flatMap((r) => (typeof r['lid'] === 'string' && !this.#pn.has(r['lid']) ? [r['lid']] : []));
+  }
+
+  /**
+   * Correspondances lid → numéro apprises ; les données rangées sous un lid sont fusionnées
+   * dans celles du numéro. Retourne les discussions disparues (lid) et celles mises à jour (numéro).
+   */
+  addMappings(pairs: Iterable<{ lid: string; pn: string }>): { removed: string[]; updated: string[] } {
+    const removed: string[] = [];
+    const updated: string[] = [];
+    this.transaction(() => {
+      for (const { lid, pn } of pairs) {
+        if (lid === pn || this.#pn.get(lid) === pn) continue;
+        this.#pn.set(lid, pn);
+        this.#db.prepare('INSERT INTO lid_map (lid, pn) VALUES (?, ?) ON CONFLICT (lid) DO UPDATE SET pn = excluded.pn').run(lid, pn);
+        if (this.#merge(lid, pn)) {
+          removed.push(lid);
+          updated.push(pn);
+        }
+      }
+    });
+    return { removed, updated };
+  }
+
+  /** Données de `lid` reportées sur `pn` ; true si une discussion `lid` existait. */
+  #merge(lid: string, pn: string): boolean {
+    const db = this.#db;
+    // messages : ceux déjà présents sous le numéro (même id) l'emportent
+    db.prepare('UPDATE OR IGNORE messages SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
+    db.prepare('DELETE FROM messages WHERE chat_id = ?').run(lid);
+    db.prepare('UPDATE messages SET sender = ? WHERE sender = ?').run(pn, lid);
+    const contact = db.prepare('SELECT name FROM contacts WHERE id = ?').get(lid);
+    if (typeof contact?.['name'] === 'string') {
+      db.prepare('INSERT INTO contacts (id, name) VALUES (?, ?) ON CONFLICT (id) DO NOTHING').run(pn, contact['name']);
+      db.prepare('DELETE FROM contacts WHERE id = ?').run(lid);
+    }
+    const chat = db.prepare('SELECT name, unread, timestamp FROM chats WHERE id = ?').get(lid);
+    if (chat === undefined) return false;
+    db.prepare(
+      `INSERT INTO chats (id, name, unread, timestamp) VALUES (:id, :name, :unread, :timestamp)
+       ON CONFLICT (id) DO UPDATE SET
+         name = coalesce(chats.name, excluded.name),
+         unread = chats.unread + excluded.unread,
+         timestamp = max(chats.timestamp, excluded.timestamp)`,
+    ).run({ id: pn, name: typeof chat['name'] === 'string' ? chat['name'] : null, unread: Number(chat['unread'] ?? 0), timestamp: Number(chat['timestamp'] ?? 0) });
+    db.prepare('DELETE FROM chats WHERE id = ?').run(lid);
+    return true;
   }
 
   close(): void {
@@ -155,18 +235,27 @@ export class Store {
 
   /** Tout effacer (déconnexion du compte). */
   clear(): void {
-    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts;');
+    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map;');
+    this.#pn.clear();
   }
 
   /** Plusieurs écritures dans une transaction (synchronisation de l'historique). */
   transaction(fn: () => void): void {
+    // imbrication : seule la transaction extérieure valide ou annule
+    if (this.#depth > 0) {
+      fn();
+      return;
+    }
     this.#db.exec('BEGIN');
+    this.#depth += 1;
     try {
       fn();
       this.#db.exec('COMMIT');
     } catch (error) {
       this.#db.exec('ROLLBACK');
       throw error;
+    } finally {
+      this.#depth -= 1;
     }
   }
 
