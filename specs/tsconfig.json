@@ -1,0 +1,6 @@
+{
+  // Specs jasmine-gjs : code GJS (app et shared) + globales describe / it / expect.
+  "extends": "../tsconfig.gjs.json",
+  "compilerOptions": { "jsxImportSource": "gnim/gtk4", "types": ["jasmine"] },
+  "include": ["./**/*", "../src/app/**/*", "../src/shared/**/*", "../src/env.d.ts"]
+}

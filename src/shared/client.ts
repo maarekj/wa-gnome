@@ -1,0 +1,196 @@
+// Client HTTP + SSE du démon wa-gnome, basé sur libsoup 3 (GJS, sans Node).
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Soup from 'gi://Soup?version=3.0';
+import * as z from 'zod/mini';
+import { Chat, DEFAULT_PORT, Event, Message, Status, TOKEN_FILE } from './api.ts';
+import { errorMessage, HttpError } from './errors.ts';
+
+Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
+Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
+Gio._promisify(Gio.DataInputStream.prototype, 'read_line_async', 'read_line_finish');
+
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+
+/** Délai sans aucune donnée du flux d'événements avant reconnexion (heartbeat : 10 s). */
+const WATCHDOG_MS = 30_000;
+/** Attente entre deux tentatives de connexion au flux. */
+const RETRY_MS = 2000;
+
+
+/** URL du démon (WA_GNOME_URL pour les tests). */
+export const daemonUrl = (): string => GLib.getenv('WA_GNOME_URL') ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+
+/** Dossier de données du démon (même règle que src/daemon/main.ts). */
+export const dataDir = (): string => GLib.getenv('WA_GNOME_DATA_DIR') ?? GLib.build_filenamev([GLib.get_user_data_dir(), 'wa-gnome']);
+
+/** Jeton d'accès écrit par le démon, ou vide (démon jamais lancé). */
+export function readToken(dir = dataDir()): string {
+  try {
+    const [, bytes] = GLib.file_get_contents(GLib.build_filenamev([dir, TOKEN_FILE]));
+    return decoder.decode(bytes).trim();
+  } catch {
+    return '';
+  }
+}
+
+/** État de la liaison app ↔ démon (distinct de la connexion WhatsApp du démon). */
+export type Link = { state: 'connecting' } | { state: 'connected' } | { state: 'error'; message: string };
+
+export class WaClient {
+  readonly url: string;
+  readonly #session = new Soup.Session({ timeout: 30, maxConnsPerHost: 8 });
+  /** flux SSE uniquement : connexion permanente, jamais en concurrence avec les requêtes */
+  readonly #events = new Soup.Session({ timeout: 0, idleTimeout: 0 });
+  readonly #token: () => string;
+
+  constructor(url = daemonUrl(), token: () => string = () => readToken()) {
+    this.url = url.replace(/\/+$/u, '');
+    this.#token = token;
+  }
+
+  #message(method: string, path: string): Soup.Message {
+    const msg = Soup.Message.new(method, `${this.url}${path}`);
+    if (msg === null) throw new Error(`URL invalide : ${this.url}${path}`);
+    msg.get_request_headers().replace('Authorization', `Bearer ${this.#token()}`);
+    return msg;
+  }
+
+  async request<S extends z.ZodMiniType>(method: string, path: string, schema: S, body?: unknown): Promise<z.output<S>> {
+    const msg = this.#message(method, path);
+    if (body !== undefined) msg.set_request_body_from_bytes('application/json', new GLib.Bytes(encoder.encode(JSON.stringify(body))));
+    const bytes = await this.#session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const data = bytes.get_data();
+    const text = data === null ? '' : decoder.decode(data);
+    const status: number = msg.get_status();
+    if (status < 200 || status >= 300) {
+      const parsed = z.object({ error: z.string() }).safeParse(text === '' ? null : JSON.parse(text));
+      throw new HttpError(status, parsed.success ? parsed.data.error : `${method} ${path} : HTTP ${status}`);
+    }
+    return z.parse(schema, text === '' ? null : JSON.parse(text));
+  }
+
+  // ------------------------------------------------------------------ API
+
+  status(): Promise<Status> {
+    return this.request('GET', '/status', Status);
+  }
+
+  chats(): Promise<Chat[]> {
+    return this.request('GET', '/chats', z.array(Chat));
+  }
+
+  messages(chatId: string, limit = 50, before?: number): Promise<Message[]> {
+    const q = `?limit=${limit}${before === undefined ? '' : `&before=${before}`}`;
+    return this.request('GET', `/chats/${encodeURIComponent(chatId)}/messages${q}`, z.array(Message));
+  }
+
+  async send(chatId: string, text: string): Promise<void> {
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/messages`, z.unknown(), { text });
+  }
+
+  async markRead(chatId: string): Promise<void> {
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/read`, z.unknown());
+  }
+
+  async logout(): Promise<void> {
+    await this.request('POST', '/logout', z.unknown());
+  }
+
+  // ------------------------------------------------------------------ événements
+
+  /**
+   * Flux d'événements, reconnecté indéfiniment jusqu'à annulation. `onLink` suit la liaison
+   * (le démon peut être arrêté ou redémarré à tout moment).
+   */
+  async subscribe(cancellable: Gio.Cancellable, onEvent: (e: Event) => void, onLink: (l: Link) => void): Promise<void> {
+    while (!cancellable.is_cancelled()) {
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- reconnexions successives
+        await this.#readEvents(cancellable, onEvent, () => onLink({ state: 'connected' }));
+        if (!cancellable.is_cancelled()) onLink({ state: 'connecting' });
+      } catch (error) {
+        if (cancellable.is_cancelled()) return;
+        onLink({ state: 'error', message: errorMessage(error) });
+      }
+      // oxlint-disable-next-line no-await-in-loop -- attente avant la tentative suivante
+      await sleep(RETRY_MS, cancellable);
+    }
+  }
+
+  async #readEvents(outer: Gio.Cancellable, onEvent: (e: Event) => void, onOpen: () => void): Promise<void> {
+    // annulation propre à cette connexion : le chien de garde coupe un flux muet
+    const cancellable = new Gio.Cancellable();
+    const relay = outer.connect(() => cancellable.cancel());
+    let watchdog = 0;
+    const alive = (): void => {
+      if (watchdog !== 0) GLib.source_remove(watchdog);
+      watchdog = GLib.timeout_add(GLib.PRIORITY_DEFAULT, WATCHDOG_MS, () => {
+        watchdog = 0;
+        cancellable.cancel();
+        return GLib.SOURCE_REMOVE;
+      });
+    };
+    try {
+      const msg = this.#message('GET', '/events');
+      msg.get_request_headers().append('Accept', 'text/event-stream');
+      const input = await this.#events.send_async(msg, GLib.PRIORITY_DEFAULT, cancellable);
+      const status: number = msg.get_status();
+      if (status !== 200) throw new HttpError(status, status === 401 ? 'jeton du démon refusé' : `/events : HTTP ${status}`);
+      onOpen();
+      alive();
+      const lines = new Gio.DataInputStream({ baseStream: input, closeBaseStream: true });
+      let data: string[] = [];
+      try {
+        for (;;) {
+          // oxlint-disable-next-line no-await-in-loop -- lecture séquentielle d'un flux SSE
+          const [bytes] = await lines.read_line_async(GLib.PRIORITY_DEFAULT, cancellable);
+          if (bytes === null) return;
+          alive();
+          const line = decoder.decode(bytes).replace(/\r$/u, '');
+          if (line === '') {
+            if (data.length > 0) dispatch(data.join('\n'), onEvent);
+            data = [];
+          } else if (line.startsWith('data:')) {
+            data.push(line.slice(5).trimStart());
+          }
+        }
+      } finally {
+        lines.close(null);
+      }
+    } catch (error) {
+      // flux coupé par le chien de garde : simple reconnexion
+      if (cancellable.is_cancelled() && !outer.is_cancelled()) return;
+      throw error;
+    } finally {
+      if (watchdog !== 0) GLib.source_remove(watchdog);
+      outer.disconnect(relay);
+    }
+  }
+}
+
+export function dispatch(raw: string, onEvent: (e: Event) => void): void {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  const ev = Event.safeParse(json);
+  if (ev.success) onEvent(ev.data);
+}
+
+function sleep(ms: number, cancellable: Gio.Cancellable): Promise<void> {
+  return new Promise((resolve) => {
+    const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+      cancellable.disconnect(handler);
+      resolve();
+      return GLib.SOURCE_REMOVE;
+    });
+    const handler = cancellable.connect(() => {
+      GLib.source_remove(id);
+      resolve();
+    });
+  });
+}

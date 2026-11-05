@@ -1,0 +1,47 @@
+{
+  "name": "wa-gnome",
+  "description": "Client WhatsApp pour GNOME (GTK 4 + libadwaita, démon Baileys)",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gnim-types": "node scripts/gnim-types.ts",
+    "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/daemon && tsc -p src/shared && tsc -p src/app && tsc -p specs",
+    "lint": "oxlint --type-aware",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "build": "node scripts/build.ts",
+    "daemon": "node src/daemon/main.ts",
+    "start": "node scripts/build.ts && gjs -m dist/app/main.js",
+    "install-local": "node scripts/install.ts",
+    "test": "node scripts/test.ts",
+    "screenshot": "node scripts/screenshot.ts",
+    "fake-daemon": "node scripts/fake-daemon.ts"
+  },
+  "dependencies": {
+    "baileys": "7.0.0-rc14",
+    "gnim": "^1.9.1",
+    "pino": "^9.0.0",
+    "qrcode-generator": "2.0.4",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@girs/adw-1": "^5.5.0",
+    "@girs/gio-2.0": "5.5.0",
+    "@girs/gjs": "^5.5.0",
+    "@girs/glib-2.0": "5.5.0",
+    "@girs/gobject-2.0": "5.5.0",
+    "@girs/gtk-4.0": "^5.5.0",
+    "@girs/pango-1.0": "5.5.0",
+    "@girs/soup-3.0": "^5.5.0",
+    "@types/jasmine": "~3.10.19",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "oxlint": "^1.88.0",
+    "oxlint-tsgolint": "^7.0.2004",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "pnpm@12.9.0",
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "allow",
+    "doom_loop": "ask",
+    "external_directory": "ask",
+    "bash": {
+      "*": "allow",
+      "git add": "ask",
+      "git add *": "ask",
+      "git commit": "ask",
+      "git commit *": "ask",
+      "git push": "ask",
+      "git push *": "ask",
+      "git merge": "ask",
+      "git merge *": "ask",
+      "git rebase": "ask",
+      "git rebase *": "ask"
+    }
+  }
+}

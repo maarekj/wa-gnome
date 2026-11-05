@@ -1,0 +1,38 @@
+{
+  // Base commune du code GJS (app, shared). Bundlé par esbuild.
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "types": [],
+    // gnim est vérifié via des déclarations générées (scripts/gnim-types.ts), pas ses sources
+    "paths": {
+      "gnim": ["./types/gnim/index.d.ts"],
+      "gnim/gobject": ["./types/gnim/gobject.d.ts"],
+      "gnim/dbus": ["./types/gnim/dbus.d.ts"],
+      "gnim/gnome/jsx-runtime": ["./types/gnim/gnome/jsx-runtime.d.ts"],
+      "gnim/gtk4/jsx-runtime": ["./types/gnim/gtk4/jsx-runtime.d.ts"]
+    },
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "noUncheckedSideEffectImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  }
+}

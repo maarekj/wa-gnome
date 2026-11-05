@@ -1,0 +1,48 @@
+# wa-gnome
+
+Client WhatsApp pour GNOME : une application GTK 4 / libadwaita (GJS) et un démon Node qui tient
+la connexion WhatsApp avec [Baileys](https://github.com/WhiskeySockets/Baileys) (protocole
+multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
+
+## Architecture
+- `src/daemon/` : démon **Node 24** (exécuté sans compilation : `node src/daemon/main.ts`), en
+  service systemd utilisateur `wa-gnome-daemon`. GJS ne peut pas faire tourner Baileys (crypto,
+  websockets Node) : d'où ce processus séparé.
+  - `whatsapp.ts` : socket Baileys, appairage (QR), reconnexion, événements → Store.
+  - `store.ts` : base SQLite (`node:sqlite`) des discussions, contacts et messages (WAMessage brut gardé
+    dans `raw` pour les médias et le renvoi).
+  - `convert.ts` : message protobuf → `Message` de l'API.
+  - `server.ts` : API HTTP + SSE sur 127.0.0.1:4180, jeton `Authorization: Bearer` (fichier `token`).
+- `src/shared/api.ts` : **contrat** démon ↔ app (schémas zod/mini), importé des deux côtés ; sans
+  dépendance à Node ni à GJS.
+- `src/shared/` (GJS) : client libsoup 3 (`client.ts`), état réactif (`store.ts`), formats.
+- `src/app/` : application `Adw.Application` en TSX avec gnim (`gnim/gtk4`).
+- Données : `$XDG_DATA_HOME/wa-gnome/` (`auth/` : session WhatsApp, `wa.db`, `token`).
+  Variables : `WA_GNOME_DATA_DIR`, `WA_GNOME_URL` (app), `WA_GNOME_PORT`, `WA_GNOME_LOG` (démon),
+  `WA_GNOME_APP_ID` (app).
+
+## Commandes (dans le shell devenv)
+- `pnpm check` : typecheck + lint (oxlint type-aware) + `pnpm test`. Doit passer avant chaque commit.
+- `pnpm test` : specs jasmine-gjs (`specs/*.spec.ts`), puis tests GJS sous Xvfb (`tests/*.ts`) ;
+  échec sur tout `Gtk-WARNING`/`Gtk-CRITICAL` ou délai dépassé.
+- `pnpm daemon` : lance le démon au premier plan (`WA_GNOME_LOG=debug` pour les journaux Baileys).
+- `pnpm fake-daemon [--state open|qr|connecting] [--port 4798]` : faux démon (même serveur HTTP, vrai
+  Store SQLite) avec des discussions de démonstration et des réponses automatiques. Jeton dans
+  `--dir` (défaut `/tmp/wa-gnome-fake`) : lancer l'app avec `WA_GNOME_DATA_DIR` et `WA_GNOME_URL`.
+- `pnpm screenshot [sortie.png] [--state qr]` : lance l'app sur un écran virtuel (Xvfb), branchée sur
+  le faux démon, et en fait une capture. **Toujours valider un changement d'interface ainsi**, jamais
+  en ouvrant une fenêtre sur l'écran de l'utilisateur ni en utilisant son vrai compte WhatsApp.
+  Interactions : `SCREENSHOT_XDOTOOL="mousemove 150 125 click 1; sleep 1; type bonjour; key Return; sleep 2"`.
+- `pnpm build` / `pnpm start` : construire / lancer l'application.
+- `node scripts/install.ts` : installe le démon (systemd), le lanceur `wa-gnome`, le .desktop, le
+  service D-Bus et les icônes.
+
+## Conventions
+- TypeScript strict ; données externes (HTTP, SQLite, événements) validées avec zod/mini.
+- Interface, commentaires et messages de commit en français.
+- Toute évolution de l'API passe par `src/shared/api.ts` (démon et app vérifiés contre le même schéma).
+- gnim n'est pas React : un composant s'exécute une fois, seules les valeurs liées se mettent à jour.
+  Pour une liste ordonnée, utiliser `keyedBox` / `keyedListBox` (`src/app/KeyedBox.ts`), pas `<For>`.
+- Tout bouton à icône seule a une infobulle.
+- Baileys est non officiel : ne jamais envoyer de message automatisé depuis un vrai compte en test.
+- **Aucun commit, rebase, fusion ni push sans l'ordre explicite de l'utilisateur.**

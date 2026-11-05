@@ -1,0 +1,5 @@
+{
+  // Démon Node (Baileys) : exécuté directement par Node 24 (type stripping), sans bundle.
+  "extends": "../../tsconfig.json",
+  "include": ["./**/*", "../shared/api.ts"]
+}

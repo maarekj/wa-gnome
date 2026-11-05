@@ -1,0 +1,12 @@
+node_modules/
+.devenv/
+.devenv.flake.nix
+devenv.local.nix
+.direnv/
+*.log
+.env
+.env.*
+dist/
+types/
+.idea/
+__pycache__/

@@ -1,0 +1,22 @@
+{
+  // Déclarations pour gnim, dont les sources TypeScript ne passent pas le typecheck avec les
+  // typings @girs actuels. Notre code est vérifié contre ces déclarations (voir `paths`).
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "gnim/gtk4",
+    "types": [],
+    "strict": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmitOnError": false,
+    "rootDir": "types/.gnim-src",
+    "outDir": "types/gnim"
+  },
+  "files": ["src/env.d.ts"],
+  "include": ["types/.gnim-src/**/*.ts"]
+}
