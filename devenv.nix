@@ -34,6 +34,14 @@ in
   env.GDK_PIXBUF_MODULE_FILE = "${pixbuf-loaders}/loaders.cache";
   # schémas GSettings de GTK (sélecteur de fichiers intégré : sans eux, GTK interrompt l'app) ;
   # ajoutés à XDG_DATA_DIRS ici et par le lanceur installé
+  # lecture des vocaux (Opus/Ogg) et des vidéos (H.264/AAC) par GTK (Gtk.MediaFile → GStreamer) ;
+  # chemin repris par le lanceur installé
+  env.GST_PLUGIN_SYSTEM_PATH_1_0 = pkgs.lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" (with pkgs.gst_all_1; [
+    gstreamer
+    gst-plugins-base
+    gst-plugins-good
+    gst-libav
+  ]);
   env.WA_GNOME_GTK_DATA = "${pkgs.gtk4}/share/gsettings-schemas/${pkgs.gtk4.name}";
 
   # Node 24 : démon (Baileys, exécuté sans compilation) et outillage (TypeScript, esbuild, oxlint).
@@ -51,6 +59,7 @@ in
     pkgs.gtk4
     pkgs.libadwaita
     pkgs.libsoup_3 # client HTTP/SSE vers le démon
+    pkgs.gst_all_1.gstreamer # gst-launch-1.0 : fichiers de test (vocaux)
     pkgs.glib
     pkgs.gobject-introspection
     pkgs.curl # debug de l'API du démon

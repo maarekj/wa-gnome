@@ -24,6 +24,28 @@ export const STYLESHEET = `
 .message-media.media-error {
   opacity: 0.5;
 }
+.document {
+  padding: 6px 4px 2px 6px;
+}
+.audio {
+  padding: 4px 4px 0 4px;
+}
+.speed {
+  min-width: 36px;
+  padding: 2px 6px;
+}
+.video-play {
+  background: alpha(black, 0.55);
+  color: white;
+  border-radius: 999px;
+  padding: 14px;
+}
+.video-duration {
+  background: alpha(black, 0.55);
+  color: white;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
 .day-separator {
   background: alpha(currentColor, 0.06);
   border-radius: 999px;

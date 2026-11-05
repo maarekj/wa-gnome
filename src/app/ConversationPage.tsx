@@ -14,6 +14,7 @@ import { keyedBox } from './KeyedBox.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
 import { displaySize, type Loaded, MediaLoader, openViewer, thumbnailTexture } from './media.ts';
 import { MediaFrame } from './MediaFrame.ts';
+import { AudioView, DocumentView, VideoView } from './MediaViews.ts';
 import { asWidget } from './widgets.ts';
 
 /** Élément de la conversation : séparateur de jour ou message. */
@@ -46,7 +47,15 @@ interface BubbleContext {
   readonly chatName: () => string;
 }
 
-/** Types affichés comme image (les autres médias gardent leur libellé : #6). */
+/** Document, vocal ou vidéo (null : pas de média ou type sans lecteur). */
+function mediaView(ctx: BubbleContext, m: Message): Gtk.Widget | null {
+  if (m.media === null) return null;
+  const mm = { ...m, media: m.media };
+  const views: Partial<Record<Message['kind'], (c: BubbleContext, msg: typeof mm) => Gtk.Widget>> = { document: DocumentView, audio: AudioView, video: VideoView };
+  return views[m.kind]?.(ctx, mm) ?? null;
+}
+
+/** Types affichés comme image. */
 const isPicture = (m: Message): m is Message & { media: Media } => m.media !== null && (m.kind === 'image' || m.kind === 'sticker');
 
 /** Image d'un message : miniature tout de suite, image complète une fois téléchargée ; clic : aperçu. */
@@ -86,7 +95,7 @@ function bubble(ctx: BubbleContext) {
       const it = live.peek();
       return it.kind === 'message' ? it.message : m;
     };
-    const picture = isPicture(m) ? MessagePicture(ctx, m) : null;
+    const picture = isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];

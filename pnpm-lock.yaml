@@ -172,6 +172,7 @@ overrides:
   '@girs/giounix-2.0': 5.5.0
   '@girs/soup-3.0': 5.5.0
   '@girs/pango-1.0': 5.5.0
+  '@girs/gst-1.0': 5.5.0
 
 patchedDependencies:
   baileys@7.0.0-rc14: a8f9c66a6f14cbd9f582b76ab9a24538f2de0e8747245c85a60c9088f8cc9687
@@ -217,6 +218,9 @@ importers:
       '@girs/gsk-4.0':
         specifier: 5.6.0
         version: 5.6.0
+      '@girs/gst-1.0':
+        specifier: 5.5.0
+        version: 5.5.0
       '@girs/gtk-4.0':
         specifier: 5.5.0
         version: 5.5.0
@@ -454,6 +458,9 @@ packages:
 
   '@girs/gsk-4.0@5.6.0':
     resolution: {integrity: sha512-F8CSqjWLm0awgpYlm5cb/7u8o1pFIv3Z1TmnZ28eBDGTskE/gzyzhJPEwK15AxxwkJVJwcOW85Fg0A1zJg8nVw==}
+
+  '@girs/gst-1.0@5.5.0':
+    resolution: {integrity: sha512-mqGKrl59wXzqqkO02zA+n2CPC4gWioN6h6piglsjpoQWbINg+Utg8/feL4YyJN5cXnIdqXJqJY4FgOMQMUV+NQ==}
 
   '@girs/gtk-4.0@5.5.0':
     resolution: {integrity: sha512-bDsHBbgmLaxvx3w10i10AicLGNNpEHiBEHHAZUUTutOkt1GRYjHBwC9iR7MRly9ZPL0aFE+c8hJjEXBflg8MtA==}
@@ -1400,6 +1407,13 @@ snapshots:
       '@girs/harfbuzz-0.0': 5.6.0
       '@girs/pango-1.0': 5.5.0
       '@girs/pangocairo-1.0': 5.6.0
+
+  '@girs/gst-1.0@5.5.0':
+    dependencies:
+      '@girs/gjs': 5.5.0
+      '@girs/glib-2.0': 5.5.0
+      '@girs/gmodule-2.0': 5.6.0
+      '@girs/gobject-2.0': 5.5.0
 
   '@girs/gtk-4.0@5.5.0':
     dependencies:

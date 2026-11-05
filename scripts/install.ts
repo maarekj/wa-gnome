@@ -61,6 +61,8 @@ write(
   path.join(binDir, LAUNCHER),
   `#!/usr/bin/env bash
 # Lance wa-gnome (version de développement : ${root}).
+# GStreamer (vocaux, vidéos) : greffons du shell devenv, voir devenv.nix
+export GST_PLUGIN_SYSTEM_PATH_1_0=${shq(process.env['GST_PLUGIN_SYSTEM_PATH_1_0'] ?? '')}
 # chargeurs d'images de GTK avec WebP (autocollants), voir devenv.nix
 export GDK_PIXBUF_MODULE_FILE=${shq(process.env['GDK_PIXBUF_MODULE_FILE'] ?? '')}
 # schémas GSettings de GTK (sélecteur de fichiers « Enregistrer sous… »)

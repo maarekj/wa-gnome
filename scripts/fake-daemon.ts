@@ -2,6 +2,7 @@
 // Discussions de démonstration, réponses automatiques. Pour les captures et les tests de l'app.
 // Usage : node scripts/fake-daemon.ts [--state open|qr|connecting] [--port 4798] [--dir /tmp/…]
 // Le jeton est écrit dans <dir>/token : lancer l'app avec WA_GNOME_DATA_DIR=<dir> WA_GNOME_URL=….
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -83,6 +84,63 @@ const sticker = (s: number): Buffer =>
     return eye || mouth ? [60, 40, 20, 255] : [255, 200, 40, 255];
   });
 
+/** Son WAV (PCM 16 bits mono) : petite mélodie. */
+const wav = (seconds: number): Buffer => {
+  const rate = 16_000;
+  const n = rate * seconds;
+  const data = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i += 1) {
+    const f = [440, 554, 659][Math.floor((i / rate) * 2) % 3] ?? 440;
+    data.writeInt16LE(Math.round(Math.sin((2 * Math.PI * f * i) / rate) * 8000 * Math.min(1, (n - i) / 2000)), i * 2);
+  }
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0);
+  h.writeUInt32LE(36 + data.length, 4);
+  h.write('WAVEfmt ', 8);
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20);
+  h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24);
+  h.writeUInt32LE(rate * 2, 28);
+  h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34);
+  h.write('data', 36);
+  h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+};
+
+/** PDF d'une page avec un texte. */
+const pdf = (text: string): Buffer => {
+  const stream = `BT /F1 24 Tf 72 720 Td (${text}) Tj ET`;
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+};
+
+/** Courte vidéo WebM générée par GStreamer s'il est installé (shell devenv), sinon vide. */
+const video = (): Buffer => {
+  const file = path.join(os.tmpdir(), `wa-gnome-fake-${process.pid}.webm`);
+  const res = spawnSync('gst-launch-1.0', ['-q', 'videotestsrc', 'num-buffers=90', 'pattern=ball', '!', 'video/x-raw,width=480,height=320', '!', 'vp8enc', '!', 'webmmux', '!', 'filesink', `location=${file}`]);
+  if (res.status !== 0) return Buffer.alloc(0);
+  const data = fs.readFileSync(file);
+  fs.rmSync(file, { force: true });
+  return data;
+};
+
 /** Médias des messages de démonstration (id → contenu). */
 const media = new Map<string, { mimetype: string; data: Buffer }>();
 
@@ -113,6 +171,12 @@ add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice');
 add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype: 'image/png', width: 512, height: 512, thumbnail: null, fileName: null, size: null, seconds: null }, data: sticker(512) });
 store.upsertChat({ id: GROUP, unread: 1 });
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
+const none = { width: null, height: null, thumbnail: null, fileName: null, size: null, seconds: null };
+const doc = pdf('Menu du dimanche');
+add(GROUP, false, '', 40 * 60, ALICE, 'Alice', { kind: 'document', media: { ...none, mimetype: 'application/pdf', fileName: 'Menu du dimanche.pdf', size: doc.length }, data: doc });
+const voice = wav(4);
+add(GROUP, false, '', 30 * 60, BOB, 'Bob', { kind: 'audio', media: { ...none, mimetype: 'audio/wav', seconds: 4 }, data: voice });
+add(GROUP, false, 'Le chat du voisin', 20 * 60, BOB, 'Bob', { kind: 'video', media: { ...none, mimetype: 'video/webm', width: 480, height: 320, seconds: 3, thumbnail: landscape(48, 32).toString('base64') }, data: video() });
 const SHOP = '33600000004@s.whatsapp.net';
 const NEWS = '120363000000000002@g.us';
 store.upsertContact(SHOP, { name: 'Boulangerie' });

@@ -11,6 +11,8 @@ import { errorMessage } from '../shared/errors.ts';
 
 Gio._promisify(Gtk.FileDialog.prototype, 'save', 'save_finish');
 Gio._promisify(Gio.File.prototype, 'replace_contents_bytes_async', 'replace_contents_finish');
+Gio._promisify(Gio.File.prototype, 'load_bytes_async', 'load_bytes_finish');
+Gio._promisify(Gtk.FileLauncher.prototype, 'launch', 'launch_finish');
 
 /** Taille d'affichage d'un média de `w`×`h` dans une boîte `max`×`max` (jamais agrandi au-delà de l'original). */
 export function displaySize(w: number | null, h: number | null, max: number, min = 80): [number, number] {
@@ -33,6 +35,8 @@ export class MediaLoader {
   readonly #client: WaClient;
   readonly #cache = new Map<string, Promise<Loaded>>();
   readonly #queue: (() => void)[] = [];
+  /** fichiers en cours d'écriture ou écrits (pas de contenu gardé en mémoire) */
+  readonly #files = new Map<string, Promise<Gio.File>>();
   #running = 0;
 
   constructor(client: WaClient) {
@@ -59,6 +63,28 @@ export class MediaLoader {
       if (this.#cache.size <= KEEP) break;
       this.#cache.delete(old);
     }
+    return promise;
+  }
+
+  /**
+   * Média enregistré dans le cache de l'utilisateur (documents, vocaux, vidéos : ouverts par une
+   * autre application ou lus par GStreamer depuis un fichier). Réutilisé s'il y est déjà.
+   */
+  file(m: Pick<Message, 'chatId' | 'id' | 'timestamp'>, media: Media): Promise<Gio.File> {
+    const key = `file:${m.chatId}/${m.id}`;
+    const pending = this.#files.get(key);
+    if (pending !== undefined) return pending;
+    const dir = GLib.build_filenamev([GLib.get_user_cache_dir(), 'wa-gnome', 'media', GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, `${m.chatId}/${m.id}`, -1)?.slice(0, 24) ?? m.id]);
+    const file = Gio.File.new_for_path(GLib.build_filenamev([dir, suggestedName(m, media).replaceAll('/', '_')]));
+    const promise = (async (): Promise<Gio.File> => {
+      if (file.query_exists(null)) return file;
+      const bytes = await this.#slot(() => this.#client.media(m.chatId, m.id));
+      GLib.mkdir_with_parents(dir, 0o700);
+      await file.replace_contents_bytes_async(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+      return file;
+    })();
+    promise.catch(() => this.#files.delete(key));
+    this.#files.set(key, promise);
     return promise;
   }
 
@@ -89,27 +115,80 @@ export function thumbnailTexture(media: Media): Gdk.Texture | null {
 }
 
 /** Extension de fichier d'un type MIME d'image courant. */
-const EXT: Readonly<Record<string, string>> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+const EXT: Readonly<Record<string, string>> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/wav': 'wav',
+  'video/mp4': 'mp4',
+  'video/3gpp': '3gp',
+  'application/pdf': 'pdf',
+};
+
+/** Extension d'un type MIME (paramètres ignorés : `audio/ogg; codecs=opus`). */
+export const extensionOf = (mimetype: string): string => EXT[mimetype.split(';')[0]?.trim() ?? ''] ?? 'bin';
+
+/** Taille lisible (`1,2 Mo`). */
+export function fmtSize(bytes: number | null): string {
+  if (bytes === null) return '';
+  if (bytes < 1024) return `${bytes} o`;
+  const units = ['Ko', 'Mo', 'Go'];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(v < 10 ? 1 : 0).replace('.', ',')} ${units[i] ?? ''}`;
+}
+
+/** Durée `m:ss` (ou `h:mm:ss`). */
+export function fmtDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
 
 /** Nom de fichier proposé à l'enregistrement. */
 export function suggestedName(m: Pick<Message, 'id' | 'timestamp'>, media: Media): string {
   if (media.fileName !== null && media.fileName !== '') return media.fileName;
   const date = GLib.DateTime.new_from_unix_local(m.timestamp)?.format('%Y-%m-%d_%H-%M-%S') ?? m.id;
-  return `WhatsApp_${date}.${EXT[media.mimetype] ?? 'bin'}`;
+  return `WhatsApp_${date}.${extensionOf(media.mimetype)}`;
 }
 
-async function save(parent: Gtk.Widget, name: string, bytes: GLib.Bytes, toast: (t: string) => void): Promise<void> {
+/** Enregistrer sous… : contenu en mémoire (image) ou fichier du cache (autres médias). */
+export async function save(parent: Gtk.Widget, name: string, content: GLib.Bytes | Gio.File, toast: (t: string) => void): Promise<void> {
   const dialog = new Gtk.FileDialog({ initialName: name, modal: true });
   const root = parent.get_root();
   try {
     const file = await dialog.save(root instanceof Gtk.Window ? root : null, null);
     if (file === null) return;
+    // fichier du cache : relu puis réécrit (copy_async n'est pas utilisable tel quel depuis GJS)
+    const bytes = content instanceof Gio.File ? (await content.load_bytes_async(null))[0] : content;
     await file.replace_contents_bytes_async(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
     toast(`Enregistré : ${file.get_basename() ?? name}`);
   } catch (error) {
     // annulation du sélecteur : pas d'erreur à signaler
     if (error instanceof GLib.Error && error.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED)) return;
     toast(`Enregistrement impossible : ${errorMessage(error)}`);
+  }
+}
+
+/** Ouvre un fichier avec l'application par défaut de son type. */
+export async function openExternal(parent: Gtk.Widget, file: Gio.File, toast: (t: string) => void): Promise<void> {
+  const root = parent.get_root();
+  try {
+    await new Gtk.FileLauncher({ file }).launch(root instanceof Gtk.Window ? root : null, null);
+  } catch (error) {
+    if (error instanceof GLib.Error && error.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED)) return;
+    toast(`Ouverture impossible : ${errorMessage(error)}`);
   }
 }
 
