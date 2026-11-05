@@ -111,7 +111,7 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
               maxSidebarWidth={400}
               $={(self: Adw.NavigationSplitView) => {
                 split = self;
-                self.sidebar = asPage(ChatList({ store }));
+                self.sidebar = asPage(ChatList({ store, toast }));
                 self.content = asPage(ConversationPage({ store, toast }));
                 onCleanup(
                   store.current.subscribe(() => {

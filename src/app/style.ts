@@ -38,6 +38,18 @@ export const STYLESHEET = `
   font-size: 0.8em;
   font-weight: bold;
 }
+.unread-badge.muted {
+  background: alpha(currentColor, 0.15);
+  color: alpha(currentColor, 0.8);
+}
+.unread-badge.dot {
+  min-width: 10px;
+  min-height: 10px;
+  padding: 0;
+}
+.archived-entry {
+  padding: 8px 0;
+}
 .composer-entry {
   background: alpha(currentColor, 0.06);
   border-radius: 18px;

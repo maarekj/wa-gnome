@@ -113,6 +113,16 @@ add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice');
 add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype: 'image/png', width: 512, height: 512, thumbnail: null, fileName: null, size: null, seconds: null }, data: sticker(512) });
 store.upsertChat({ id: GROUP, unread: 1 });
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
+const SHOP = '33600000004@s.whatsapp.net';
+const NEWS = '120363000000000002@g.us';
+store.upsertContact(SHOP, { name: 'Boulangerie' });
+add(SHOP, false, 'Votre commande est prête', 20 * 24 * H);
+store.upsertChat({ id: SHOP, archived: true });
+store.upsertChat({ id: NEWS, name: 'Voisins', mutedUntil: -1 });
+add(NEWS, false, 'Ramassage des encombrants jeudi', 5 * H, BOB, 'Bob');
+add(NEWS, false, 'Merci pour l’info', 4 * H, ALICE, 'Alice');
+store.upsertChat({ id: NEWS, unread: 2 });
+store.upsertChat({ id: ALICE, pinned: Date.now() });
 
 let server: Server | null = null;
 const emit = (e: Event): void => server?.emit(e);
@@ -137,6 +147,37 @@ const backend: Backend = {
   },
   markRead: (chatId) => {
     store.markRead(chatId);
+    emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
+    return Promise.resolve();
+  },
+  chatAction: (chatId, a) => {
+    switch (a.action) {
+      case 'archive':
+        store.upsertChat({ id: chatId, archived: a.value });
+        break;
+      case 'mute':
+        store.upsertChat({ id: chatId, mutedUntil: a.until ?? 0 });
+        break;
+      case 'pin':
+        store.upsertChat({ id: chatId, pinned: a.value ? Date.now() : 0 });
+        break;
+      case 'unread':
+        if (a.value) store.upsertChat({ id: chatId, markedUnread: true });
+        else store.markRead(chatId);
+        break;
+      case 'clear':
+        store.clearMessages(chatId);
+        emit({ type: 'chat.cleared', id: chatId });
+        break;
+      case 'delete':
+        store.deleteChats([chatId]);
+        emit({ type: 'chats.delete', ids: [chatId] });
+        return Promise.resolve();
+      case 'leave':
+        break;
+      default:
+        a satisfies never;
+    }
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
     return Promise.resolve();
   },

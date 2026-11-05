@@ -45,8 +45,38 @@ export const Chat = z.object({
   timestamp: z.number(),
   /** aperçu du dernier message */
   preview: z.string(),
+  /** archivée : absente de la liste principale */
+  archived: z.boolean(),
+  /** mode silencieux jusqu'à (ms depuis l'époque) ; 0 : non ; -1 : toujours */
+  mutedUntil: z.number(),
+  /** épinglée en tête de liste : date de l'épinglage (ms), 0 sinon */
+  pinned: z.number(),
+  /** marquée comme non lue (pastille sans nombre) */
+  markedUnread: z.boolean(),
 });
 export type Chat = z.infer<typeof Chat>;
+
+/** Mode silencieux actif à l'instant `now` (ms). */
+export const isMuted = (c: Pick<Chat, 'mutedUntil'>, now = Date.now()): boolean => c.mutedUntil === -1 || c.mutedUntil > now;
+
+/** Épinglées au plus (limite de WhatsApp). */
+export const MAX_PINNED = 3;
+
+/** Action sur une discussion (`POST /chats/:id/action`). */
+export const ChatAction = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('archive'), value: z.boolean() }),
+  /** `until` : fin du silence (ms), -1 toujours, null pour réactiver les notifications */
+  z.object({ action: z.literal('mute'), until: z.nullable(z.number()) }),
+  z.object({ action: z.literal('pin'), value: z.boolean() }),
+  z.object({ action: z.literal('unread'), value: z.boolean() }),
+  /** effacer les messages, garder la discussion */
+  z.object({ action: z.literal('clear') }),
+  /** supprimer la discussion */
+  z.object({ action: z.literal('delete') }),
+  /** quitter le groupe */
+  z.object({ action: z.literal('leave') }),
+]);
+export type ChatAction = z.infer<typeof ChatAction>;
 
 export const MessageKind = z.enum(['text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contact', 'reaction', 'other']);
 export type MessageKind = z.infer<typeof MessageKind>;
@@ -91,6 +121,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('status'), status: Status }),
   z.object({ type: z.literal('chats'), chats: z.array(Chat) }),
   z.object({ type: z.literal('chats.delete'), ids: z.array(z.string()) }),
+  /** messages d'une discussion effacés */
+  z.object({ type: z.literal('chat.cleared'), id: z.string() }),
   z.object({ type: z.literal('message'), message: Message }),
 ]);
 export type Event = z.infer<typeof Event>;

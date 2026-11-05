@@ -5,13 +5,14 @@
 //   POST /chats/:id/messages        envoi d'un texte { text }
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
 //   POST /chats/:id/read            discussion lue
+//   POST /chats/:id/action          archiver, silencieux, épingler, non lue, effacer, supprimer, quitter
 //   POST /logout                    déconnexion du compte
 //   GET  /events                    flux SSE des événements (voir shared/api.ts)
 // Toutes les routes demandent `Authorization: Bearer <jeton>` (fichier `token` du dossier de données).
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { type Event, SendBody, type Status } from '../shared/api.ts';
+import { ChatAction, type Event, SendBody, type Status } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -23,6 +24,7 @@ export interface Backend {
   readonly status: Status;
   send: (chatId: string, text: string) => Promise<void>;
   markRead: (chatId: string) => Promise<void>;
+  chatAction: (chatId: string, action: ChatAction) => Promise<void>;
   logout: () => Promise<void>;
   media: (chatId: string, id: string) => Promise<{ mimetype: string; data: Buffer }>;
 }
@@ -108,6 +110,13 @@ export function startServer(opts: { host: string; port: number; token: string; s
         await opts.wa().markRead(chatId);
         json(res, 200, {});
         return;
+      case 'POST /chats/:id/action': {
+        const body = ChatAction.safeParse(await readBody(req));
+        if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
+        await opts.wa().chatAction(chatId, body.data);
+        json(res, 200, {});
+        return;
+      }
       case 'POST /logout':
         await opts.wa().logout();
         json(res, 200, {});

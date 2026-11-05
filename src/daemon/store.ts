@@ -11,7 +11,13 @@ CREATE TABLE IF NOT EXISTS chats (
   id TEXT PRIMARY KEY,
   name TEXT,
   unread INTEGER NOT NULL DEFAULT 0,
-  timestamp INTEGER NOT NULL DEFAULT 0
+  timestamp INTEGER NOT NULL DEFAULT 0,
+  archived INTEGER NOT NULL DEFAULT 0,
+  -- fin du mode silencieux (ms) ; -1 : toujours
+  muted_until INTEGER NOT NULL DEFAULT 0,
+  -- date d'épinglage (ms), 0 : non épinglée
+  pinned INTEGER NOT NULL DEFAULT 0,
+  marked_unread INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY,
@@ -38,6 +44,11 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
 CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender);
 -- identifiant anonyme (…@lid) → numéro (…@s.whatsapp.net) : une personne, une discussion
+-- indicateurs du démon (opérations à faire une fois, survivant aux redémarrages)
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS lid_map (
   lid TEXT PRIMARY KEY,
   pn TEXT NOT NULL
@@ -50,6 +61,10 @@ const ChatRow = z.object({
   name: z.nullable(z.string()),
   unread: z.number(),
   timestamp: z.number(),
+  archived: z.number(),
+  muted_until: z.number(),
+  pinned: z.number(),
+  marked_unread: z.number(),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
   last_kind: z.nullable(z.string()),
@@ -82,7 +97,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 2;
+const VERSION = 3;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -97,6 +112,21 @@ const userPart = (jid: string): string => {
   const user = jid.split('@')[0] ?? jid;
   return jid.endsWith('@s.whatsapp.net') ? formatPhone(user.split(':')[0] ?? user) : user;
 };
+
+/** Champs modifiables d'une discussion (absents : inchangés). */
+/** Booléen → 0/1 pour SQLite ; absent : null (inchangé). */
+const flag = (b: boolean | null | undefined): number | null => (b === null || b === undefined ? null : Number(b));
+
+export interface ChatPatch {
+  id: string;
+  name?: string | null;
+  unread?: number | null;
+  timestamp?: number | null;
+  archived?: boolean | null;
+  mutedUntil?: number | null;
+  pinned?: number | null;
+  markedUnread?: boolean | null;
+}
 
 export class Store {
   readonly #db: DatabaseSync;
@@ -115,6 +145,15 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 3) {
+      this.#db.exec(`
+        ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE chats ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE chats ADD COLUMN marked_unread INTEGER NOT NULL DEFAULT 0;`);
+      // état (archivée, silencieux…) connu seulement après une resynchronisation de WhatsApp
+      this.setFlag('resync-chat-state', true);
     }
     if (!fresh && version < 2) {
       this.#db.exec('ALTER TABLE contacts ADD COLUMN notify TEXT');
@@ -187,17 +226,30 @@ export class Store {
        ON CONFLICT (id) DO UPDATE SET name = coalesce(contacts.name, excluded.name), notify = coalesce(excluded.notify, contacts.notify)`,
     ).run(pn, lid);
     db.prepare('DELETE FROM contacts WHERE id = ?').run(lid);
-    const chat = db.prepare('SELECT name, unread, timestamp FROM chats WHERE id = ?').get(lid);
-    if (chat === undefined) return false;
+    if (db.prepare('SELECT 1 FROM chats WHERE id = ?').get(lid) === undefined) return false;
     db.prepare(
-      `INSERT INTO chats (id, name, unread, timestamp) VALUES (:id, :name, :unread, :timestamp)
+      `INSERT INTO chats (id, name, unread, timestamp, archived, muted_until, pinned, marked_unread)
+         SELECT ?, name, unread, timestamp, archived, muted_until, pinned, marked_unread FROM chats WHERE id = ?
        ON CONFLICT (id) DO UPDATE SET
          name = coalesce(chats.name, excluded.name),
          unread = chats.unread + excluded.unread,
-         timestamp = max(chats.timestamp, excluded.timestamp)`,
-    ).run({ id: pn, name: typeof chat['name'] === 'string' ? chat['name'] : null, unread: Number(chat['unread'] ?? 0), timestamp: Number(chat['timestamp'] ?? 0) });
+         timestamp = max(chats.timestamp, excluded.timestamp),
+         archived = max(chats.archived, excluded.archived),
+         muted_until = CASE WHEN chats.muted_until = -1 OR excluded.muted_until = -1 THEN -1 ELSE max(chats.muted_until, excluded.muted_until) END,
+         pinned = max(chats.pinned, excluded.pinned),
+         marked_unread = max(chats.marked_unread, excluded.marked_unread)`,
+    ).run(pn, lid);
     db.prepare('DELETE FROM chats WHERE id = ?').run(lid);
     return true;
+  }
+
+  flag(key: string): boolean {
+    return this.#db.prepare('SELECT 1 FROM meta WHERE key = ?').get(key) !== undefined;
+  }
+
+  setFlag(key: string, on: boolean): void {
+    if (on) this.#db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')").run(key);
+    else this.#db.prepare('DELETE FROM meta WHERE key = ?').run(key);
   }
 
   close(): void {
@@ -206,17 +258,47 @@ export class Store {
 
   // ------------------------------------------------------------------ écriture
 
-  /** Discussion créée ou mise à jour ; les champs absents sont conservés. */
-  upsertChat(c: { id: string; name?: string | null; unread?: number | null; timestamp?: number | null }): void {
+  /** Discussion créée ou mise à jour ; les champs absents (null, undefined) sont conservés. */
+  upsertChat(c: ChatPatch): void {
     this.#db
       .prepare(
-        `INSERT INTO chats (id, name, unread, timestamp) VALUES (:id, :name, coalesce(:unread, 0), coalesce(:timestamp, 0))
+        `INSERT INTO chats (id, name, unread, timestamp, archived, muted_until, pinned, marked_unread)
+         VALUES (:id, :name, coalesce(:unread, 0), coalesce(:timestamp, 0), coalesce(:archived, 0), coalesce(:muted, 0), coalesce(:pinned, 0), coalesce(:marked, 0))
          ON CONFLICT (id) DO UPDATE SET
            name = coalesce(excluded.name, chats.name),
            unread = coalesce(:unread, chats.unread),
-           timestamp = max(chats.timestamp, excluded.timestamp)`,
+           timestamp = max(chats.timestamp, excluded.timestamp),
+           archived = coalesce(:archived, chats.archived),
+           muted_until = coalesce(:muted, chats.muted_until),
+           pinned = coalesce(:pinned, chats.pinned),
+           marked_unread = coalesce(:marked, chats.marked_unread)`,
       )
-      .run({ id: c.id, name: c.name ?? null, unread: c.unread ?? null, timestamp: c.timestamp ?? null });
+      .run({
+        id: c.id,
+        name: c.name ?? null,
+        unread: c.unread ?? null,
+        timestamp: c.timestamp ?? null,
+        archived: flag(c.archived),
+        muted: c.mutedUntil ?? null,
+        pinned: c.pinned ?? null,
+        marked: flag(c.markedUnread),
+      });
+  }
+
+  /** Messages d'une discussion effacés (la discussion reste). */
+  clearMessages(chatId: string): void {
+    this.#db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
+  }
+
+  /** Nombre de discussions épinglées. */
+  pinnedCount(): number {
+    return Number(this.#db.prepare('SELECT count(*) AS n FROM chats WHERE pinned > 0').get()?.['n'] ?? 0);
+  }
+
+  /** Dernier message (brut) d'une discussion : clé et date pour les modifications d'état WhatsApp. */
+  lastRaw(chatId: string): string | null {
+    const row = this.#db.prepare('SELECT raw FROM messages WHERE chat_id = ? ORDER BY timestamp DESC LIMIT 1').get(chatId);
+    return typeof row?.['raw'] === 'string' ? row['raw'] : null;
   }
 
   deleteChats(ids: readonly string[]): void {
@@ -257,7 +339,7 @@ export class Store {
   }
 
   markRead(chatId: string): void {
-    this.#db.prepare('UPDATE chats SET unread = 0 WHERE id = ?').run(chatId);
+    this.#db.prepare('UPDATE chats SET unread = 0, marked_unread = 0 WHERE id = ?').run(chatId);
   }
 
   /** Tout effacer (déconnexion du compte). */
@@ -291,7 +373,8 @@ export class Store {
   #chats(where: string, params: SQLInputValue[]): Chat[] {
     const rows = this.#db
       .prepare(
-        `SELECT c.id, c.name, c.unread, c.timestamp, ct.name AS contact, ct.notify,
+        `SELECT c.id, c.name, c.unread, c.timestamp, c.archived, c.muted_until, c.pinned, c.marked_unread,
+                ct.name AS contact, ct.notify,
                 m.kind AS last_kind, m.text AS last_text
          FROM chats c
          LEFT JOIN contacts ct ON ct.id = c.id
@@ -309,6 +392,10 @@ export class Store {
       unread: r.unread,
       timestamp: r.timestamp,
       preview: r.last_kind === null ? '' : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '' }),
+      archived: r.archived !== 0,
+      mutedUntil: r.muted_until,
+      pinned: r.pinned,
+      markedUnread: r.marked_unread !== 0,
     }));
   }
 

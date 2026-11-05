@@ -5,7 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createRoot } from 'gnim';
-import { previewOf } from '../shared/api.ts';
+import { isMuted, previewOf } from '../shared/api.ts';
 import { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { Store } from '../shared/store.ts';
@@ -29,6 +29,8 @@ store.onIncoming = (m, chat) => {
     store.markRead(m.chatId);
     return;
   }
+  // mode silencieux : ni notification ni son
+  if (chat !== undefined && isMuted(chat)) return;
   const n = new Gio.Notification();
   const name = chat?.name ?? m.senderName ?? m.chatId.split('@')[0] ?? '';
   n.set_title(chat?.group === true && m.senderName !== null ? `${m.senderName} · ${name}` : name);

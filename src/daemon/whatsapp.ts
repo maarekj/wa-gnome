@@ -15,15 +15,18 @@ import {
   normalizeMessageContent,
   useMultiFileAuthState,
   proto,
+  ALL_WA_PATCH_NAMES,
+  type ChatUpdate,
   type Contact,
+  type SignalKeyStore,
   type WAMessage,
   type WAMessageKey,
   type WASocket,
 } from 'baileys';
 import pino from 'pino';
-import type { Event, Status } from '../shared/api.ts';
+import { type ChatAction, type Event, MAX_PINNED, type Status } from '../shared/api.ts';
 import { mediaOf, seconds, toMessage } from './convert.ts';
-import type { Store } from './store.ts';
+import type { ChatPatch, Store } from './store.ts';
 
 const logger = pino({ level: process.env['WA_GNOME_LOG'] ?? 'warn' });
 
@@ -45,6 +48,7 @@ export class WhatsApp {
   readonly #mediaDir: string;
   readonly #emit: (e: Event) => void;
   #sock: WASocket | null = null;
+  #keys: SignalKeyStore | null = null;
   #status: Status = { state: 'starting', qr: null, me: null, error: null };
   #stopped = false;
 
@@ -68,6 +72,7 @@ export class WhatsApp {
     this.#stopped = false;
     fs.mkdirSync(this.#authDir, { recursive: true, mode: 0o700 });
     const { state, saveCreds } = await useMultiFileAuthState(this.#authDir);
+    this.#keys = state.keys;
     // version du client web annoncée : la plus récente connue, sinon celle de Baileys
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
     const sock = makeWASocket({
@@ -94,6 +99,7 @@ export class WhatsApp {
         this.#setStatus({ state: 'open', qr: null, error: null, me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null } });
         void this.#resolveLids(sock);
         void this.#fetchGroups(sock);
+        void this.#resyncChatState(sock);
       }
       if (u.connection === 'close') {
         const code = statusCode(u.lastDisconnect?.error);
@@ -123,7 +129,7 @@ export class WhatsApp {
         for (const c of contacts) this.#saveContact(c);
         for (const c of chats) {
           if (c.id === null || c.id === undefined) continue;
-          this.#store.upsertChat({ id: this.#jid(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
+          this.#store.upsertChat(this.#chatPatch(c, c.id));
         }
         for (const m of messages) this.#saveMessage(m);
       });
@@ -133,7 +139,7 @@ export class WhatsApp {
     sock.ev.on('chats.upsert', (chats) => {
       for (const c of chats) {
         if (c.id === null || c.id === undefined) continue;
-        this.#store.upsertChat({ id: this.#jid(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
+        this.#store.upsertChat(this.#chatPatch(c, c.id));
       }
       this.#emitChats(chats.map((c) => c.id));
     });
@@ -141,7 +147,7 @@ export class WhatsApp {
     sock.ev.on('chats.update', (updates) => {
       for (const c of updates) {
         if (c.id === null || c.id === undefined) continue;
-        this.#store.upsertChat({ id: this.#jid(c.id), name: c.name ?? null, unread: c.unreadCount ?? null, timestamp: seconds(c.conversationTimestamp) || null });
+        this.#store.upsertChat(this.#chatPatch(c, c.id));
       }
       this.#emitChats(updates.map((c) => c.id));
     });
@@ -240,6 +246,40 @@ export class WhatsApp {
     logger.info(`lid : ${removed.length} discussion(s) fusionnée(s)`);
     this.#emit({ type: 'chats.delete', ids: removed });
     this.#emitChats(updated);
+  }
+
+  /**
+   * État des discussions (archivée, silencieux, épinglée, non lue) relu depuis WhatsApp : base
+   * antérieure à son enregistrement. Les versions locales de l'« app state » sont oubliées pour
+   * recevoir un instantané complet, rejoué comme des mises à jour (`chats.update`).
+   */
+  async #resyncChatState(sock: WASocket): Promise<void> {
+    if (!this.#store.flag('resync-chat-state') || this.#keys === null) return;
+    try {
+      await this.#keys.set({ 'app-state-sync-version': Object.fromEntries(ALL_WA_PATCH_NAMES.map((n) => [n, null])) });
+      await sock.resyncAppState(ALL_WA_PATCH_NAMES, false);
+      this.#store.setFlag('resync-chat-state', false);
+      this.#emit({ type: 'chats', chats: this.#store.chats() });
+      logger.info('état des discussions resynchronisé');
+    } catch (error) {
+      logger.warn({ error }, 'resynchronisation de l’état des discussions');
+    }
+  }
+
+  /** Discussion Baileys (historique ou mise à jour) → champs du Store ; champs absents inchangés. */
+  #chatPatch(c: Partial<ChatUpdate>, id: string): ChatPatch {
+    const patch: ChatPatch = { id: this.#jid(id), name: c.name ?? null, timestamp: seconds(c.conversationTimestamp) || null };
+    // -1 : « marquée comme non lue » (synchronisation), 0 : lue
+    if (c.unreadCount === -1) patch.markedUnread = true;
+    else if (c.unreadCount !== null && c.unreadCount !== undefined) {
+      patch.unread = c.unreadCount;
+      if (c.unreadCount === 0) patch.markedUnread = false;
+    }
+    if (typeof c.markedAsUnread === 'boolean') patch.markedUnread = c.markedAsUnread;
+    if (typeof c.archived === 'boolean') patch.archived = c.archived;
+    if ('muteEndTime' in c) patch.mutedUntil = muteEnd(c.muteEndTime);
+    if ('pinned' in c) patch.pinned = c.pinned === null || c.pinned === undefined ? 0 : seconds(c.pinned);
+    return patch;
   }
 
   /** Noms des groupes (absents de l'historique pour les groupes sans message récent). */
@@ -367,7 +407,59 @@ export class WhatsApp {
   }
 
   /** Discussion lue : accusés de lecture des derniers messages reçus, compteur remis à zéro. */
+  /** Identifiant d'une discussion tel que WhatsApp le connaît (lid ou numéro) et ses derniers messages. */
+  #target(chatId: string): { jid: string; lastMessages: { key: WAMessageKey; messageTimestamp: number }[] } {
+    const raw = this.#store.lastRaw(chatId);
+    const last = raw === null ? null : this.#parseRaw(raw);
+    if (last === null) return { jid: chatId, lastMessages: [] };
+    return { jid: last.key.remoteJid ?? chatId, lastMessages: [{ key: last.key, messageTimestamp: seconds(last.messageTimestamp) }] };
+  }
+
+  /** Action du menu d'une discussion : appliquée sur WhatsApp, puis localement. */
+  async chatAction(chatId: string, a: ChatAction): Promise<void> {
+    const sock = this.#open();
+    const { jid, lastMessages } = this.#target(chatId);
+    switch (a.action) {
+      case 'archive':
+        await sock.chatModify({ archive: a.value, lastMessages }, jid);
+        this.#store.upsertChat({ id: chatId, archived: a.value });
+        break;
+      case 'mute':
+        // WhatsApp : fin du silence en ms, -1 pour toujours ; null réactive
+        await sock.chatModify({ mute: a.until }, jid);
+        this.#store.upsertChat({ id: chatId, mutedUntil: a.until ?? 0 });
+        break;
+      case 'pin':
+        if (a.value && this.#store.pinnedCount() >= MAX_PINNED) throw new Error(`${MAX_PINNED} discussions épinglées au plus`);
+        await sock.chatModify({ pin: a.value }, jid);
+        this.#store.upsertChat({ id: chatId, pinned: a.value ? Date.now() : 0 });
+        break;
+      case 'unread':
+        await sock.chatModify({ markRead: !a.value, lastMessages }, jid);
+        if (a.value) this.#store.upsertChat({ id: chatId, markedUnread: true });
+        else this.#store.markRead(chatId);
+        break;
+      case 'clear':
+        await sock.chatModify({ clear: true, lastMessages }, jid);
+        this.#store.clearMessages(chatId);
+        this.#emit({ type: 'chat.cleared', id: chatId });
+        break;
+      case 'delete':
+        await sock.chatModify({ delete: true, lastMessages }, jid);
+        this.#store.deleteChats([chatId]);
+        this.#emit({ type: 'chats.delete', ids: [chatId] });
+        return;
+      case 'leave':
+        await sock.groupLeave(chatId);
+        break;
+      default:
+        a satisfies never;
+    }
+    this.#emitChats([chatId]);
+  }
+
   async markRead(chatId: string): Promise<void> {
+    const marked = this.#store.chat(chatId)?.markedUnread === true;
     this.#store.markRead(chatId);
     this.#emitChats([chatId]);
     const sock = this.#sock;
@@ -382,6 +474,11 @@ export class WhatsApp {
         return key === null ? [] : [key];
       });
     if (keys.length > 0) await sock.readMessages(keys);
+    // « marquée comme non lue » sur un appareil : levée partout
+    if (marked) {
+      const { jid, lastMessages } = this.#target(chatId);
+      await sock.chatModify({ markRead: true, lastMessages }, jid);
+    }
   }
 
   /** Déconnexion du compte (l'appareil disparaît de la liste du téléphone). */
@@ -396,5 +493,12 @@ export class WhatsApp {
     this.#sock = null;
   }
 }
+
+/** Fin du mode silencieux en ms (-1 : toujours, 0 : non) ; certaines sources la donnent en secondes. */
+const muteEnd = (t: number | { toNumber: () => number } | null | undefined): number => {
+  const v = seconds(t);
+  if (v === -1 || v <= 0) return v === -1 ? -1 : 0;
+  return v < 1e12 ? v * 1000 : v;
+};
 
 const normalizeContent = (wa: WAMessage | null): proto.IMessage | undefined => (wa === null ? undefined : normalizeMessageContent(wa.message));

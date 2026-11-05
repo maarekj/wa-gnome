@@ -1,15 +1,16 @@
 // État de l'application : application des événements du démon, ordre des messages.
 import type { Chat, Message } from '../src/shared/api.ts';
-import { formatPhone, previewOf } from '../src/shared/api.ts';
+import { formatPhone, isMuted, previewOf } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf } from '../src/app/ConversationPage.tsx';
-import { fold } from '../src/app/ChatList.tsx';
+import { fold, visibleChats } from '../src/app/ChatList.tsx';
+import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
 import { displaySize } from '../src/app/media.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, ...extra });
-const chat = (id: string, timestamp: number, name = id): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '' });
+const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, ...extra });
 
 describe('mergeMessage', () => {
   it('insère à sa place chronologique', () => {
@@ -27,6 +28,53 @@ describe('mergeMessage', () => {
 describe('sortChats', () => {
   it('plus récente d’abord, puis par nom', () => {
     expect(sortChats([chat('x', 1), chat('y', 5), chat('b', 1, 'B'), chat('a', 1, 'A')]).map((c) => c.id)).toEqual(['y', 'a', 'b', 'x']);
+  });
+
+  it('épinglées en tête, la dernière épinglée d’abord', () => {
+    expect(sortChats([chat('x', 9), chat('p1', 1, 'p1', { pinned: 100 }), chat('p2', 2, 'p2', { pinned: 200 })]).map((c) => c.id)).toEqual(['p2', 'p1', 'x']);
+  });
+});
+
+/** Libellés des entrées du menu d'une discussion (sections à plat). */
+const labels = (c: Chat, pinned = 0): string[] => {
+  const menu = chatMenu(c, pinned, 1000);
+  const out: string[] = [];
+  for (let s = 0; s < menu.get_n_items(); s += 1) {
+    const section = menu.get_item_link(s, 'section');
+    if (section === null) continue;
+    for (let i = 0; i < section.get_n_items(); i += 1) out.push(String(section.get_item_attribute_value(i, 'label', null)?.unpack()));
+  }
+  return out;
+};
+
+describe('archivées, silencieux, menu', () => {
+  const all = [chat('a', 1, 'Alice'), chat('b', 2, 'Boulangerie', { archived: true })];
+
+  it('archivées à part, mais trouvées par la recherche', () => {
+    expect(visibleChats(all, '', false).map((c) => c.id)).toEqual(['a']);
+    expect(visibleChats(all, '', true).map((c) => c.id)).toEqual(['b']);
+    expect(visibleChats(all, 'boul', false).map((c) => c.id)).toEqual(['b']);
+  });
+
+  it('mode silencieux', () => {
+    expect(isMuted({ mutedUntil: 0 }, 1000)).toBeFalse();
+    expect(isMuted({ mutedUntil: -1 }, 1000)).toBeTrue();
+    expect(isMuted({ mutedUntil: 2000 }, 1000)).toBeTrue();
+    expect(isMuted({ mutedUntil: 500 }, 1000)).toBeFalse();
+  });
+
+  it('entrées du menu selon l’état', () => {
+    expect(labels(chat('a', 1))).toEqual(['Archiver la discussion', 'Mode silencieux', 'Épingler la discussion', 'Marquer comme non lue', 'Effacer la discussion…', 'Supprimer la discussion…']);
+    expect(labels(chat('g', 1, 'G', { group: true, archived: true, mutedUntil: -1, pinned: 5, unread: 2 }))).toEqual([
+      'Désarchiver la discussion',
+      'Réactiver les notifications',
+      'Désépingler la discussion',
+      'Marquer comme lue',
+      'Effacer la discussion…',
+      'Quitter le groupe…',
+    ]);
+    // 3 épinglées : plus d'entrée « Épingler »
+    expect(labels(chat('a', 1), 3)).not.toContain('Épingler la discussion');
   });
 });
 
