@@ -7,7 +7,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Media, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, type Quoted, uploadKind } from '../shared/api.ts';
+import { DELETED_TEXT, editability, type Media, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
@@ -39,7 +39,8 @@ export function itemsOf(messages: readonly Message[], group: boolean): Item[] {
     }
     const known = m.sender !== null || m.senderName !== null;
     const showSender = group && !m.fromMe && known && (previous === null || previous.fromMe || previous.sender !== m.sender);
-    items.push({ kind: 'message', key: `m:${m.id}`, message: m, showSender });
+    // supprimé : clé différente, bulle reconstruite (média et citation retirés)
+    items.push({ kind: 'message', key: m.deleted ? `m:${m.id}:x` : `m:${m.id}`, message: m, showSender });
     previous = m;
   }
   return items;
@@ -60,6 +61,10 @@ interface BubbleContext {
   readonly pictures: Pictures;
   /** infos d'un message envoyé (accusés) */
   readonly info: (m: Message) => void;
+  /** modifier un de mes messages (zone de saisie) */
+  readonly edit: (m: Message) => void;
+  /** supprimer pour tous ou pour moi (après confirmation) */
+  readonly remove: (parent: Gtk.Widget, m: Message, action: 'revoke' | 'delete-for-me') => void;
 }
 
 /** Coches d'un message envoyé (comme WhatsApp). */
@@ -95,6 +100,16 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   const infoAction = new Gio.SimpleAction({ name: 'info' });
   infoAction.connect('activate', () => ctx.info(msg()));
   group.add_action(infoAction);
+  const editAction = new Gio.SimpleAction({ name: 'edit' });
+  editAction.connect('activate', () => ctx.edit(msg()));
+  group.add_action(editAction);
+  // entrée grisée (délai dépassé) : action désactivée
+  group.add_action(new Gio.SimpleAction({ name: 'edit-late', enabled: false }));
+  for (const [name, action] of [['revoke', 'revoke'], ['delete-for-me', 'delete-for-me']] as const) {
+    const a = new Gio.SimpleAction({ name });
+    a.connect('activate', () => ctx.remove(widget, msg(), action));
+    group.add_action(a);
+  }
   const replyAction = new Gio.SimpleAction({ name: 'reply' });
   replyAction.connect('activate', () => ctx.reply(msg()));
   group.add_action(replyAction);
@@ -105,10 +120,36 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   });
   group.add_action(copy);
   widget.insert_action_group('msg', group);
+  const openMenu = (model: Gio.Menu, x: number, y: number): void => {
+    const menu = Gtk.PopoverMenu.new_from_model_full(model, Gtk.PopoverMenuFlags.NESTED);
+    menu.hasArrow = false;
+    menu.halign = Gtk.Align.START;
+    menu.set_parent(widget);
+    menu.set_pointing_to(new Gdk.Rectangle({ x: Math.round(x), y: Math.round(y), width: 1, height: 1 }));
+    menu.connect('closed', () => {
+      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        menu.unparent();
+        return GLib.SOURCE_REMOVE;
+      });
+    });
+    menu.popup();
+  };
   const popup = (x: number, y: number): void => {
     const model = new Gio.Menu();
+    const m = msg();
+    const age = Date.now() / 1000 - m.timestamp;
+    // message supprimé pour tous : seulement « Supprimer pour moi »
+    if (m.deleted) {
+      model.append('Supprimer pour moi…', 'msg.delete-for-me');
+      openMenu(model, x, y);
+      return;
+    }
     model.append('Répondre', 'msg.reply');
-    if (msg().fromMe) model.append('Infos du message', 'msg.info');
+    if (m.fromMe) model.append('Infos du message', 'msg.info');
+    // modification : mes messages texte et légendes ; grisée après le délai de WhatsApp
+    const editable = editability(m);
+    if (editable === 'yes') model.append(m.kind === 'text' ? 'Modifier' : 'Modifier la légende', 'msg.edit');
+    else if (editable === 'late') model.append('Modifier (plus de 15 min : impossible)', 'msg.edit-late');
     const reactions = new Gio.Menu();
     const mine = myReaction(msg());
     for (const emoji of QUICK_REACTIONS) {
@@ -124,18 +165,11 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
     }
     model.append_submenu('Réagir', reactions);
     if (msg().text !== '') model.append('Copier le texte', 'msg.copy');
-    const menu = Gtk.PopoverMenu.new_from_model_full(model, Gtk.PopoverMenuFlags.NESTED);
-    menu.hasArrow = false;
-    menu.halign = Gtk.Align.START;
-    menu.set_parent(widget);
-    menu.set_pointing_to(new Gdk.Rectangle({ x: Math.round(x), y: Math.round(y), width: 1, height: 1 }));
-    menu.connect('closed', () => {
-      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-        menu.unparent();
-        return GLib.SOURCE_REMOVE;
-      });
-    });
-    menu.popup();
+    const danger = new Gio.Menu();
+    if (m.fromMe && age < REVOKE_WINDOW_S) danger.append('Supprimer pour tous…', 'msg.revoke');
+    danger.append('Supprimer pour moi…', 'msg.delete-for-me');
+    model.append_section(null, danger);
+    openMenu(model, x, y);
   };
   // capture : avant le menu du texte sélectionnable
   const click = new Gtk.GestureClick({ button: Gdk.BUTTON_SECONDARY, propagationPhase: Gtk.PropagationPhase.CAPTURE });
@@ -189,6 +223,29 @@ function MessagePicture(ctx: BubbleContext, m: Message & { media: Media }): Gtk.
   return frame;
 }
 
+/** Message supprimé pour tous : mention seule (pas de média, de citation ni de réactions). */
+function DeletedBubble(ctx: BubbleContext, m: Message, msg: () => Message, live: Accessor<Item>): Gtk.Widget {
+  return asWidget(
+    <Gtk.Box name={`m:${m.id}`} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
+      <Gtk.Box
+        orientation={Gtk.Orientation.VERTICAL}
+        spacing={2}
+        cssClasses={['bubble', m.fromMe ? 'outgoing' : 'incoming', 'deleted']}
+        $={(self: Gtk.Box) => {
+          attachBubbleMenu(ctx, self, msg);
+        }}
+      >
+        <Gtk.Label visible={live((it) => it.kind === 'message' && it.showSender)} label={m.senderName ?? ''} xalign={0} cssClasses={['caption-heading', 'accent']} />
+        <Gtk.Box spacing={6}>
+          <Gtk.Image iconName="action-unavailable-symbolic" cssClasses={['dim-label']} />
+          <Gtk.Label label={m.fromMe ? 'Vous avez supprimé ce message' : DELETED_TEXT} xalign={0} cssClasses={['dim-label', 'deleted-text']} />
+        </Gtk.Box>
+        <Gtk.Label label={fmtTime(m.timestamp)} halign={Gtk.Align.END} cssClasses={['caption', 'dim-label']} />
+      </Gtk.Box>
+    </Gtk.Box>,
+  );
+}
+
 function bubble(ctx: BubbleContext) {
   return (item: Item, live: Accessor<Item>): Gtk.Widget => {
     if (item.kind === 'day') return asWidget(<Gtk.Label label={item.label} halign={Gtk.Align.CENTER} marginTop={12} marginBottom={4} cssClasses={['day-separator', 'caption']} />);
@@ -197,12 +254,13 @@ function bubble(ctx: BubbleContext) {
       const it = live.peek();
       return it.kind === 'message' ? it.message : m;
     };
+    if (m.deleted) return DeletedBubble(ctx, m, msg, live);
     const picture = isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
     return asWidget(
-      <Gtk.Box name={item.key} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
+      <Gtk.Box name={`m:${m.id}`} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
         <Gtk.Box
           orientation={Gtk.Orientation.VERTICAL}
           spacing={2}
@@ -231,6 +289,7 @@ function bubble(ctx: BubbleContext) {
             maxWidthChars={picture === null ? 60 : 1}
           />
           <Gtk.Box spacing={4} halign={Gtk.Align.END}>
+            <Gtk.Label label="Modifié" visible={live(() => msg().edited)} tooltipText="Message modifié par son auteur" cssClasses={['caption', 'dim-label', 'edited-mark']} />
             <Gtk.Label label={live(() => fmtTime(msg().timestamp))} cssClasses={['caption', 'dim-label']} />
             {/* coches des messages envoyés */}
             <Gtk.Label
@@ -254,6 +313,23 @@ function bubble(ctx: BubbleContext) {
   };
 }
 
+/** Suppression d'un message, après confirmation (comme WhatsApp). */
+function confirmRemove(parent: Gtk.Widget, store: Store, m: Message, action: 'revoke' | 'delete-for-me', toast: (t: string) => void): void {
+  const forAll = action === 'revoke';
+  const dialog = new Adw.AlertDialog({
+    heading: forAll ? 'Supprimer pour tous ?' : 'Supprimer pour moi ?',
+    body: forAll ? 'Le message sera remplacé par « Ce message a été supprimé » pour tous les participants.' : 'Le message sera supprimé de cet ordinateur et de vos autres appareils. Les autres participants le verront toujours.',
+  });
+  dialog.add_response('cancel', 'Annuler');
+  dialog.add_response('ok', 'Supprimer');
+  dialog.set_response_appearance('ok', Adw.ResponseAppearance.DESTRUCTIVE);
+  dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
+    if (response !== 'ok') return;
+    store.client.messageAction(m.chatId, m.id, { action }).catch((error: unknown) => toast(`Suppression impossible : ${errorMessage(error)}`));
+  });
+  dialog.present(parent);
+}
+
 /** Composer : `register` reçoit la fonction d'ajout de fichiers (dépôt sur toute la conversation). */
 function Composer({ store, chatId, toast, register }: { store: Store; chatId: Accessor<string | null>; toast: (text: string) => void; register: (add: (files: Gio.File[]) => void) => void }): JSX.Element {
   const [sending, setSending] = createState(false);
@@ -261,6 +337,8 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
   // « document » : fichiers envoyés tels quels (pas de compression des photos par WhatsApp)
   const [asDocument, setAsDocument] = createState(false);
   let view: Gtk.TextView | null = null;
+  /** texte placé dans la saisie au début d'une modification (retiré si elle est abandonnée) */
+  let editedText: string | null = null;
 
   const addFiles = (files: Gio.File[], textures: Gdk.Texture[] = []): void => {
     for (const t of textures) setAttachments([...attachments.peek(), fromTexture(t)]);
@@ -277,6 +355,31 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
     if (id === null || buffer === undefined || sending.peek()) return;
     const text = buffer.text.trim();
     const files = attachments.peek();
+    // modification d'un de mes messages : nouveau texte à la place de l'ancien
+    const editing = store.editing.peek();
+    if (editing !== null) {
+      if (files.length > 0) toast('Pièces jointes ignorées pendant une modification');
+      if (text === '' || text === editing.text) {
+        store.setEditing(null);
+        buffer.set_text('', -1);
+        return;
+      }
+      setSending(true);
+      const edit = async (): Promise<void> => {
+        try {
+          await store.client.messageAction(editing.chatId, editing.id, { action: 'edit', text });
+          store.setEditing(null);
+          buffer.set_text('', -1);
+        } catch (error) {
+          toast(`Modification impossible : ${errorMessage(error)}`);
+        } finally {
+          setSending(false);
+          view?.grab_focus();
+        }
+      };
+      void edit();
+      return;
+    }
     if (text === '' && files.length === 0) return;
     setSending(true);
     // réponse : portée par le message texte, ou par le premier fichier
@@ -314,7 +417,31 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
         // réponse choisie : saisie au premier plan
         onCleanup(
           store.replyTo.subscribe(() => {
-            if (store.replyTo.peek() !== null) view?.grab_focus();
+            if (store.replyTo.peek() === null) return;
+            // répondre pendant une modification : la modification est abandonnée
+            if (store.editing.peek() !== null) {
+              store.setEditing(null);
+              view?.buffer.set_text('', -1);
+            }
+            view?.grab_focus();
+          }),
+        );
+        // modification : texte d'origine dans la saisie, curseur à la fin ; pas de réponse en même temps
+        onCleanup(
+          store.editing.subscribe(() => {
+            const m = store.editing.peek();
+            if (view === null) return;
+            // modification terminée sans envoi (autre discussion, message supprimé) : texte retiré
+            if (m === null) {
+              if (editedText !== null && view.buffer.text === editedText) view.buffer.set_text('', -1);
+              editedText = null;
+              return;
+            }
+            editedText = m.text;
+            store.setReplyTo(null);
+            view.buffer.set_text(m.text, -1);
+            view.buffer.place_cursor(view.buffer.get_end_iter());
+            view.grab_focus();
           }),
         );
         // autre discussion : pièces jointes abandonnées
@@ -326,6 +453,24 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
         );
       }}
     >
+      {/* modification en cours : texte d'origine, annulable (croix, Échap) */}
+      <Gtk.Box spacing={8} visible={store.editing((m) => m !== null)} cssClasses={['reply-banner']}>
+        <Gtk.Image iconName="document-edit-symbolic" valign={Gtk.Align.CENTER} cssClasses={['accent']} />
+        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} hexpand>
+          <Gtk.Label label={store.editing((m) => (m === null || m.kind === 'text' ? 'Modification du message' : 'Modification de la légende'))} xalign={0} cssClasses={['caption-heading', 'accent']} />
+          <Gtk.Label label={store.editing((m) => m?.text.replaceAll('\n', ' ') ?? '')} xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['caption']} />
+        </Gtk.Box>
+        <Gtk.Button
+          iconName="window-close-symbolic"
+          tooltipText="Annuler la modification (Échap)"
+          valign={Gtk.Align.CENTER}
+          cssClasses={['flat', 'circular']}
+          onClicked={() => {
+            store.setEditing(null);
+            view?.buffer.set_text('', -1);
+          }}
+        />
+      </Gtk.Box>
       {/* réponse en cours : message cité, annulable (croix, Échap) */}
       <Gtk.Box spacing={8} visible={store.replyTo((r) => r !== null)} cssClasses={['reply-banner']}>
         <Gtk.Image iconName="mail-reply-sender-symbolic" valign={Gtk.Align.CENTER} cssClasses={['accent']} />
@@ -385,6 +530,11 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
               view = self;
               const keys = new Gtk.EventControllerKey();
               keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
+                if (keyval === Gdk.KEY_Escape && store.editing.peek() !== null) {
+                  store.setEditing(null);
+                  self.buffer.set_text('', -1);
+                  return true;
+                }
                 if (keyval === Gdk.KEY_Escape && store.replyTo.peek() !== null) {
                   store.setReplyTo(null);
                   return true;
@@ -563,7 +713,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     spacing={4}
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

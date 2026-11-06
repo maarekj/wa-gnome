@@ -9,6 +9,7 @@ import {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  generateMessageIDV2,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
@@ -25,9 +26,9 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { type ChatAction, type Event, MAX_PINNED, type Message, type MessageInfo, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { type ChatAction, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import type { Upload } from './server.ts';
-import { mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
+import { type Change, changeOf, editedContent, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
@@ -141,6 +142,11 @@ export class WhatsApp {
           this.#store.upsertChat(this.#chatPatch(c, c.id));
         }
         for (const m of messages) {
+          const change = changeOf(m);
+          if (change !== null) {
+            this.#applyChange(change, false);
+            continue;
+          }
           const reaction = reactionOf(m);
           if (reaction === null) this.#saveMessage(m);
           else this.#react(reaction, false);
@@ -196,6 +202,12 @@ export class WhatsApp {
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       for (const wa of messages) {
         this.#learnFromKey(wa.key);
+        // modification, suppression pour tous : appliquées au message visé
+        const change = changeOf(wa);
+        if (change !== null) {
+          this.#applyChange(change);
+          continue;
+        }
         // réaction : rattachée au message visé, pas de bulle ni de notification
         const reaction = reactionOf(wa);
         if (reaction !== null) {
@@ -232,6 +244,19 @@ export class WhatsApp {
     // accusés : envoyé, reçu, lu, écouté (messages envoyés)
     sock.ev.on('messages.update', (updates) => {
       for (const { key, update } of updates) {
+        // modification (nouveau contenu) ou suppression pour tous (contenu retiré)
+        if (key.id !== null && key.id !== undefined && key.remoteJid !== null && key.remoteJid !== undefined) {
+          const edited = update.message?.editedMessage?.message;
+          if (edited !== null && edited !== undefined) {
+            const e = editedContent(edited);
+            // clé : celle du message technique (auteur du changement), id du message visé
+            const by = key.fromMe === true ? 'me' : jidNormalizedUser(key.participant ?? key.remoteJid);
+            if (e !== null) this.#applyChange({ kind: 'edit', chatId: key.remoteJid, targetId: key.id, text: e.text, msgKind: e.kind, by });
+          } else if (update.message === null && update.messageStubType === proto.WebMessageInfo.StubType.REVOKE) {
+            const revoker = update.key ?? key;
+            this.#applyChange({ kind: 'revoke', chatId: key.remoteJid, targetId: key.id, by: revoker.fromMe === true ? 'me' : jidNormalizedUser(revoker.participant ?? revoker.remoteJid ?? key.remoteJid) });
+          }
+        }
         const status = statusOf(update.status);
         if (status === null || key.fromMe !== true || key.id === null || key.id === undefined) continue;
         const chatId = this.#jid(key.remoteJid);
@@ -263,6 +288,74 @@ export class WhatsApp {
       for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject });
       this.#emitChats(groups.map((g) => g.id));
     });
+  }
+
+  /** Modification ou suppression appliquée ; message visé renvoyé à l'app s'il est connu. */
+  #applyChange(c: Change, notify = true): void {
+    const chatId = this.#jid(c.chatId);
+    const by = c.by === 'me' ? 'me' : this.#jid(c.by);
+    // modification : par l'auteur seulement ; suppression : par l'auteur, ou un admin dans un groupe
+    // (rôle non vérifié ici : tout membre d'un groupe est accepté)
+    if ((c.kind === 'edit' || !chatId.endsWith('@g.us')) && !this.#store.isAuthor(chatId, c.targetId, by)) {
+      logger.warn(`changement ignoré : ${c.kind} d'un message par quelqu'un d'autre que son auteur`);
+      return;
+    }
+    const known = c.kind === 'edit' ? this.#store.applyEdit(chatId, c.targetId, c.text) : this.#store.applyRevoke(chatId, c.targetId);
+    if (!known || !notify) return;
+    const m = this.#store.message(chatId, c.targetId);
+    if (m !== null) {
+      this.#emit({ type: 'message.update', message: m });
+      // aperçu de la discussion (dernier message modifié ou supprimé)
+      this.#emitChats([chatId]);
+    }
+  }
+
+  /** Modifier, supprimer pour tous ou pour moi un message (les miens pour les deux premiers). */
+  async messageAction(chatId: string, id: string, a: MessageAction): Promise<void> {
+    const raw = this.#store.raw(chatId, id);
+    const target = raw === null ? null : this.#parseRaw(raw);
+    if (target === null) throw new Error('message introuvable');
+    const sock = this.#open();
+    const jid = target.key.remoteJid ?? chatId;
+    switch (a.action) {
+      case 'edit':
+        if (target.key.fromMe !== true) throw new Error('seuls vos messages peuvent être modifiés');
+        if (Date.now() / 1000 - seconds(target.messageTimestamp) >= EDIT_WINDOW_S) throw new Error('modification impossible après 15 minutes');
+        await this.#sendEdit(sock, jid, target, a.text);
+        this.#applyChange({ kind: 'edit', chatId, targetId: id, text: a.text, msgKind: 'text', by: 'me' });
+        break;
+      case 'revoke':
+        if (target.key.fromMe !== true) throw new Error('seuls vos messages peuvent être supprimés pour tous');
+        await sock.sendMessage(jid, { delete: target.key });
+        this.#applyChange({ kind: 'revoke', chatId, targetId: id, by: 'me' });
+        break;
+      case 'delete-for-me':
+        await sock.chatModify({ deleteForMe: { deleteMedia: true, key: target.key, timestamp: seconds(target.messageTimestamp) } }, jid);
+        this.#store.deleteMessage(chatId, id);
+        this.#emit({ type: 'message.delete', chatId, id });
+        this.#emitChats([chatId]);
+        break;
+      default:
+        a satisfies never;
+    }
+  }
+
+  /**
+   * Modification : texte, ou légende d'un média. Pour un média, le nouveau contenu ne porte que la
+   * légende (Baileys ne sait construire que des modifications de texte, qui remplaceraient le média).
+   */
+  async #sendEdit(sock: WASocket, jid: string, target: WAMessage, text: string): Promise<void> {
+    const content = normalizeMessageContent(target.message);
+    const type = (['imageMessage', 'videoMessage', 'documentMessage'] as const).find((t) => content?.[t] !== null && content?.[t] !== undefined);
+    if (type === undefined) {
+      await sock.sendMessage(jid, { text, edit: target.key });
+      return;
+    }
+    await sock.relayMessage(
+      jid,
+      { protocolMessage: { key: target.key, type: proto.Message.ProtocolMessage.Type.MESSAGE_EDIT, editedMessage: { [type]: { caption: text } }, timestampMs: Date.now() } },
+      { messageId: generateMessageIDV2(sock.user?.id) },
+    );
   }
 
   /** Réaction enregistrée (auteur rattaché au numéro) ; message visé renvoyé à l'app s'il existe. */

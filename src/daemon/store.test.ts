@@ -192,3 +192,38 @@ void describe('accusés', () => {
     ]);
   });
 });
+
+void describe('modifications et suppressions', () => {
+  void it('appliquées même si elles arrivent avant le message, et gardées s’il est réenregistré', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage(msg(PN, 'a', 10), '{}');
+    assert.equal(store.applyEdit(PN, 'a', 'corrigé'), true);
+    store.upsertMessage(msg(PN, 'a', 10), '{}');
+    assert.deepEqual([store.message(PN, 'a')?.text, store.message(PN, 'a')?.edited], ['corrigé', true]);
+    // suppression d'un message pas encore reçu (historique dans le désordre)
+    assert.equal(store.applyRevoke(PN, 'b'), false);
+    store.setReaction({ chatId: PN, targetId: 'b', sender: 'me', emoji: '👍', timestamp: 1 });
+    store.upsertMessage(msg(PN, 'b', 11), '{}');
+    const b = store.message(PN, 'b');
+    assert.deepEqual([b?.deleted, b?.text, b?.reactions.length], [true, '', 0]);
+    // un message supprimé ne peut plus être modifié
+    store.applyEdit(PN, 'b', 'trop tard');
+    assert.equal(store.message(PN, 'b')?.text, '');
+  });
+});
+
+void describe('auteur des changements', () => {
+  void it('modification acceptée de l’auteur seulement', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage({ ...msg(GROUP, 'g', 10, PN) }, '{}');
+    store.upsertMessage({ ...msg(PN, 'd', 10) }, '{}');
+    store.upsertMessage({ ...msg(PN, 'mine', 10), fromMe: true, status: 'sent' }, '{}');
+    assert.equal(store.isAuthor(GROUP, 'g', PN), true);
+    assert.equal(store.isAuthor(GROUP, 'g', '222@s.whatsapp.net'), false);
+    assert.equal(store.isAuthor(GROUP, 'g', 'me'), false);
+    assert.equal(store.isAuthor(PN, 'd', PN), true);
+    assert.equal(store.isAuthor(PN, 'mine', 'me'), true);
+    assert.equal(store.isAuthor(PN, 'mine', PN), false);
+    assert.equal(store.isAuthor(PN, 'inconnu', PN), true);
+  });
+});

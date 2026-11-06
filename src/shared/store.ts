@@ -46,6 +46,9 @@ export class Store {
   readonly messages: Accessor<readonly Message[]>;
   /** chargement des messages plus anciens de la discussion ouverte */
   readonly older: Accessor<OlderState>;
+  /** message en cours de modification (zone de saisie), null sinon */
+  readonly editing: Accessor<Message | null>;
+  readonly setEditing: (m: Message | null) => void;
   /** message auquel on répond (zone de saisie), null sinon */
   readonly replyTo: Accessor<Message | null>;
   readonly setReplyTo: (m: Message | null) => void;
@@ -77,6 +80,7 @@ export class Store {
     [this.messages, this.#setMessages] = createState<readonly Message[]>([]);
     [this.older, this.#setOlder] = createState<OlderState>('idle');
     [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
+    [this.editing, this.setEditing] = createState<Message | null>(null);
   }
 
   chat(id: string): Chat | undefined {
@@ -149,6 +153,10 @@ export class Store {
       case 'picture':
         this.onPicture?.(e.id);
         break;
+      case 'message.delete':
+        if (e.chatId === this.current.peek()) this.#setMessages(this.messages.peek().filter((m) => m.id !== e.id));
+        if (this.editing.peek()?.id === e.id) this.setEditing(null);
+        break;
       case 'message.update': {
         // remplacé s'il est affiché (pas d'ajout : réaction à un message plus ancien que la page)
         const list = this.messages.peek();
@@ -185,6 +193,7 @@ export class Store {
     this.#afterPhone = false;
     this.#setOlder('idle');
     this.setReplyTo(null);
+    this.setEditing(null);
     if (id === null) return;
     void this.#load(id);
     this.markRead(id);

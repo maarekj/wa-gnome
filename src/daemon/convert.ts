@@ -93,7 +93,41 @@ export function quotedOf(content: proto.IMessage): RawQuoted | null {
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
-export type Converted = Omit<Message, 'quoted' | 'reactions'> & { quoted: RawQuoted | null };
+export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted'> & { quoted: RawQuoted | null; deleted?: boolean };
+
+/** Auteur d'un message ou d'une réaction d'après sa clé. */
+const senderOf = (key: proto.IMessageKey, fallback: string): string => (key.fromMe === true ? 'me' : jidNormalizedUser(key.participant !== null && key.participant !== undefined && key.participant !== '' ? key.participant : (key.remoteJid ?? fallback)));
+
+/** Modification ou suppression d'un message, portée par un message technique (protocolMessage). */
+export type Change = ({ kind: 'edit'; text: string; msgKind: MessageKind } | { kind: 'revoke' }) & {
+  chatId: string;
+  targetId: string;
+  /** auteur du changement : `me`, ou JID tel que reçu */
+  by: string;
+};
+
+/** Nouveau contenu d'une modification → genre et texte (texte, ou légende d'un média). */
+export function editedContent(content: proto.IMessage | null | undefined): { kind: MessageKind; text: string } | null {
+  const inner = normalizeMessageContent(content);
+  const type = getContentType(inner);
+  const extract = type === undefined ? undefined : EXTRACT[type];
+  return inner === undefined || extract === undefined ? null : extract(inner);
+}
+
+/** Modification ou suppression pour tous portée par ce message, ou null. */
+export function changeOf(wa: WAMessage): Change | null {
+  const p = normalizeMessageContent(wa.message)?.protocolMessage;
+  const chatId = wa.key.remoteJid;
+  const targetId = p?.key?.id;
+  if (p === null || p === undefined || chatId === null || chatId === undefined || targetId === null || targetId === undefined) return null;
+  const by = senderOf(wa.key, chatId);
+  if (p.type === proto.Message.ProtocolMessage.Type.REVOKE) return { kind: 'revoke', chatId: jidNormalizedUser(chatId), targetId, by };
+  if (p.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT) {
+    const e = editedContent(p.editedMessage);
+    return e === null ? null : { kind: 'edit', chatId: jidNormalizedUser(chatId), targetId, text: e.text, msgKind: e.kind, by };
+  }
+  return null;
+}
 
 /** Réaction à enregistrer : auteur `me` pour les miennes, JID tel que reçu sinon ; émoji vide : retirée. */
 export interface RawReaction {
@@ -105,8 +139,6 @@ export interface RawReaction {
   timestamp: number;
 }
 
-/** Auteur d'un message ou d'une réaction d'après sa clé. */
-const senderOf = (key: proto.IMessageKey, fallback: string): string => (key.fromMe === true ? 'me' : jidNormalizedUser(key.participant !== null && key.participant !== undefined && key.participant !== '' ? key.participant : (key.remoteJid ?? fallback)));
 
 /** Message de réaction (reactionMessage) → réaction, null sinon. */
 export function reactionOf(wa: WAMessage): RawReaction | null {
@@ -134,6 +166,25 @@ export function toMessage(wa: WAMessage): Converted | null {
   if (remoteJid === null || remoteJid === undefined || id === null || id === undefined) return null;
   // statuts (« stories ») : hors périmètre
   if (remoteJid === 'status@broadcast') return null;
+  // supprimé pour tous (historique) : gardé comme « Ce message a été supprimé »
+  if (wa.messageStubType === proto.WebMessageInfo.StubType.REVOKE) {
+    const fromMe = wa.key.fromMe === true;
+    const participant = wa.key.participant ?? wa.participant ?? null;
+    return {
+      id,
+      chatId: jidNormalizedUser(remoteJid),
+      fromMe,
+      sender: isJidGroup(remoteJid) === true && participant !== null ? jidNormalizedUser(participant) : null,
+      senderName: fromMe ? null : (wa.pushName ?? null),
+      timestamp: seconds(wa.messageTimestamp),
+      kind: 'other',
+      text: '',
+      media: null,
+      quoted: null,
+      status: fromMe ? 'sent' : null,
+      deleted: true,
+    };
+  }
   const content = normalizeMessageContent(wa.message);
   const type = getContentType(content);
   if (content === undefined || type === undefined || HIDDEN.has(type)) return null;

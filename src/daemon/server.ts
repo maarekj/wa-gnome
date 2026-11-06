@@ -8,6 +8,7 @@
 //   POST /chats/:id/media           envoi d'un fichier (corps brut, voir shared/api.ts)
 //   GET  /chats/:id/picture         photo de profil (JPEG), 404 sans photo
 //   GET  /chats/:id/messages/:mid/info   infos d'un message envoyé (accusés par destinataire)
+//   POST /chats/:id/messages/:mid/action  modifier, supprimer pour tous, supprimer pour moi
 //   POST /chats/:id/messages/:mid/react  réaction { emoji } (vide : retirée)
 //   POST /chats/:id/history         messages plus anciens demandés au téléphone (arrivent par l'événement `history`)
 //   POST /chats/:id/read            discussion lue
@@ -18,7 +19,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, MAX_UPLOAD, type MessageInfo, ReactBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
+import { ChatAction, type Event, MAX_UPLOAD, MessageAction, type MessageInfo, ReactBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -40,6 +41,7 @@ export interface Backend {
   requestHistory: (chatId: string) => Promise<boolean>;
   react: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   messageInfo: (chatId: string, messageId: string) => MessageInfo;
+  messageAction: (chatId: string, messageId: string, action: MessageAction) => Promise<void>;
 }
 
 /** Fichier à envoyer. */
@@ -165,6 +167,13 @@ export function startServer(opts: { host: string; port: number; token: string; s
       case 'GET /chats/:id/messages/:mid/info':
         json(res, 200, opts.wa().messageInfo(chatId, messageId));
         return;
+      case 'POST /chats/:id/messages/:mid/action': {
+        const body = MessageAction.safeParse(await readBody(req));
+        if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
+        await opts.wa().messageAction(chatId, messageId, body.data);
+        json(res, 200, {});
+        return;
+      }
       case 'POST /chats/:id/messages/:mid/react': {
         const body = ReactBody.safeParse(await readBody(req));
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));

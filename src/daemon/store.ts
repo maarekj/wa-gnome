@@ -4,7 +4,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
+import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS messages (
   quoted TEXT,
   -- état d'un message envoyé (MessageStatus), null pour les messages reçus
   status TEXT,
+  edited INTEGER NOT NULL DEFAULT 0,
+  deleted INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -115,6 +117,7 @@ const ChatRow = z.object({
   notify: z.nullable(z.string()),
   last_kind: z.nullable(z.string()),
   last_text: z.nullable(z.string()),
+  last_deleted: z.nullable(z.number()),
 });
 
 const MessageRow = z.object({
@@ -129,6 +132,8 @@ const MessageRow = z.object({
   media: z.nullable(z.string()),
   quoted: z.nullable(z.string()),
   status: z.nullable(z.string()),
+  edited: z.number(),
+  deleted: z.number(),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
@@ -160,7 +165,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 8;
+const VERSION = 9;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -212,6 +217,9 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 9) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0; ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
     }
     if (!fresh && version < 8) {
       // accusés par destinataire des messages déjà envoyés : relus dans les messages bruts
@@ -504,8 +512,11 @@ export class Store {
   upsertMessage(m: Converted, raw: string): void {
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, status)
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, edited, deleted, status)
          VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted,
+           -- modification et suppression déjà appliquées (message rejoué par l'historique) : conservées
+           coalesce((SELECT edited FROM messages WHERE chat_id = :chat_id AND id = :id), 0),
+           max(:deleted, coalesce((SELECT deleted FROM messages WHERE chat_id = :chat_id AND id = :id), 0)),
            -- état déjà plus avancé (accusé arrivé avant le message lui-même) : conservé
            (SELECT CASE WHEN :status IS NULL THEN NULL ELSE coalesce((SELECT status FROM messages WHERE chat_id = :chat_id AND id = :id), :status) END))`,
       )
@@ -522,7 +533,15 @@ export class Store {
         media: m.media === null ? null : JSON.stringify(m.media),
         quoted: m.quoted === null ? null : JSON.stringify(m.quoted),
         status: m.status,
+        deleted: m.deleted === true ? 1 : 0,
       });
+    // modification ou suppression arrivée avant (ou rejouée après) le message d'origine : appliquée
+    const edit = this.meta(`edit:${m.chatId}/${m.id}`);
+    if (edit !== null) {
+      const text = z.object({ text: z.string() }).safeParse(JSON.parse(edit));
+      if (text.success) this.#db.prepare('UPDATE messages SET text = ?, edited = 1 WHERE chat_id = ? AND id = ? AND deleted = 0').run(text.data.text, m.chatId, m.id);
+    }
+    if (this.flag(`revoke:${m.chatId}/${m.id}`)) this.applyRevoke(m.chatId, m.id);
     if (m.status !== null) this.setStatus(m.chatId, m.id, m.status);
     this.upsertChat({ id: m.chatId, timestamp: m.timestamp });
   }
@@ -570,7 +589,7 @@ export class Store {
                 (SELECT group_concat(label_id, ',') FROM chat_labels cl WHERE cl.chat_id = c.id) AS labels,
                 EXISTS (SELECT 1 FROM favorites f WHERE f.chat_id = c.id) AS favorite,
                 ct.name AS contact, ct.notify,
-                m.kind AS last_kind, m.text AS last_text
+                m.kind AS last_kind, m.text AS last_text, m.deleted AS last_deleted
          FROM chats c
          LEFT JOIN contacts ct ON ct.id = c.id
          LEFT JOIN messages m ON m.rowid = (
@@ -586,7 +605,7 @@ export class Store {
       group: r.id.endsWith('@g.us'),
       unread: r.unread,
       timestamp: r.timestamp,
-      preview: r.last_kind === null ? '' : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '' }),
+      preview: r.last_kind === null ? '' : r.last_deleted === 1 ? DELETED_TEXT : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '' }),
       archived: r.archived !== 0,
       mutedUntil: r.muted_until,
       pinned: r.pinned,
@@ -636,9 +655,11 @@ export class Store {
       timestamp: r.timestamp,
       kind: asKind(r.kind),
       text: r.text,
-      media: parseMedia(r.media),
-      quoted: this.#resolveQuoted(parseQuoted(r.quoted), r.chat_id),
+      media: r.deleted === 0 ? parseMedia(r.media) : null,
+      quoted: r.deleted === 0 ? this.#resolveQuoted(parseQuoted(r.quoted), r.chat_id) : null,
       reactions: reactions.get(r.id) ?? [],
+      edited: r.edited !== 0,
+      deleted: r.deleted !== 0,
       status: r.from_me === 1 ? effectiveStatus(MessageStatus.safeParse(r.status).data ?? 'sent', r.timestamp) : null,
     }));
   }
@@ -651,6 +672,39 @@ export class Store {
     if (current?.success === true && (current.data === status || (statusRank(current.data) > statusRank(status) && status !== 'error'))) return false;
     this.#db.prepare('UPDATE messages SET status = ? WHERE chat_id = ? AND id = ?').run(status, chatId, id);
     return true;
+  }
+
+  // ------------------------------------------------------------------ modifications, suppressions
+
+  /**
+   * Message modifié : nouveau texte (ou légende), gardé aussi à part pour survivre à un nouvel
+   * enregistrement du message d'origine (historique rejoué). false si le message est inconnu.
+   */
+  /**
+   * Le changement vient-il de l'auteur du message ? `by` : `me` ou JID rattaché au numéro.
+   * Message pas encore reçu : accepté (vérifié à son arrivée impossible ; cas de l'historique).
+   */
+  isAuthor(chatId: string, id: string, by: string): boolean {
+    const row = this.#db.prepare('SELECT from_me, sender FROM messages WHERE chat_id = ? AND id = ?').get(chatId, id);
+    if (row === undefined) return true;
+    if (row['from_me'] === 1) return by === 'me';
+    if (by === 'me') return false;
+    // discussion directe : l'auteur est l'autre personne ; groupe : l'expéditeur enregistré
+    return typeof row['sender'] === 'string' ? row['sender'] === by : by === chatId;
+  }
+
+  applyEdit(chatId: string, id: string, text: string): boolean {
+    const changed = this.#db.prepare('UPDATE messages SET text = ?, edited = 1 WHERE chat_id = ? AND id = ? AND deleted = 0').run(text, chatId, id).changes > 0;
+    this.setMeta(`edit:${chatId}/${id}`, JSON.stringify({ text }));
+    return changed;
+  }
+
+  /** Message supprimé pour tous : contenu effacé, réactions retirées. false si le message est inconnu. */
+  applyRevoke(chatId: string, id: string): boolean {
+    this.setFlag(`revoke:${chatId}/${id}`, true);
+    const changed = this.#db.prepare("UPDATE messages SET deleted = 1, text = '', media = NULL, quoted = NULL WHERE chat_id = ? AND id = ?").run(chatId, id).changes > 0;
+    this.#db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ?').run(chatId, id);
+    return changed;
   }
 
   /** Accusé d'un destinataire : chaque date n'est renseignée qu'une fois (la première connue). */

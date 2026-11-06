@@ -135,6 +135,12 @@ export const STYLESHEET = `
 .ticks.delivered {
   opacity: 0.65;
 }
+.deleted-text {
+  font-style: italic;
+}
+.edited-mark {
+  font-style: italic;
+}
 .day-separator {
   background: alpha(currentColor, 0.06);
   border-radius: 999px;

@@ -1,6 +1,6 @@
 // État de l'application : application des événements du démon, ordre des messages.
 import type { Chat, Message } from '../src/shared/api.ts';
-import { effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
+import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf, myReaction } from '../src/app/ConversationPage.tsx';
@@ -11,7 +11,7 @@ import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
 import { splitReceipts, stepText } from '../src/app/MessageInfo.ts';
 import { displaySize } from '../src/app/media.ts';
 
-const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, ...extra });
+const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
 
 describe('mergeMessage', () => {
@@ -159,6 +159,11 @@ describe('Store.apply', () => {
 });
 
 describe('itemsOf', () => {
+  it('message supprimé : clé différente (bulle reconstruite)', () => {
+    const [, item] = itemsOf([msg('1', 100, { deleted: true })], false);
+    expect(item?.key).toBe('m:1:x');
+  });
+
   it('sépare les jours et n’affiche l’auteur qu’au début d’une suite', () => {
     const day = 86_400;
     const items = itemsOf(
@@ -191,6 +196,16 @@ describe('divers', () => {
     expect(effectiveStatus('pending', 1000, 1100)).toBe('pending');
     expect(effectiveStatus('pending', 1000, 5000)).toBe('sent');
     expect(effectiveStatus('read', 1000, 5000)).toBe('read');
+  });
+
+  it('modification possible, impossible ou trop tard', () => {
+    const now = 10_000;
+    expect(editability({ fromMe: true, kind: 'text', deleted: false, timestamp: now - 60 }, now)).toBe('yes');
+    expect(editability({ fromMe: true, kind: 'image', deleted: false, timestamp: now - 60 }, now)).toBe('yes');
+    expect(editability({ fromMe: true, kind: 'text', deleted: false, timestamp: now - 3600 }, now)).toBe('late');
+    expect(editability({ fromMe: false, kind: 'text', deleted: false, timestamp: now }, now)).toBe('no');
+    expect(editability({ fromMe: true, kind: 'sticker', deleted: false, timestamp: now }, now)).toBe('no');
+    expect(editability({ fromMe: true, kind: 'text', deleted: true, timestamp: now }, now)).toBe('no');
   });
 
   it('genre d’envoi d’un fichier', () => {

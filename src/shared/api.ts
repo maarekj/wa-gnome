@@ -197,7 +197,40 @@ export const Message = z.object({
   reactions: z.array(Reaction),
   /** messages envoyés seulement */
   status: z.nullable(MessageStatus),
+  /** modifié par son auteur (texte ou légende) */
+  edited: z.boolean(),
+  /** supprimé pour tous : contenu effacé, « Ce message a été supprimé » */
+  deleted: z.boolean(),
 });
+
+/** Texte affiché à la place d'un message supprimé pour tous. */
+export const DELETED_TEXT = 'Ce message a été supprimé';
+
+/** Délais de WhatsApp : modification 15 min, suppression pour tous environ 2 jours (secondes). */
+export const EDIT_WINDOW_S = 15 * 60;
+export const REVOKE_WINDOW_S = 2 * 24 * 3600;
+
+/** Genres modifiables : texte, et légende d'une photo, d'une vidéo ou d'un document (comme WhatsApp). */
+export const EDITABLE_KINDS: readonly MessageKind[] = ['text', 'image', 'video', 'document'];
+
+/**
+ * Modification d'un message : possible, impossible (pas le mien, genre non modifiable, supprimé)
+ * ou trop tard (délai de WhatsApp dépassé).
+ */
+export function editability(m: Pick<Message, 'fromMe' | 'kind' | 'deleted' | 'timestamp'>, now = Date.now() / 1000): 'yes' | 'no' | 'late' {
+  if (!m.fromMe || m.deleted || !EDITABLE_KINDS.includes(m.kind)) return 'no';
+  return now - m.timestamp < EDIT_WINDOW_S ? 'yes' : 'late';
+}
+
+/** Action sur un message (`POST /chats/:id/messages/:mid/action`). */
+export const MessageAction = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('edit'), text: z.string().check(z.minLength(1)) }),
+  /** supprimer pour tous (mes messages) */
+  z.object({ action: z.literal('revoke') }),
+  /** supprimer pour moi (localement et sur mes appareils) */
+  z.object({ action: z.literal('delete-for-me') }),
+]);
+export type MessageAction = z.infer<typeof MessageAction>;
 export type Message = z.infer<typeof Message>;
 
 export const SendBody = z.object({
@@ -240,6 +273,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('chat.cleared'), id: z.string() }),
   /** photo de profil changée ou retirée : à recharger */
   z.object({ type: z.literal('picture'), id: z.string() }),
+  /** message supprimé pour moi : retiré de la discussion */
+  z.object({ type: z.literal('message.delete'), chatId: z.string(), id: z.string() }),
   /** message modifié (réactions…) : remplace celui affiché, sans notification */
   z.object({ type: z.literal('message.update'), message: Message }),
   /** historique plus ancien reçu du téléphone (demande `POST /chats/:id/history`) */

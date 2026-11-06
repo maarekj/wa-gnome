@@ -189,6 +189,11 @@ add(GROUP, false, 'Qui vient dimanche ?', 3 * H, BOB, 'Bob');
 const moi = add(GROUP, true, 'Moi !', 3 * H - 60);
 store.setReceipt({ chatId: GROUP, messageId: moi.id, user: BOB, delivered: now - 3 * H + 30, read: now - 3 * H + 120 });
 store.setReceipt({ chatId: GROUP, messageId: moi.id, user: ALICE, delivered: now - 3 * H + 40, read: now - 2 * H });
+// message modifié et message supprimé par Bob (démonstration)
+const dimanche = add(GROUP, false, 'Qui vient dimanhce ?', 3 * H + 30, BOB, 'Bob');
+store.applyEdit(GROUP, dimanche.id, 'Qui vient dimanche midi ?');
+const oups = add(GROUP, false, 'Message envoyé par erreur', 3 * H + 20, BOB, 'Bob');
+store.applyRevoke(GROUP, oups.id);
 const dessert = add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
 // réactions de démonstration
 for (const [sender, emoji] of [[BOB, '❤️'], [ME, '❤️'], [ALICE, '😂']] as const) store.setReaction({ chatId: GROUP, targetId: dessert.id, sender: sender === ME ? 'me' : sender, emoji, timestamp: Date.now() });
@@ -318,6 +323,19 @@ const backend: Backend = {
       emit({ type: 'history', ids: [chatId] });
     }, 800);
     return Promise.resolve(true);
+  },
+  messageAction: (chatId, messageId, a) => {
+    if (a.action === 'delete-for-me') {
+      store.deleteMessage(chatId, messageId);
+      emit({ type: 'message.delete', chatId, id: messageId });
+    } else {
+      if (a.action === 'edit') store.applyEdit(chatId, messageId, a.text);
+      else store.applyRevoke(chatId, messageId);
+      const m = store.message(chatId, messageId);
+      if (m !== null) emit({ type: 'message.update', message: m });
+    }
+    emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
+    return Promise.resolve();
   },
   messageInfo: (chatId, messageId) => ({ receipts: store.receipts(chatId, messageId) }),
   react: (chatId, messageId, emoji) => {
