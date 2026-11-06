@@ -187,7 +187,9 @@ add(ALICE, false, 'La vue depuis le chalet', 2 * H - 120, null, null, { kind: 'i
 add(ALICE, true, '', 2 * H - 60, null, null, { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });
 add(GROUP, false, 'Qui vient dimanche ?', 3 * H, BOB, 'Bob');
 const moi = add(GROUP, true, 'Moi !', 3 * H - 60);
-add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
+const dessert = add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
+// réactions de démonstration
+for (const [sender, emoji] of [[BOB, '❤️'], [ME, '❤️'], [ALICE, '😂']] as const) store.setReaction({ chatId: GROUP, targetId: dessert.id, sender: sender === ME ? 'me' : sender, emoji, timestamp: Date.now() });
 add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype: 'image/png', width: 512, height: 512, thumbnail: null, fileName: null, size: null, seconds: null }, data: sticker(512) });
 store.upsertChat({ id: GROUP, unread: 1 });
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
@@ -298,6 +300,12 @@ const backend: Backend = {
       emit({ type: 'history', ids: [chatId] });
     }, 800);
     return Promise.resolve(true);
+  },
+  react: (chatId, messageId, emoji) => {
+    store.setReaction({ chatId, targetId: messageId, sender: 'me', emoji, timestamp: Date.now() });
+    const m = store.message(chatId, messageId);
+    if (m !== null) emit({ type: 'message.update', message: m });
+    return Promise.resolve();
   },
   sendMedia: (chatId, f) => {
     const kind = uploadKind(f.mimetype, f.asDocument);

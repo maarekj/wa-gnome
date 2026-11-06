@@ -69,6 +69,37 @@ export const STYLESHEET = `
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
 }
+.reactions {
+  margin: -6px 10px 2px 10px;
+}
+.reaction-chip {
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--window-bg-color);
+  box-shadow: 0 0 0 1px alpha(currentColor, 0.12);
+  font-size: 0.9em;
+}
+.reaction-chip.mine {
+  background: alpha(var(--accent-bg-color), 0.2);
+  box-shadow: 0 0 0 1px alpha(var(--accent-bg-color), 0.5);
+}
+.reaction-chip.filter:checked {
+  background: alpha(var(--accent-bg-color), 0.2);
+}
+.reaction-pick {
+  font-size: 1.3em;
+  padding: 2px 6px;
+}
+.reaction-pick.mine {
+  background: alpha(var(--accent-bg-color), 0.2);
+}
+.reaction-emoji {
+  font-size: 1.4em;
+}
+.reaction-people {
+  background: none;
+}
 .day-separator {
   background: alpha(currentColor, 0.06);
   border-radius: 999px;

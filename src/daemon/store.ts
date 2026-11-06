@@ -3,8 +3,8 @@
 // sont écrits ici, l'app ne lit que cette base (via l'API HTTP).
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
-import type { Converted, RawQuoted } from './convert.ts';
-import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, previewOf, type Quoted } from '../shared/api.ts';
+import type { Converted, RawQuoted, RawReaction } from './convert.ts';
+import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, previewOf, type Quoted, type Reaction } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
 CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender);
 -- identifiant anonyme (…@lid) → numéro (…@s.whatsapp.net) : une personne, une discussion
+-- réactions : une par personne et par message (« me » : les miennes)
+CREATE TABLE IF NOT EXISTS reactions (
+  chat_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  emoji TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, message_id, sender)
+);
 -- indicateurs du démon (opérations à faire une fois, survivant aux redémarrages)
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
@@ -138,7 +147,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 5;
+const VERSION = 6;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -186,6 +195,10 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 6) {
+      // réactions jusqu'ici enregistrées comme messages, ou seulement dans `raw` : relues au démarrage
+      this.setFlag('backfill-reactions', true);
     }
     if (!fresh && version < 5) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN quoted TEXT');
@@ -277,6 +290,10 @@ export class Store {
     db.prepare('UPDATE OR IGNORE messages SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
     db.prepare('DELETE FROM messages WHERE chat_id = ?').run(lid);
     db.prepare('UPDATE messages SET sender = ? WHERE sender = ?').run(pn, lid);
+    db.prepare('UPDATE OR IGNORE reactions SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
+    db.prepare('DELETE FROM reactions WHERE chat_id = ?').run(lid);
+    db.prepare('UPDATE OR IGNORE reactions SET sender = ? WHERE sender = ?').run(pn, lid);
+    db.prepare('DELETE FROM reactions WHERE sender = ?').run(lid);
     db.prepare('UPDATE OR IGNORE chat_labels SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
     db.prepare('DELETE FROM chat_labels WHERE chat_id = ?').run(lid);
     db.prepare('UPDATE OR IGNORE favorites SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
@@ -403,6 +420,7 @@ export class Store {
   /** Messages d'une discussion effacés (la discussion reste). */
   clearMessages(chatId: string): void {
     this.#db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
+    this.#db.prepare('DELETE FROM reactions WHERE chat_id = ?').run(chatId);
   }
 
   /** Nombre de discussions épinglées. */
@@ -425,9 +443,11 @@ export class Store {
   deleteChats(ids: readonly string[]): void {
     const del = this.#db.prepare('DELETE FROM chats WHERE id = ?');
     const msgs = this.#db.prepare('DELETE FROM messages WHERE chat_id = ?');
+    const reacts = this.#db.prepare('DELETE FROM reactions WHERE chat_id = ?');
     for (const id of ids) {
       del.run(id);
       msgs.run(id);
+      reacts.run(id);
     }
   }
 
@@ -477,7 +497,7 @@ export class Store {
 
   /** Tout effacer (déconnexion du compte). */
   clear(): void {
-    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM labels; DELETE FROM chat_labels; DELETE FROM favorites;');
+    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM labels; DELETE FROM chat_labels; DELETE FROM favorites; DELETE FROM reactions;');
     this.#pn.clear();
   }
 
@@ -565,6 +585,7 @@ export class Store {
       )
       .all(...params)
       .map((r) => z.parse(MessageRow, r));
+    const reactions = this.#reactions(rows[0]?.chat_id ?? '', rows.map((r) => r.id));
     return rows.map((r) => ({
       id: r.id,
       chatId: r.chat_id,
@@ -577,7 +598,73 @@ export class Store {
       text: r.text,
       media: parseMedia(r.media),
       quoted: this.#resolveQuoted(parseQuoted(r.quoted), r.chat_id),
+      reactions: reactions.get(r.id) ?? [],
     }));
+  }
+
+  // ------------------------------------------------------------------ réactions
+
+  /**
+   * Réaction ajoutée, changée ou retirée (émoji vide) ; une plus ancienne que celle connue est
+   * ignorée (historique rejoué). L'auteur doit être déjà rattaché au numéro (ou « me »).
+   */
+  setReaction(r: RawReaction): void {
+    if (r.emoji === '') {
+      this.#db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ? AND sender = ? AND timestamp <= ?').run(r.chatId, r.targetId, r.sender, r.timestamp);
+      return;
+    }
+    this.#db
+      .prepare(
+        `INSERT INTO reactions (chat_id, message_id, sender, emoji, timestamp) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (chat_id, message_id, sender) DO UPDATE SET emoji = excluded.emoji, timestamp = excluded.timestamp
+         WHERE excluded.timestamp >= reactions.timestamp`,
+      )
+      .run(r.chatId, r.targetId, r.sender, r.emoji, r.timestamp);
+  }
+
+  /** Réactions de messages, groupées par émoji (ordre d'arrivée du premier). */
+  #reactions(chatId: string, ids: readonly string[]): Map<string, Reaction[]> {
+    const out = new Map<string, Reaction[]>();
+    if (ids.length === 0) return out;
+    const rows = this.#db
+      .prepare(`SELECT message_id, sender, emoji FROM reactions WHERE chat_id = ? AND message_id IN (${ids.map(() => '?').join(',')}) ORDER BY timestamp`)
+      .all(chatId, ...ids);
+    for (const r of rows) {
+      if (typeof r['message_id'] !== 'string' || typeof r['sender'] !== 'string' || typeof r['emoji'] !== 'string') continue;
+      const list = out.get(r['message_id']) ?? [];
+      const mine = r['sender'] === 'me';
+      const person = mine ? { id: null, name: 'Vous' } : { id: r['sender'], name: this.#displayName(r['sender']) };
+      const found = list.find((x) => x.emoji === r['emoji']);
+      if (found === undefined) list.push({ emoji: r['emoji'], count: 1, mine, people: [person] });
+      else {
+        found.count += 1;
+        found.mine ||= mine;
+        found.people.push(person);
+      }
+      out.set(r['message_id'], list);
+    }
+    return out;
+  }
+
+  /** Anciennes réactions enregistrées comme messages : retirées de la liste des messages. */
+  reactionMessagesToBackfill(): { chatId: string; id: string; raw: string }[] {
+    return this.#rawRows("kind = 'reaction'");
+  }
+
+  /** Messages dont la forme brute porte des réactions (historique). */
+  messagesWithReactions(): { chatId: string; id: string; raw: string }[] {
+    return this.#rawRows(`raw LIKE '%"reactions":[%'`);
+  }
+
+  #rawRows(where: string): { chatId: string; id: string; raw: string }[] {
+    return this.#db
+      .prepare(`SELECT chat_id, id, raw FROM messages WHERE ${where}`)
+      .all()
+      .flatMap((r) => (typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string' ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }] : []));
+  }
+
+  deleteMessage(chatId: string, id: string): void {
+    this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id);
   }
 
   /** Mes identifiants (numéro, lid) : citations de mes propres messages reconnues. */

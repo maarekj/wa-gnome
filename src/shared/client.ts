@@ -143,6 +143,11 @@ export class WaClient {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
   }
 
+  /** Réagit à un message (émoji vide : réaction retirée). */
+  async react(chatId: string, messageId: string, emoji: string): Promise<void> {
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/react`, z.unknown(), { emoji });
+  }
+
   /** Demande au téléphone des messages plus anciens ; false s'il n'y a rien à demander. */
   async requestHistory(chatId: string): Promise<boolean> {
     const r = await this.request('POST', `/chats/${encodeURIComponent(chatId)}/history`, z.object({ requested: z.boolean() }));

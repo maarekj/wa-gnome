@@ -7,12 +7,13 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Media, previewOf, type Message, type Quoted, uploadKind } from '../shared/api.ts';
+import { type Media, previewOf, type Message, QUICK_REACTIONS, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText } from './ChatList.tsx';
+import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
 import { displaySize, type Loaded, MediaLoader, openViewer, thumbnailTexture } from './media.ts';
@@ -52,7 +53,14 @@ interface BubbleContext {
   readonly reply: (m: Message) => void;
   /** amène le message à l'écran s'il est chargé ; false sinon */
   readonly scrollTo: (id: string) => boolean;
+  /** réagit au message (émoji vide : réaction retirée) */
+  readonly react: (m: Message, emoji: string) => void;
+  /** photos des personnes (fenêtre des réactions) */
+  readonly pictures: Pictures;
 }
+
+/** Ma réaction sur un message, ou null. */
+export const myReaction = (m: Pick<Message, 'reactions'>): string | null => m.reactions.find((r) => r.mine)?.emoji ?? null;
 
 /** Aperçu d'une citation : auteur et début du texte (ou genre du média). */
 export const quotePreview = (q: Pick<Quoted, 'kind' | 'text'>): string => previewOf(q).replaceAll('\n', ' ');
@@ -74,6 +82,9 @@ function QuoteBlock(ctx: BubbleContext, q: Quoted): Gtk.Widget {
 /** Menu d'une bulle (clic droit, appui long) : répondre, copier le texte. */
 function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Message): void {
   const group = new Gio.SimpleActionGroup();
+  const reactAction = new Gio.SimpleAction({ name: 'react', parameterType: new GLib.VariantType('s') });
+  reactAction.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => ctx.react(msg(), param?.get_string()[0] ?? ''));
+  group.add_action(reactAction);
   const replyAction = new Gio.SimpleAction({ name: 'reply' });
   replyAction.connect('activate', () => ctx.reply(msg()));
   group.add_action(replyAction);
@@ -87,8 +98,22 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   const popup = (x: number, y: number): void => {
     const model = new Gio.Menu();
     model.append('Répondre', 'msg.reply');
+    const reactions = new Gio.Menu();
+    const mine = myReaction(msg());
+    for (const emoji of QUICK_REACTIONS) {
+      const it = Gio.MenuItem.new(`${emoji}${emoji === mine ? '  ✓' : ''}`, null);
+      // même émoji que le mien : retiré
+      it.set_action_and_target_value('msg.react', new GLib.Variant('s', emoji === mine ? '' : emoji));
+      reactions.append_item(it);
+    }
+    if (mine !== null && !(QUICK_REACTIONS as readonly string[]).includes(mine)) {
+      const it = Gio.MenuItem.new('Retirer ma réaction', null);
+      it.set_action_and_target_value('msg.react', new GLib.Variant('s', ''));
+      reactions.append_item(it);
+    }
+    model.append_submenu('Réagir', reactions);
     if (msg().text !== '') model.append('Copier le texte', 'msg.copy');
-    const menu = Gtk.PopoverMenu.new_from_model(model);
+    const menu = Gtk.PopoverMenu.new_from_model_full(model, Gtk.PopoverMenuFlags.NESTED);
     menu.hasArrow = false;
     menu.halign = Gtk.Align.START;
     menu.set_parent(widget);
@@ -166,7 +191,7 @@ function bubble(ctx: BubbleContext) {
     const bare = picture !== null && m.kind === 'sticker';
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
     return asWidget(
-      <Gtk.Box name={item.key} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
+      <Gtk.Box name={item.key} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
         <Gtk.Box
           orientation={Gtk.Orientation.VERTICAL}
           spacing={2}
@@ -196,6 +221,7 @@ function bubble(ctx: BubbleContext) {
           />
           <Gtk.Label label={live(() => fmtTime(msg().timestamp))} halign={Gtk.Align.END} cssClasses={['caption', 'dim-label']} />
         </Gtk.Box>
+        {ReactionsRow(ctx, msg, (fn) => live.subscribe(fn), m.fromMe)}
       </Gtk.Box>,
     );
   };
@@ -510,7 +536,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     spacing={4}
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', reply: (m) => store.setReplyTo(m), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', pictures, reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

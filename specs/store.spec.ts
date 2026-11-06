@@ -3,13 +3,14 @@ import type { Chat, Message } from '../src/shared/api.ts';
 import { formatPhone, isMuted, previewOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sortChats, Store } from '../src/shared/store.ts';
-import { itemsOf } from '../src/app/ConversationPage.tsx';
+import { itemsOf, myReaction } from '../src/app/ConversationPage.tsx';
 import { fold, inList, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
+import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
 import { displaySize } from '../src/app/media.ts';
 
-const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, ...extra });
+const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
 
 describe('mergeMessage', () => {
@@ -22,6 +23,26 @@ describe('mergeMessage', () => {
   it('remplace un message déjà présent', () => {
     const merged = mergeMessage([msg('a', 1), msg('b', 2)], msg('a', 1, { text: 'modifié' }));
     expect(merged.map((m) => m.text)).toEqual(['modifié', 'b']);
+  });
+});
+
+describe('myReaction', () => {
+  it('ma réaction parmi celles du message', () => {
+    expect(myReaction({ reactions: [] })).toBeNull();
+    expect(myReaction({ reactions: [{ emoji: '😂', count: 1, mine: false, people: [{ id: 'a', name: 'A' }] }, { emoji: '❤️', count: 2, mine: true, people: [{ id: 'b', name: 'B' }, { id: null, name: 'Vous' }] }] })).toBe('❤️');
+  });
+});
+
+describe('fenêtre des réactions', () => {
+  const reactions = [
+    { emoji: '😂', count: 2, mine: true, people: [{ id: 'a', name: 'A' }, { id: null, name: 'Vous' }] },
+    { emoji: '❤️', count: 1, mine: false, people: [{ id: 'b', name: 'B' }] },
+  ];
+  it('personnes par filtre, total', () => {
+    expect(reactionPeople(reactions, null).map((p) => `${p.name}${p.emoji}`)).toEqual(['A😂', 'Vous😂', 'B❤️']);
+    expect(reactionPeople(reactions, '❤️').map((p) => p.name)).toEqual(['B']);
+    expect(reactionCount(reactions)).toBe('3 réactions');
+    expect(reactionCount([{ emoji: '👍', count: 1, mine: false, people: [] }])).toBe('1 réaction');
   });
 });
 

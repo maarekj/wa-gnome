@@ -9,7 +9,7 @@ export const seconds = (ts: number | { toNumber: () => number } | null | undefin
 };
 
 /** Messages techniques (clés de chiffrement, accusés…) : jamais affichés. */
-const HIDDEN = new Set(['protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'keepInChatMessage']);
+const HIDDEN = new Set(['reactionMessage', 'protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'keepInChatMessage']);
 
 type Extract = (c: proto.IMessage) => { kind: MessageKind; text: string };
 
@@ -92,8 +92,42 @@ export function quotedOf(content: proto.IMessage): RawQuoted | null {
 }
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
-/** Message converti : citation brute en plus (noms résolus par le Store). */
-export type Converted = Omit<Message, 'quoted'> & { quoted: RawQuoted | null };
+/** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
+export type Converted = Omit<Message, 'quoted' | 'reactions'> & { quoted: RawQuoted | null };
+
+/** Réaction à enregistrer : auteur `me` pour les miennes, JID tel que reçu sinon ; émoji vide : retirée. */
+export interface RawReaction {
+  chatId: string;
+  targetId: string;
+  sender: string;
+  emoji: string;
+  /** ms */
+  timestamp: number;
+}
+
+/** Auteur d'un message ou d'une réaction d'après sa clé. */
+const senderOf = (key: proto.IMessageKey, fallback: string): string => (key.fromMe === true ? 'me' : jidNormalizedUser(key.participant !== null && key.participant !== undefined && key.participant !== '' ? key.participant : (key.remoteJid ?? fallback)));
+
+/** Message de réaction (reactionMessage) → réaction, null sinon. */
+export function reactionOf(wa: WAMessage): RawReaction | null {
+  const content = normalizeMessageContent(wa.message);
+  const r = content?.reactionMessage;
+  const chatId = wa.key.remoteJid;
+  const targetId = r?.key?.id;
+  if (r === null || r === undefined || chatId === null || chatId === undefined || targetId === null || targetId === undefined) return null;
+  const ts = seconds(r.senderTimestampMs) || seconds(wa.messageTimestamp) * 1000;
+  return { chatId: jidNormalizedUser(chatId), targetId, sender: senderOf(wa.key, chatId), emoji: r.text ?? '', timestamp: ts };
+}
+
+/** Réactions portées par un message de l'historique (`WebMessageInfo.reactions`). */
+export function reactionsOf(wa: WAMessage): RawReaction[] {
+  const chatId = wa.key.remoteJid;
+  const targetId = wa.key.id;
+  if (chatId === null || chatId === undefined || targetId === null || targetId === undefined) return [];
+  return (wa.reactions ?? []).flatMap((r) =>
+    r.key === null || r.key === undefined ? [] : [{ chatId: jidNormalizedUser(chatId), targetId, sender: senderOf(r.key, chatId), emoji: r.text ?? '', timestamp: seconds(r.senderTimestampMs) }],
+  );
+}
 
 export function toMessage(wa: WAMessage): Converted | null {
   const { remoteJid, id } = wa.key;

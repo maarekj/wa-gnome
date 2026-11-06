@@ -149,6 +149,12 @@ export class Store {
       case 'picture':
         this.onPicture?.(e.id);
         break;
+      case 'message.update': {
+        // remplacé s'il est affiché (pas d'ajout : réaction à un message plus ancien que la page)
+        const list = this.messages.peek();
+        if (e.message.chatId === this.current.peek() && list.some((m) => m.id === e.message.id)) this.#setMessages(list.map((m) => (m.id === e.message.id ? e.message : m)));
+        break;
+      }
       case 'history':
         // réponse du téléphone : messages plus anciens désormais dans la base du démon
         if (this.older.peek() === 'phone' && e.ids.includes(this.current.peek() ?? '')) {

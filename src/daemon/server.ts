@@ -7,6 +7,7 @@
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
 //   POST /chats/:id/media           envoi d'un fichier (corps brut, voir shared/api.ts)
 //   GET  /chats/:id/picture         photo de profil (JPEG), 404 sans photo
+//   POST /chats/:id/messages/:mid/react  réaction { emoji } (vide : retirée)
 //   POST /chats/:id/history         messages plus anciens demandés au téléphone (arrivent par l'événement `history`)
 //   POST /chats/:id/read            discussion lue
 //   POST /chats/:id/action          archiver, silencieux, épingler, non lue, effacer, supprimer, quitter
@@ -16,7 +17,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, MAX_UPLOAD, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
+import { ChatAction, type Event, MAX_UPLOAD, ReactBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -36,6 +37,7 @@ export interface Backend {
   sendMedia: (chatId: string, file: Upload) => Promise<void>;
   /** demande au téléphone les messages antérieurs au plus ancien connu ; false s'il n'y a rien à demander */
   requestHistory: (chatId: string) => Promise<boolean>;
+  react: (chatId: string, messageId: string, emoji: string) => Promise<void>;
 }
 
 /** Fichier à envoyer. */
@@ -155,6 +157,13 @@ export function startServer(opts: { host: string; port: number; token: string; s
         if (data.length === 0) throw new HttpError(400, 'fichier vide');
         const mimetype = (req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]?.trim() ?? 'application/octet-stream';
         await opts.wa().sendMedia(chatId, { data, mimetype, fileName: header(req, UPLOAD_NAME) || 'fichier', caption: header(req, UPLOAD_CAPTION), asDocument: header(req, UPLOAD_AS) === 'document', replyTo: header(req, UPLOAD_REPLY) });
+        json(res, 200, {});
+        return;
+      }
+      case 'POST /chats/:id/messages/:mid/react': {
+        const body = ReactBody.safeParse(await readBody(req));
+        if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
+        await opts.wa().react(chatId, messageId, body.data.emoji);
         json(res, 200, {});
         return;
       }

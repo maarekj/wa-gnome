@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
-import type { Message } from '../shared/api.ts';
+import type { Converted } from './convert.ts';
 import { proto } from 'baileys';
 import { quotedOf } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
@@ -12,7 +12,7 @@ const LID = '111@lid';
 const PN = '33600000001@s.whatsapp.net';
 const GROUP = '1203@g.us';
 
-const msg = (chatId: string, id: string, timestamp: number, sender: string | null = null): Message => ({ id, chatId, fromMe: false, sender, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null });
+const msg = (chatId: string, id: string, timestamp: number, sender: string | null = null): Converted => ({ id, chatId, fromMe: false, sender, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null });
 
 void describe('Store : lid → numéro', () => {
   void it('fusionne la discussion lid dans celle du numéro', () => {
@@ -124,5 +124,37 @@ void describe('quotedOf', () => {
     const received = proto.Message.fromObject({ extendedTextMessage: { text: 'réponse', contextInfo: ctx } });
     const sent = { extendedTextMessage: { text: 'réponse', contextInfo: ctx } };
     for (const content of [received, sent]) assert.deepEqual(quotedOf(content), { id: 'Q1', sender: '111@lid', kind: 'text', text: 'bonjour' });
+  });
+});
+
+void describe('réactions', () => {
+  void it('une par personne, groupées par émoji, retrait et ordre des événements', () => {
+    const store = new Store(':memory:');
+    store.upsertContact(PN, { name: 'Alice' });
+    store.upsertMessage(msg(GROUP, 'm', 10), '{}');
+    const set = (sender: string, emoji: string, timestamp: number) => store.setReaction({ chatId: GROUP, targetId: 'm', sender, emoji, timestamp });
+    set(PN, '👍', 1);
+    set('me', '👍', 2);
+    set('222@s.whatsapp.net', '❤️', 3);
+    assert.deepEqual(store.message(GROUP, 'm')?.reactions, [
+      {
+        emoji: '👍',
+        count: 2,
+        mine: true,
+        people: [
+          { id: PN, name: 'Alice' },
+          { id: null, name: 'Vous' },
+        ],
+      },
+      { emoji: '❤️', count: 1, mine: false, people: [{ id: '222@s.whatsapp.net', name: '+222' }] },
+    ]);
+    // changement puis réaction plus ancienne (historique rejoué) ignorée
+    set(PN, '😂', 5);
+    set(PN, '🙏', 4);
+    set('me', '', 6);
+    assert.deepEqual(store.message(GROUP, 'm')?.reactions.map((r) => [r.emoji, r.count, r.mine]), [
+      ['❤️', 1, false],
+      ['😂', 1, false],
+    ]);
   });
 });

@@ -127,6 +127,22 @@ export const Quoted = z.object({
 });
 export type Quoted = z.infer<typeof Quoted>;
 
+/** Réaction groupée par émoji sous un message. */
+export const Reaction = z.object({
+  emoji: z.string(),
+  count: z.number(),
+  /** j'ai réagi avec cet émoji */
+  mine: z.boolean(),
+  /** personnes, dans l'ordre de leurs réactions ; `id` null pour moi */
+  people: z.array(z.object({ id: z.nullable(z.string()), name: z.string() })),
+});
+export type Reaction = z.infer<typeof Reaction>;
+
+/** Émojis proposés pour réagir (comme WhatsApp). */
+export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
+
+export const ReactBody = z.object({ emoji: z.string() });
+
 export const Message = z.object({
   id: z.string(),
   chatId: z.string(),
@@ -142,6 +158,7 @@ export const Message = z.object({
   media: z.nullable(Media),
   /** message auquel celui-ci répond */
   quoted: z.nullable(Quoted),
+  reactions: z.array(Reaction),
 });
 export type Message = z.infer<typeof Message>;
 
@@ -185,6 +202,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('chat.cleared'), id: z.string() }),
   /** photo de profil changée ou retirée : à recharger */
   z.object({ type: z.literal('picture'), id: z.string() }),
+  /** message modifié (réactions…) : remplace celui affiché, sans notification */
+  z.object({ type: z.literal('message.update'), message: Message }),
   /** historique plus ancien reçu du téléphone (demande `POST /chats/:id/history`) */
   z.object({ type: z.literal('history'), ids: z.array(z.string()) }),
   /** listes modifiées (liste complète) */

@@ -27,7 +27,7 @@ import pino from 'pino';
 import * as z from 'zod/mini';
 import { type ChatAction, type Event, MAX_PINNED, type Message, type Status, uploadKind } from '../shared/api.ts';
 import type { Upload } from './server.ts';
-import { mediaOf, quotedOf, seconds, toMessage } from './convert.ts';
+import { mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
@@ -140,7 +140,11 @@ export class WhatsApp {
           if (c.id === null || c.id === undefined) continue;
           this.#store.upsertChat(this.#chatPatch(c, c.id));
         }
-        for (const m of messages) this.#saveMessage(m);
+        for (const m of messages) {
+          const reaction = reactionOf(m);
+          if (reaction === null) this.#saveMessage(m);
+          else this.#react(reaction, false);
+        }
       });
       this.#emit({ type: 'chats', chats: this.#store.chats() });
       // réponse à une demande d'historique : discussions concernées rechargées par l'app
@@ -192,6 +196,12 @@ export class WhatsApp {
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       for (const wa of messages) {
         this.#learnFromKey(wa.key);
+        // réaction : rattachée au message visé, pas de bulle ni de notification
+        const reaction = reactionOf(wa);
+        if (reaction !== null) {
+          this.#react(reaction);
+          continue;
+        }
         const m = this.#saveMessage(wa);
         if (m === null) continue;
         if (type === 'notify' && !m.fromMe) this.#store.incrementUnread(m.chatId);
@@ -233,8 +243,19 @@ export class WhatsApp {
     });
   }
 
+  /** Réaction enregistrée (auteur rattaché au numéro) ; message visé renvoyé à l'app s'il existe. */
+  #react(r: RawReaction, notify = true): void {
+    const chatId = this.#jid(r.chatId);
+    this.#store.setReaction({ ...r, chatId, sender: r.sender === 'me' ? 'me' : this.#jid(r.sender) });
+    if (!notify) return;
+    const target = this.#store.message(chatId, r.targetId);
+    if (target !== null) this.#emit({ type: 'message.update', message: target });
+  }
+
   #saveMessage(wa: WAMessage): Message | null {
     const converted = toMessage(wa);
+    // réactions de l'historique portées par le message lui-même
+    for (const r of reactionsOf(wa)) this.#react(r, false);
     if (converted === null) return null;
     // discussion et auteurs (message, citation) rangés sous le numéro quand il est connu
     const q = converted.quoted;
@@ -369,6 +390,40 @@ export class WhatsApp {
     const { key } = msg;
     if (key === null || key === undefined) return null;
     return Object.assign(msg, { key });
+  }
+
+  /**
+   * Réactions des bases antérieures : messages de réaction convertis puis retirés de la liste,
+   * réactions portées par les messages bruts (historique) enregistrées.
+   */
+  backfillReactions(): void {
+    if (!this.#store.flag('backfill-reactions')) return;
+    const asMessages = this.#store.reactionMessagesToBackfill();
+    const carried = this.#store.messagesWithReactions();
+    this.#store.transaction(() => {
+      for (const row of carried) {
+        const wa = this.#parseRaw(row.raw);
+        if (wa !== null) for (const r of reactionsOf(wa)) this.#react(r, false);
+      }
+      for (const row of asMessages) {
+        const wa = this.#parseRaw(row.raw);
+        const r = wa === null ? null : reactionOf(wa);
+        if (r !== null) this.#react(r, false);
+        this.#store.deleteMessage(row.chatId, row.id);
+      }
+    });
+    this.#store.setFlag('backfill-reactions', false);
+    logger.info(`réactions : ${carried.length} message(s) de l'historique, ${asMessages.length} ancienne(s) bulle(s) de réaction`);
+  }
+
+  /** Réagit à un message (émoji vide : réaction retirée). */
+  async react(chatId: string, messageId: string, emoji: string): Promise<void> {
+    const raw = this.#store.raw(chatId, messageId);
+    const target = raw === null ? null : this.#parseRaw(raw);
+    if (target === null) throw new Error('message introuvable');
+    await this.#open().sendMessage(target.key.remoteJid ?? chatId, { react: { text: emoji, key: target.key } });
+    // la réaction revient aussi par messages.upsert ; appliquée ici sans attendre
+    this.#react({ chatId, targetId: messageId, sender: 'me', emoji, timestamp: Date.now() });
   }
 
   /**
