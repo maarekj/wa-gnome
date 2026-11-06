@@ -39,3 +39,78 @@ const dayIndex = (d: GLib.DateTime): number => {
 
 /** Clé de jour (`2026-11-05`) pour grouper les messages. */
 export const dayKey = (seconds: number): string => GLib.DateTime.new_from_unix_local(seconds)?.format('%F') ?? '';
+
+// ---------------------------------------------------------------- mise en forme WhatsApp
+
+/** Marqueurs en ligne → balise Pango. */
+const INLINE: Readonly<Record<string, readonly [string, string]>> = {
+  '*': ['<b>', '</b>'],
+  _: ['<i>', '</i>'],
+  '~': ['<s>', '</s>'],
+};
+/** Code (en ligne et bloc) : police à chasse fixe sur fond léger. */
+const CODE_OPEN = '<span font_family="monospace" background="#8080804d">';
+/** Barre de citation. */
+const QUOTE_BAR = '<span foreground="#80808099">▍</span> ';
+
+/** Espace, ponctuation ou bord de texte : un marqueur peut s'y ouvrir ou s'y fermer. */
+const isBoundary = (c: string | undefined): boolean => c === undefined || /[\s\p{P}\p{S}]/u.test(c);
+const isSpace = (c: string | undefined): boolean => c === undefined || /\s/u.test(c);
+
+/** Fin d'un marqueur `c` ouvert en `i` (règles de WhatsApp), ou -1. */
+function closing(s: string, i: number, c: string): number {
+  if (!isBoundary(s[i - 1]) || isSpace(s[i + 1]) || s[i + 1] === c) return -1;
+  for (let j = i + 2; j < s.length; j++) {
+    if (s[j] === c && !isSpace(s[j - 1]) && isBoundary(s[j + 1])) return j;
+  }
+  return -1;
+}
+
+/** Une ligne : gras, italique, barré (imbricables) et code en ligne (non interprété). */
+function inline(s: string): string {
+  let out = '';
+  let plain = '';
+  const flush = (): void => {
+    out += esc(plain);
+    plain = '';
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i] ?? '';
+    const tag = INLINE[c];
+    const end = tag !== undefined || c === '`' ? closing(s, i, c) : -1;
+    if (end < 0) {
+      plain += c;
+      continue;
+    }
+    flush();
+    const inner = s.slice(i + 1, end);
+    out += tag === undefined ? `${CODE_OPEN}${esc(inner)}</span>` : `${tag[0]}${inline(inner)}${tag[1]}`;
+    i = end;
+  }
+  flush();
+  return out;
+}
+
+/** Ligne hors bloc de code : citation, puce, puis mise en forme en ligne. */
+function line(l: string): string {
+  const quote = /^>\s?(.*)$/u.exec(l);
+  if (quote !== null) return `${QUOTE_BAR}<span fgalpha="75%">${line(quote[1] ?? '')}</span>`;
+  const bullet = /^(\s*)[*-]\s+(.*)$/u.exec(l);
+  if (bullet !== null) return `${esc(bullet[1] ?? '')}•  ${inline(bullet[2] ?? '')}`;
+  return inline(l);
+}
+
+/**
+ * Texte d'un message → balisage Pango, avec la mise en forme de WhatsApp : `*gras*`, `_italique_`,
+ * `~barré~`, `` `code` ``, bloc ```` ```code``` ````, `> citation`, listes `* ` / `- ` (puces) et
+ * `1. ` (laissées telles quelles).
+ */
+export function waMarkup(text: string): string {
+  return text
+    .split('```')
+    .map((part, k, parts) =>
+      // morceaux impairs : dans un bloc de code (s'il est fermé)
+      k % 2 === 1 && k < parts.length - 1 ? `${CODE_OPEN}${esc(part.replace(/^\n/u, '').replace(/\n$/u, ''))}</span>` : (k % 2 === 1 ? '```' : '') + part.split('\n').map((l) => line(l)).join('\n'),
+    )
+    .join('');
+}

@@ -9,7 +9,7 @@ import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
 import { DELETED_TEXT, editability, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
+import { dayKey, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText } from './ChatList.tsx';
@@ -296,7 +296,9 @@ function bubble(ctx: BubbleContext) {
           {picture}
           <Gtk.Label
             visible={live(() => picture === null || msg().text !== '')}
-            label={live(() => (msg().kind === 'text' || picture !== null ? msg().text : previewOf(msg())))}
+            // mise en forme WhatsApp (gras, italique, code, citations, listes)
+            useMarkup
+            label={live(() => (msg().kind === 'text' || picture !== null ? waMarkup(msg().text) : esc(previewOf(msg()))))}
             cssClasses={live(() => (msg().kind === 'text' || picture !== null ? ['body'] : ['body', 'dim-label']))}
             wrap
             wrapMode={Pango.WrapMode.WORD_CHAR}

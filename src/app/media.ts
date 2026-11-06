@@ -8,6 +8,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import type { Media, Message } from '../shared/api.ts';
 import type { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
+import { waMarkup } from '../shared/format.ts';
 
 Gio._promisify(Gtk.FileDialog.prototype, 'save', 'save_finish');
 Gio._promisify(Gio.File.prototype, 'replace_contents_bytes_async', 'replace_contents_finish');
@@ -231,7 +232,7 @@ export function openViewer(parent: Gtk.Widget, title: string, photos: readonly P
   header.pack_end(zoomLabel);
   const view = new Adw.ToolbarView({ content: overlay });
   view.add_top_bar(header);
-  const caption = new Gtk.Label({ wrap: true, marginTop: 6, marginBottom: 12, marginStart: 12, marginEnd: 12, selectable: true });
+  const caption = new Gtk.Label({ wrap: true, marginTop: 6, marginBottom: 12, marginStart: 12, marginEnd: 12, selectable: true, useMarkup: true });
   view.add_bottom_bar(caption);
   const root = parent.get_root();
   const [ww, wh] = root instanceof Gtk.Window ? [root.get_width(), root.get_height()] : [900, 700];
@@ -327,7 +328,7 @@ export function openViewer(parent: Gtk.Widget, title: string, photos: readonly P
     prev.visible = i > 0;
     next.visible = i < photos.length - 1;
     dialog.title = photos.length > 1 ? `${title} — ${i + 1} / ${photos.length}` : title;
-    caption.label = photo.text;
+    caption.label = waMarkup(photo.text);
     caption.visible = photo.text !== '';
     saveButton.sensitive = false;
     // zoom remis à « ajustée » avant de changer d'image (setScale a besoin de sa taille)
