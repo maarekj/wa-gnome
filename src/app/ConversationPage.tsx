@@ -14,6 +14,7 @@ import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
+import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
@@ -67,6 +68,45 @@ interface BubbleContext {
   readonly edit: (m: Message) => void;
   /** supprimer pour tous ou pour moi (après confirmation) */
   readonly remove: (parent: Gtk.Widget, m: Message, action: 'revoke' | 'delete-for-me') => void;
+  /** messages sélectionnés (identifiants) ; vide : pas de sélection en cours */
+  readonly selection: Accessor<ReadonlySet<string>>;
+  /** coche ou décoche un message (entre en mode sélection) */
+  readonly toggleSelect: (m: Message) => void;
+  /** transférer ce message (fenêtre de choix des discussions) */
+  readonly forward: (parent: Gtk.Widget, m: Message) => void;
+}
+
+/** Messages transférables (pas ceux supprimés pour tous). */
+const forwardable = (list: readonly Message[]): Message[] => list.filter((m) => !m.deleted);
+
+/**
+ * Ligne d'un message, sur toute la largeur : surlignée si sélectionnée ; en mode sélection, un clic
+ * n'importe où sur la ligne coche ou décoche (capturé avant l'image, la citation ou le texte).
+ * Le nom `m:<id>` passe à la ligne (défilement vers un message cité).
+ */
+function selectableRow(ctx: BubbleContext, row: Gtk.Widget, id: string, msg: () => Message): Gtk.Widget {
+  const line = new Gtk.Box({ name: row.name, hexpand: true, cssClasses: ['message-line'] });
+  row.name = '';
+  row.hexpand = true;
+  line.append(row);
+  const click = new Gtk.GestureClick({ button: Gdk.BUTTON_PRIMARY, propagationPhase: Gtk.PropagationPhase.CAPTURE });
+  click.connect('pressed', (g: Gtk.GestureClick) => {
+    if (ctx.selection.peek().size === 0) return;
+    g.set_state(Gtk.EventSequenceState.CLAIMED);
+    ctx.toggleSelect(msg());
+  });
+  line.add_controller(click);
+  const update = (): void => {
+    const s = ctx.selection.peek();
+    for (const w of [row, line]) {
+      if (s.has(id)) w.add_css_class('selected-message');
+      else w.remove_css_class('selected-message');
+    }
+    line.set_cursor_from_name(s.size > 0 ? 'pointer' : null);
+  };
+  update();
+  onCleanup(ctx.selection.subscribe(update));
+  return line;
 }
 
 /** Sous-titre de l'en-tête : écrit…, en ligne, vu à … ; vide sans information. */
@@ -89,6 +129,18 @@ export const myReaction = (m: Pick<Message, 'reactions'>): string | null => m.re
 
 /** Aperçu d'une citation : auteur et début du texte (ou genre du média). */
 export const quotePreview = (q: Pick<Quoted, 'kind' | 'text'>): string => previewOf(q).replaceAll('\n', ' ');
+
+/** Transferts à partir desquels WhatsApp affiche « Transféré à plusieurs reprises ». */
+const FORWARDED_MANY = 5;
+
+/** Mention « Transféré » en tête de bulle (comme WhatsApp). */
+function ForwardedMark(score: number): Gtk.Widget {
+  const many = score >= FORWARDED_MANY;
+  const box = new Gtk.Box({ spacing: 4, cssClasses: ['forwarded', 'dim-label'] });
+  box.append(new Gtk.Image({ iconName: 'mail-forward-symbolic', pixelSize: 14 }));
+  box.append(new Gtk.Label({ label: many ? 'Transféré à plusieurs reprises' : 'Transféré', xalign: 0, cssClasses: ['caption'] }));
+  return box;
+}
 
 /** Bloc de citation dans une bulle ; clic : message cité à l'écran. */
 function QuoteBlock(ctx: BubbleContext, q: Quoted): Gtk.Widget {
@@ -126,6 +178,12 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   const replyAction = new Gio.SimpleAction({ name: 'reply' });
   replyAction.connect('activate', () => ctx.reply(msg()));
   group.add_action(replyAction);
+  const selectAction = new Gio.SimpleAction({ name: 'select' });
+  selectAction.connect('activate', () => ctx.toggleSelect(msg()));
+  group.add_action(selectAction);
+  const forwardAction = new Gio.SimpleAction({ name: 'forward' });
+  forwardAction.connect('activate', () => ctx.forward(widget, msg()));
+  group.add_action(forwardAction);
   const copy = new Gio.SimpleAction({ name: 'copy' });
   copy.connect('activate', () => {
     widget.get_clipboard().set(msg().text);
@@ -153,11 +211,13 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
     const age = Date.now() / 1000 - m.timestamp;
     // message supprimé pour tous : seulement « Supprimer pour moi »
     if (m.deleted) {
+      model.append('Sélectionner', 'msg.select');
       model.append('Supprimer pour moi…', 'msg.delete-for-me');
       openMenu(model, x, y);
       return;
     }
     model.append('Répondre', 'msg.reply');
+    model.append('Transférer…', 'msg.forward');
     if (m.fromMe) model.append('Infos du message', 'msg.info');
     // modification : mes messages texte et légendes ; grisée après le délai de WhatsApp
     const editable = editability(m);
@@ -178,6 +238,7 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
     }
     model.append_submenu('Réagir', reactions);
     if (msg().text !== '') model.append('Copier le texte', 'msg.copy');
+    model.append('Sélectionner', 'msg.select');
     const danger = new Gio.Menu();
     if (m.fromMe && age < REVOKE_WINDOW_S) danger.append('Supprimer pour tous…', 'msg.revoke');
     danger.append('Supprimer pour moi…', 'msg.delete-for-me');
@@ -271,12 +332,12 @@ function bubble(ctx: BubbleContext) {
       const it = live.peek();
       return it.kind === 'message' ? it.message : m;
     };
-    if (m.deleted) return DeletedBubble(ctx, m, msg, live);
+    if (m.deleted) return selectableRow(ctx, DeletedBubble(ctx, m, msg, live), m.id, msg);
     const picture = isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
-    return asWidget(
+    return selectableRow(ctx, asWidget(
       <Gtk.Box name={`m:${m.id}`} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
         <Gtk.Box
           orientation={Gtk.Orientation.VERTICAL}
@@ -292,6 +353,7 @@ function bubble(ctx: BubbleContext) {
             xalign={0}
             cssClasses={['caption-heading', 'accent']}
           />
+          {m.forwarded === 0 ? null : ForwardedMark(m.forwarded)}
           {m.quoted === null ? null : QuoteBlock(ctx, m.quoted)}
           {picture}
           <Gtk.Label
@@ -328,7 +390,7 @@ function bubble(ctx: BubbleContext) {
         </Gtk.Box>
         {ReactionsRow(ctx, msg, (fn) => live.subscribe(fn), m.fromMe)}
       </Gtk.Box>,
-    );
+    ), m.id, msg);
   };
 }
 
@@ -639,7 +701,8 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     if (!ok) return false;
     const adj = scroller.vadjustment;
     adj.value = Math.max(0, bounds.get_y() + bounds.get_height() / 2 - adj.pageSize / 2);
-    const bubbleBox = target.get_first_child();
+    // ligne → message → bulle
+    const bubbleBox = target.get_first_child()?.get_first_child() ?? null;
     bubbleBox?.add_css_class('flash');
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
       bubbleBox?.remove_css_class('flash');
@@ -649,6 +712,26 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
   };
   /** ajout de pièces jointes du composer (renseigné à sa création) */
   let dropFiles: ((files: Gio.File[]) => void) | null = null;
+  // sélection de messages : vidée au changement de discussion, messages disparus retirés
+  const [selection, setSelection] = createState<ReadonlySet<string>>(new Set());
+  const clearSelection = (): void => setSelection(new Set());
+  onCleanup(store.current.subscribe(clearSelection));
+  onCleanup(
+    store.messages.subscribe(() => {
+      const sel = selection.peek();
+      if (sel.size === 0) return;
+      const live = new Set(store.messages.peek().map((m) => m.id));
+      if ([...sel].some((id) => !live.has(id))) setSelection(new Set([...sel].filter((id) => live.has(id))));
+    }),
+  );
+  const toggleSelect = (m: Message): void => {
+    const next = new Set(selection.peek());
+    if (next.has(m.id)) next.delete(m.id);
+    else next.add(m.id);
+    setSelection(next);
+  };
+  /** messages sélectionnés, dans l'ordre de la discussion */
+  const selected = (): Message[] => store.messages.peek().filter((m) => selection.peek().has(m.id));
   return (
     <Adw.NavigationPage title={chat((c) => c?.name ?? 'WhatsApp')} tag="conversation">
       <Adw.ToolbarView>
@@ -692,6 +775,14 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
             $={(self: Gtk.Box) => {
               // fichiers déposés n'importe où dans la conversation : pièces jointes
               attachDrop(self, (files) => dropFiles?.(files));
+              // Échap : fin de la sélection
+              const keys = new Gtk.EventControllerKey({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
+              keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number) => {
+                if (keyval !== Gdk.KEY_Escape || selection.peek().size === 0) return false;
+                clearSelection();
+                return true;
+              });
+              self.add_controller(keys);
             }}
           >
             <Gtk.ScrolledWindow
@@ -778,13 +869,42 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     spacing={4}
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>
               </Adw.Clamp>
             </Gtk.ScrolledWindow>
             <Adw.Clamp maximumSize={860} tighteningThreshold={600}>
+              <Gtk.Stack visibleChildName={selection((s) => (s.size === 0 ? 'compose' : 'select'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
+                <Gtk.Box $type="named" name="select" spacing={6} marginStart={12} marginEnd={12} marginTop={8} marginBottom={8} cssClasses={['selection-bar']}>
+                  <Gtk.Button iconName="window-close-symbolic" tooltipText="Annuler la sélection (Échap)" cssClasses={['circular', 'flat']} onClicked={clearSelection} />
+                  <Gtk.Label hexpand xalign={0} label={selection((s) => (s.size === 1 ? '1 message sélectionné' : `${s.size} messages sélectionnés`))} cssClasses={['heading']} />
+                  <Gtk.Button
+                    iconName="edit-copy-symbolic"
+                    tooltipText="Copier les textes"
+                    cssClasses={['circular', 'flat']}
+                    onClicked={(b: Gtk.Button) => {
+                      const list = selected().filter((m) => !m.deleted);
+                      if (list.length === 0) return;
+                      b.get_clipboard().set(copyText(list, chat.peek()?.name ?? ''));
+                      toast(list.length === 1 ? 'Texte copié' : `${list.length} messages copiés`);
+                      clearSelection();
+                    }}
+                  />
+                  <Gtk.Button
+                    iconName="mail-forward-symbolic"
+                    tooltipText="Transférer"
+                    cssClasses={['circular', 'flat']}
+                    sensitive={createMemo(() => {
+                      const s = selection();
+                      return store.messages().some((m) => s.has(m.id) && !m.deleted);
+                    })}
+                    onClicked={(b: Gtk.Button) => openForward(b, store, pictures, forwardable(selected()), toast, clearSelection)}
+                  />
+                  <Gtk.Button iconName="user-trash-symbolic" tooltipText="Supprimer" cssClasses={['circular', 'flat', 'destructive-action']} onClicked={(b: Gtk.Button) => confirmRemoveMany(b, store, selected(), toast, clearSelection)} />
+                </Gtk.Box>
+                <Gtk.Box $type="named" name="compose" orientation={Gtk.Orientation.VERTICAL}>
               <Composer
                 store={store}
                 chatId={store.current}
@@ -793,6 +913,8 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                   dropFiles = add;
                 }}
               />
+                </Gtk.Box>
+              </Gtk.Stack>
             </Adw.Clamp>
           </Gtk.Box>
         </Gtk.Stack>

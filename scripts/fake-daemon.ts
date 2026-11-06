@@ -161,11 +161,12 @@ const add = (
   senderName: string | null = null,
   attached: { kind: MessageKind; media: Media; data: Buffer } | null = null,
   replyTo?: string,
+  forwarded = 0,
 ): Message => {
   seq += 1;
   const id = `fake${seq}`;
   if (attached !== null) media.set(id, { mimetype: attached.media.mimetype, data: attached.data });
-  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo), status: fromMe ? (ago === 0 ? 'pending' : 'read') : null }, '{}');
+  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo), status: fromMe ? (ago === 0 ? 'pending' : 'read') : null, forwarded }, '{}');
   const m = store.message(chatId, id);
   if (m === null) throw new Error('message de démonstration introuvable');
   return m;
@@ -201,6 +202,7 @@ add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype:
 store.upsertChat({ id: GROUP, unread: 1 });
 // mise en forme WhatsApp
 add(BOB, true, 'Pour samedi : *rendez-vous à 14 h*, _pas avant_, ~dimanche~ et le code `A1B2`\n> Il a dit : prends les places\n1. Billets\n2. Écharpes\n* parking\n- sandwichs\n```\nporte = 12\n```', 9 * 24 * H + 120);
+add(BOB, false, 'Oublie pas Naomie', 9 * 24 * H + 60, null, null, null, undefined, 1);
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
 const none = { width: null, height: null, thumbnail: null, fileName: null, size: null, seconds: null };
 const doc = pdf('Menu du dimanche');
@@ -341,6 +343,18 @@ const backend: Backend = {
   setOnline: () => Promise.resolve(),
   typing: () => Promise.resolve(),
   messageAction: (chatId, messageId, a) => {
+    if (a.action === 'forward') {
+      const m = store.message(chatId, messageId);
+      if (m === null) return Promise.reject(new Error('message introuvable'));
+      const data = media.get(messageId)?.data;
+      for (const to of a.to) {
+        const copy = add(to, true, m.text, 0, null, null, m.media === null || data === undefined ? null : { kind: m.kind, media: m.media, data }, undefined, m.forwarded + 1);
+        progress(to, copy.id);
+        emit({ type: 'message', message: copy });
+        emit({ type: 'chats', chats: [store.chat(to)].filter((c) => c !== null) });
+      }
+      return Promise.resolve();
+    }
     if (a.action === 'delete-for-me') {
       store.deleteMessage(chatId, messageId);
       emit({ type: 'message.delete', chatId, id: messageId });

@@ -93,7 +93,18 @@ export function quotedOf(content: proto.IMessage): RawQuoted | null {
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
-export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted'> & { quoted: RawQuoted | null; deleted?: boolean };
+export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded'> & { quoted: RawQuoted | null; deleted?: boolean; forwarded?: number };
+
+/** Transfert porté par le contenu (`contextInfo`) : nombre de transferts, 0 si non transféré. */
+export function forwardedOf(content: proto.IMessage): number {
+  const type = getContentType(content);
+  const value: unknown = type === undefined ? undefined : content[type];
+  if (typeof value !== 'object' || value === null || !('contextInfo' in value)) return 0;
+  const info: unknown = value.contextInfo;
+  const ctx = typeof info === 'object' && info !== null ? proto.ContextInfo.fromObject(info) : null;
+  if (ctx === null || ctx.isForwarded !== true) return 0;
+  return Math.max(1, ctx.forwardingScore ?? 1);
+}
 
 /** Auteur d'un message ou d'une réaction d'après sa clé. */
 const senderOf = (key: proto.IMessageKey, fallback: string): string => (key.fromMe === true ? 'me' : jidNormalizedUser(key.participant !== null && key.participant !== undefined && key.participant !== '' ? key.participant : (key.remoteJid ?? fallback)));
@@ -204,6 +215,7 @@ export function toMessage(wa: WAMessage): Converted | null {
     text,
     media: mediaOf(content),
     quoted: quotedOf(content),
+    forwarded: forwardedOf(content),
     // « en attente » : seulement pour un envoi de l'app (voir WhatsApp.#sent) ; un message envoyé
     // depuis un autre appareil est déjà parti
     status: fromMe ? (statusOf(wa.status) === 'pending' || statusOf(wa.status) === null ? 'sent' : statusOf(wa.status)) : null,

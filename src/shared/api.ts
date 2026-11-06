@@ -201,6 +201,8 @@ export const Message = z.object({
   edited: z.boolean(),
   /** supprimé pour tous : contenu effacé, « Ce message a été supprimé » */
   deleted: z.boolean(),
+  /** transféré : nombre de transferts successifs (WhatsApp : « à plusieurs reprises » dès 5), 0 sinon */
+  forwarded: z.number(),
 });
 
 /** Texte affiché à la place d'un message supprimé pour tous. */
@@ -229,6 +231,8 @@ export const MessageAction = z.discriminatedUnion('action', [
   z.object({ action: z.literal('revoke') }),
   /** supprimer pour moi (localement et sur mes appareils) */
   z.object({ action: z.literal('delete-for-me') }),
+  /** transférer vers ces discussions */
+  z.object({ action: z.literal('forward'), to: z.array(z.string()).check(z.minLength(1)) }),
 ]);
 export type MessageAction = z.infer<typeof MessageAction>;
 export type Message = z.infer<typeof Message>;

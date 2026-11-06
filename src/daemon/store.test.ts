@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import type { Converted } from './convert.ts';
 import { proto } from 'baileys';
-import { quotedOf } from './convert.ts';
+import { forwardedOf, quotedOf } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
-import { Store } from './store.ts';
+import { forwardScoreIn, Store } from './store.ts';
 
 const LID = '111@lid';
 const PN = '33600000001@s.whatsapp.net';
@@ -225,5 +225,22 @@ void describe('auteur des changements', () => {
     assert.equal(store.isAuthor(PN, 'mine', 'me'), true);
     assert.equal(store.isAuthor(PN, 'mine', PN), false);
     assert.equal(store.isAuthor(PN, 'inconnu', PN), true);
+  });
+});
+
+void describe('transfert', () => {
+  void it('nombre de transferts du contenu', () => {
+    assert.equal(forwardedOf({ extendedTextMessage: { text: 'a', contextInfo: { isForwarded: true, forwardingScore: 3 } } }), 3);
+    assert.equal(forwardedOf({ imageMessage: { contextInfo: { isForwarded: true } } }), 1);
+    assert.equal(forwardedOf({ conversation: 'a' }), 0);
+  });
+  void it('relu dans un message brut (migration)', () => {
+    assert.equal(forwardScoreIn({ message: { extendedTextMessage: { contextInfo: { isForwarded: true, forwardingScore: 6 } } } }), 6);
+    assert.equal(forwardScoreIn({ message: { conversation: 'a' } }), 0);
+  });
+  void it('enregistré et relu', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage({ ...msg(PN, 'f', 10), forwarded: 2 }, '{}');
+    assert.equal(store.message(PN, 'f')?.forwarded, 2);
   });
 });

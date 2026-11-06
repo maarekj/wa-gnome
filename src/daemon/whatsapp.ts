@@ -355,6 +355,13 @@ export class WhatsApp {
         this.#emit({ type: 'message.delete', chatId, id });
         this.#emitChats([chatId]);
         break;
+      case 'forward':
+        // un destinataire après l'autre (médias réutilisés, pas de nouvel envoi de fichier)
+        for (const to of a.to) {
+          // oxlint-disable-next-line no-await-in-loop -- envois successifs
+          this.#sent(await sock.sendMessage(to, { forward: target }));
+        }
+        break;
       default:
         a satisfies never;
     }

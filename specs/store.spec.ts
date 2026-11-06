@@ -1,4 +1,5 @@
 // État de l'application : application des événements du démon, ordre des messages.
+import GLib from 'gi://GLib';
 import type { Chat, Message } from '../src/shared/api.ts';
 import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
@@ -10,8 +11,9 @@ import { screenOf } from '../src/app/MainWindow.tsx';
 import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
 import { splitReceipts, stepText } from '../src/app/MessageInfo.ts';
 import { displaySize } from '../src/app/media.ts';
+import { canRevokeAll, copyText } from '../src/app/Selection.ts';
 
-const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, ...extra });
+const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
 
 describe('mergeMessage', () => {
@@ -264,5 +266,20 @@ describe('displaySize', () => {
     expect(displaySize(600, 1200, 300)).toEqual([150, 300]);
     expect(displaySize(100, 50, 300)).toEqual([100, 80]);
     expect(displaySize(null, null, 300)).toEqual([300, 225]);
+  });
+});
+
+describe('sélection de messages', () => {
+  it('copie : texte seul pour un message, lignes datées sinon', () => {
+    const t = GLib.DateTime.new_local(2026, 11, 6, 14, 5, 0)?.to_unix() ?? 0;
+    expect(copyText([msg('salut', t)], 'Alice')).toBe('salut');
+    expect(copyText([msg('salut', t), msg('oui', t, { fromMe: true }), msg('x', t, { kind: 'image', text: '', senderName: 'Bob' })], 'Alice')).toBe('[06/11/2026 14:05] Alice : salut\n[06/11/2026 14:05] Moi : oui\n[06/11/2026 14:05] Bob : Photo');
+  });
+  it('« pour tous » seulement si tous sont à moi et récents', () => {
+    const now = 1_000_000;
+    expect(canRevokeAll([msg('a', now - 10, { fromMe: true }), msg('b', now - 20, { fromMe: true })], now)).toBeTrue();
+    expect(canRevokeAll([msg('a', now - 10, { fromMe: true }), msg('b', now - 20)], now)).toBeFalse();
+    expect(canRevokeAll([msg('a', now - 3 * 86_400, { fromMe: true })], now)).toBeFalse();
+    expect(canRevokeAll([], now)).toBeFalse();
   });
 });

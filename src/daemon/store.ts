@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS messages (
   status TEXT,
   edited INTEGER NOT NULL DEFAULT 0,
   deleted INTEGER NOT NULL DEFAULT 0,
+  -- nombre de transferts (contextInfo.forwardingScore), 0 : non transféré
+  forwarded INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -120,6 +122,29 @@ const ChatRow = z.object({
   last_deleted: z.nullable(z.number()),
 });
 
+/** JSON lu sans échec (null si invalide). */
+function parseJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+/** Nombre de transferts trouvé dans un message brut (premier `contextInfo` transféré), 0 sinon. */
+export function forwardScoreIn(value: unknown, depth = 0): number {
+  if (typeof value !== 'object' || value === null || depth > 8) return 0;
+  if ('isForwarded' in value && value.isForwarded === true) {
+    const score = 'forwardingScore' in value && typeof value.forwardingScore === 'number' ? value.forwardingScore : 1;
+    return Math.max(1, score);
+  }
+  for (const v of Object.values(value)) {
+    const found = forwardScoreIn(v, depth + 1);
+    if (found > 0) return found;
+  }
+  return 0;
+}
+
 const MessageRow = z.object({
   id: z.string(),
   chat_id: z.string(),
@@ -134,6 +159,7 @@ const MessageRow = z.object({
   status: z.nullable(z.string()),
   edited: z.number(),
   deleted: z.number(),
+  forwarded: z.number(),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
@@ -165,7 +191,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 9;
+const VERSION = 10;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -217,6 +243,18 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 10) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
+      // messages transférés déjà reçus : relus dans le message brut
+      const rows = this.#db.prepare(`SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%"isForwarded":true%'`).all();
+      const upd = this.#db.prepare('UPDATE messages SET forwarded = ? WHERE chat_id = ? AND id = ?');
+      this.transaction(() => {
+        for (const r of rows) {
+          const score = forwardScoreIn(parseJson(String(r['raw'])));
+          if (score > 0) upd.run(score, String(r['chat_id']), String(r['id']));
+        }
+      });
     }
     if (!fresh && version < 9) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0; ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
@@ -512,8 +550,8 @@ export class Store {
   upsertMessage(m: Converted, raw: string): void {
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, edited, deleted, status)
-         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted,
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, edited, deleted, status)
+         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted, :forwarded,
            -- modification et suppression déjà appliquées (message rejoué par l'historique) : conservées
            coalesce((SELECT edited FROM messages WHERE chat_id = :chat_id AND id = :id), 0),
            max(:deleted, coalesce((SELECT deleted FROM messages WHERE chat_id = :chat_id AND id = :id), 0)),
@@ -534,6 +572,7 @@ export class Store {
         quoted: m.quoted === null ? null : JSON.stringify(m.quoted),
         status: m.status,
         deleted: m.deleted === true ? 1 : 0,
+        forwarded: m.forwarded ?? 0,
       });
     // modification ou suppression arrivée avant (ou rejouée après) le message d'origine : appliquée
     const edit = this.meta(`edit:${m.chatId}/${m.id}`);
@@ -660,6 +699,7 @@ export class Store {
       reactions: reactions.get(r.id) ?? [],
       edited: r.edited !== 0,
       deleted: r.deleted !== 0,
+      forwarded: r.deleted === 0 ? r.forwarded : 0,
       status: r.from_me === 1 ? effectiveStatus(MessageStatus.safeParse(r.status).data ?? 'sent', r.timestamp) : null,
     }));
   }

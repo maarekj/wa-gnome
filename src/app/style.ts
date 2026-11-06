@@ -65,6 +65,22 @@ export const STYLESHEET = `
   border-radius: 8px;
   padding: 4px 4px 4px 10px;
 }
+.selected-message > .bubble,
+.selected-message > .sticker {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  background-image: linear-gradient(alpha(var(--accent-bg-color), 0.18), alpha(var(--accent-bg-color), 0.18));
+}
+.message-line.selected-message {
+  background-color: alpha(var(--accent-bg-color), 0.12);
+  border-radius: 8px;
+}
+.selection-bar {
+  min-height: 46px;
+}
+.forwarded label {
+  font-style: italic;
+}
 .bubble.flash {
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
