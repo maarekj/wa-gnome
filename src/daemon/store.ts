@@ -728,7 +728,7 @@ export class Store {
       .flatMap((r) => {
         if (typeof r['user'] !== 'string') return [];
         const read = numberOrNull(r['read']) ?? numberOrNull(r['played']);
-        return [{ id: r['user'], name: this.#displayName(r['user']), delivered: numberOrNull(r['delivered']) ?? read, read, played: numberOrNull(r['played']) }];
+        return [{ id: r['user'], name: this.displayName(r['user']), delivered: numberOrNull(r['delivered']) ?? read, read, played: numberOrNull(r['played']) }];
       });
   }
 
@@ -773,7 +773,7 @@ export class Store {
       if (typeof r['message_id'] !== 'string' || typeof r['sender'] !== 'string' || typeof r['emoji'] !== 'string') continue;
       const list = out.get(r['message_id']) ?? [];
       const mine = r['sender'] === 'me';
-      const person = mine ? { id: null, name: 'Vous' } : { id: r['sender'], name: this.#displayName(r['sender']) };
+      const person = mine ? { id: null, name: 'Vous' } : { id: r['sender'], name: this.displayName(r['sender']) };
       const found = list.find((x) => x.emoji === r['emoji']);
       if (found === undefined) list.push({ emoji: r['emoji'], count: 1, mine, people: [person] });
       else {
@@ -824,7 +824,7 @@ export class Store {
   }
 
   /** Nom affiché d'une personne : carnet, sinon nom public, sinon numéro. */
-  #displayName(jid: string): string {
+  displayName(jid: string): string {
     const row = this.#db.prepare('SELECT name, notify FROM contacts WHERE id = ?').get(jid);
     if (typeof row?.['name'] === 'string') return row['name'];
     return typeof row?.['notify'] === 'string' ? publicName(row['notify']) : userPart(jid);
@@ -837,7 +837,7 @@ export class Store {
     const me = this.#myIds();
     const fromMe = sender !== null && (me.has(sender) || me.has(q.sender ?? ''));
     const who = sender ?? (chatId.endsWith('@g.us') ? null : chatId);
-    return { ...q, sender, fromMe, senderName: fromMe ? 'Vous' : who === null ? null : this.#displayName(who) };
+    return { ...q, sender, fromMe, senderName: fromMe ? 'Vous' : who === null ? null : this.displayName(who) };
   }
 
   /** Messages répondant à un autre sans citation enregistrée (base antérieure) : à reconvertir. */

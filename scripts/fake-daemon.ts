@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { deflateSync } from 'node:zlib';
-import { ConnectionState, type Event, type Media, type Message, type MessageKind, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
+import { ConnectionState, type Event, type Media, type Message, type MessageKind, type Presence, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
 import { type Backend, type Server, startServer } from '../src/daemon/server.ts';
 import type { Converted } from '../src/daemon/convert.ts';
 import { Store } from '../src/daemon/store.ts';
@@ -228,6 +228,13 @@ store.upsertContact(LONG, { name: 'Claire (longue discussion)' });
 for (let i = 150; i >= 1; i -= 1) add(LONG, i % 2 === 0, `Message n° ${151 - i}`, 3 * H + i * 600);
 const historyGiven = new Set<string>();
 
+/** Présence simulée d'une discussion ; `typing` : le correspondant (ou Bob dans un groupe) écrit. */
+const fakePresence = (chatId: string, typing: boolean): Presence => ({
+  online: chatId === ALICE || (typing && !chatId.endsWith('@g.us')),
+  lastSeen: chatId === BOB ? now - 2 * H : null,
+  typing: typing ? [{ name: chatId.endsWith('@g.us') ? 'Bob' : (store.chat(chatId)?.name ?? ''), recording: false }] : [],
+});
+
 /** Coches d'un message envoyé : envoyé, reçu, puis lu (comme un vrai correspondant). */
 const progress = (chatId: string, id: string): void => {
   for (const [delay, status] of [[1000, 'sent'], [3000, 'delivered'], [5000, 'read']] as const) {
@@ -256,6 +263,9 @@ const backend: Backend = {
     progress(chatId, m.id);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
+    // le correspondant écrit, puis répond
+    setTimeout(() => emit({ type: 'presence', chatId, presence: fakePresence(chatId, true) }), 2000);
+    setTimeout(() => emit({ type: 'presence', chatId, presence: fakePresence(chatId, false) }), 5900);
     // réponse automatique
     setTimeout(() => {
       // la réponse automatique cite le message envoyé
@@ -324,6 +334,10 @@ const backend: Backend = {
     }, 800);
     return Promise.resolve(true);
   },
+  // présence : Alice en ligne, Bob vu il y a 2 h ; les autres sans information
+  subscribe: (chatId) => Promise.resolve(fakePresence(chatId, false)),
+  setOnline: () => Promise.resolve(),
+  typing: () => Promise.resolve(),
   messageAction: (chatId, messageId, a) => {
     if (a.action === 'delete-for-me') {
       store.deleteMessage(chatId, messageId);

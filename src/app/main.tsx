@@ -120,6 +120,25 @@ app.connect('activate', () => {
     });
     if (!(win instanceof Gtk.Window)) throw new TypeError('fenêtre attendue');
     mainWindow = win;
+    // présence : en ligne seulement quand la fenêtre a le focus (comme WhatsApp Web)
+    let onlineTimer = 0;
+    win.connect('notify::is-active', () => {
+      if (onlineTimer !== 0) GLib.source_remove(onlineTimer);
+      // regroupé : un passage bref dans une autre fenêtre ne bascule pas la présence
+      onlineTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+        onlineTimer = 0;
+        if (store.status.peek().state === 'open') void store.client.setOnline(win.isActive).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+        return GLib.SOURCE_REMOVE;
+      });
+    });
+    // connexion (ré)ouverte alors que la fenêtre a déjà le focus : en ligne
+    let wasOpen = store.status.peek().state === 'open';
+    const statusSub = store.status.subscribe(() => {
+      const open = store.status.peek().state === 'open';
+      if (open && !wasOpen && win.isActive) void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+      wasOpen = open;
+    });
+    win.connect('destroy', statusSub);
     // discussion affichée redevenue visible : lue
     win.connect('notify::is-active', () => {
       const id = store.current.peek();
@@ -129,6 +148,7 @@ app.connect('activate', () => {
       }
     });
     win.connect('close-request', () => {
+      void store.client.setOnline(false).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
       api = null;
       mainWindow = null;
       store.open(null);

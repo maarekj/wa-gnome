@@ -7,10 +7,10 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { DELETED_TEXT, editability, type Media, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
+import { DELETED_TEXT, editability, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
-import type { Store } from '../shared/store.ts';
+import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
@@ -65,6 +65,17 @@ interface BubbleContext {
   readonly edit: (m: Message) => void;
   /** supprimer pour tous ou pour moi (après confirmation) */
   readonly remove: (parent: Gtk.Widget, m: Message, action: 'revoke' | 'delete-for-me') => void;
+}
+
+/** Sous-titre de l'en-tête : écrit…, en ligne, vu à … ; vide sans information. */
+export function presenceLine(p: Presence | null, group: boolean, now = Date.now() / 1000): string {
+  if (p === null) return '';
+  const typing = typingText(p, group);
+  if (typing !== null) return typing;
+  if (group) return '';
+  if (p.online) return 'en ligne';
+  if (p.lastSeen === null) return '';
+  return `vu ${fmtDay(p.lastSeen, GLib.DateTime.new_from_unix_local(now) ?? undefined).toLowerCase()} à ${fmtTime(p.lastSeen)}`;
 }
 
 /** Coches d'un message envoyé (comme WhatsApp). */
@@ -337,6 +348,38 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
   // « document » : fichiers envoyés tels quels (pas de compression des photos par WhatsApp)
   const [asDocument, setAsDocument] = createState(false);
   let view: Gtk.TextView | null = null;
+  /** ma saisie annoncée à WhatsApp : « écrit… » au plus toutes les 8 s, pause après 4 s sans frappe */
+  let composing = 0;
+  let pauseTimer = 0;
+  /** discussion où « écrit… » a été annoncé (la pause lui est envoyée, même après un changement) */
+  let typingIn: string | null = null;
+  const stopTyping = (): void => {
+    if (pauseTimer !== 0) GLib.source_remove(pauseTimer);
+    pauseTimer = 0;
+    const id = typingIn;
+    typingIn = null;
+    if (composing !== 0 && id !== null) void store.client.typing(id, 'paused').catch((error: unknown) => console.error(`saisie : ${errorMessage(error)}`));
+    composing = 0;
+  };
+  const typed = (): void => {
+    const id = chatId.peek();
+    if (id === null || store.editing.peek() !== null || view?.buffer.text.trim() === '') {
+      stopTyping();
+      return;
+    }
+    const now = GLib.get_monotonic_time();
+    if (now - composing > 8_000_000 || typingIn !== id) {
+      composing = now;
+      typingIn = id;
+      void store.client.typing(id, 'composing').catch((error: unknown) => console.error(`saisie : ${errorMessage(error)}`));
+    }
+    if (pauseTimer !== 0) GLib.source_remove(pauseTimer);
+    pauseTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
+      pauseTimer = 0;
+      stopTyping();
+      return GLib.SOURCE_REMOVE;
+    });
+  };
   /** texte placé dans la saisie au début d'une modification (retiré si elle est abandonnée) */
   let editedText: string | null = null;
 
@@ -381,6 +424,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
       return;
     }
     if (text === '' && files.length === 0) return;
+    stopTyping();
     setSending(true);
     // réponse : portée par le message texte, ou par le premier fichier
     const replyTo = store.replyTo.peek()?.id;
@@ -444,9 +488,11 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
             view.grab_focus();
           }),
         );
-        // autre discussion : pièces jointes abandonnées
+        // autre discussion : pièces jointes abandonnées, saisie terminée
         onCleanup(
           chatId.subscribe(() => {
+            // autre discussion : pause envoyée à celle que l'on quitte
+            stopTyping();
             setAttachments([]);
             setAsDocument(false);
           }),
@@ -544,6 +590,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
                 return true;
               });
               self.add_controller(keys);
+              self.buffer.connect('changed', typed);
               // Ctrl+V : fichiers ou image du presse-papier en pièces jointes, sinon collage du texte
               self.connect('paste-clipboard', () => {
                 if (pasteAttachments(self, addFiles, toast)) GObject.signal_stop_emission_by_name(self, 'paste-clipboard');
@@ -614,7 +661,17 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                 )
               }
             />
-            <Gtk.Label label={chat((c) => c?.name ?? 'WhatsApp')} ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
+            <Gtk.Box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER}>
+              <Gtk.Label label={chat((c) => c?.name ?? 'WhatsApp')} ellipsize={Pango.EllipsizeMode.END} xalign={0} cssClasses={['heading']} />
+              {/* présence : écrit…, en ligne, vu à … */}
+              <Gtk.Label
+                visible={createMemo(() => chat() !== null && presenceLine(store.presence(), chat()?.group ?? false) !== '')}
+                label={createMemo(() => presenceLine(store.presence(), chat()?.group ?? false))}
+                ellipsize={Pango.EllipsizeMode.END}
+                xalign={0}
+                cssClasses={createMemo(() => ['caption', (store.presence()?.typing.length ?? 0) > 0 ? 'accent' : 'dim-label'])}
+              />
+            </Gtk.Box>
           </Gtk.Box>
         </Adw.HeaderBar>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>

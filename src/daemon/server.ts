@@ -13,13 +13,16 @@
 //   POST /chats/:id/history         messages plus anciens demandés au téléphone (arrivent par l'événement `history`)
 //   POST /chats/:id/read            discussion lue
 //   POST /chats/:id/action          archiver, silencieux, épingler, non lue, effacer, supprimer, quitter
+//   POST /chats/:id/subscribe       suit la présence de la discussion ; renvoie la présence connue
+//   POST /chats/:id/typing          ma saisie { state }
+//   POST /presence                  ma présence { online }
 //   POST /logout                    déconnexion du compte
 //   GET  /events                    flux SSE des événements (voir shared/api.ts)
 // Toutes les routes demandent `Authorization: Bearer <jeton>` (fichier `token` du dossier de données).
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, MAX_UPLOAD, MessageAction, type MessageInfo, ReactBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
+import { ChatAction, type Event, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -42,6 +45,9 @@ export interface Backend {
   react: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   messageInfo: (chatId: string, messageId: string) => MessageInfo;
   messageAction: (chatId: string, messageId: string, action: MessageAction) => Promise<void>;
+  subscribe: (chatId: string) => Promise<Presence>;
+  setOnline: (online: boolean) => Promise<void>;
+  typing: (chatId: string, state: 'composing' | 'recording' | 'paused') => Promise<void>;
 }
 
 /** Fichier à envoyer. */
@@ -192,6 +198,23 @@ export function startServer(opts: { host: string; port: number; token: string; s
         const body = ChatAction.safeParse(await readBody(req));
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
         await opts.wa().chatAction(chatId, body.data);
+        json(res, 200, {});
+        return;
+      }
+      case 'POST /chats/:id/subscribe':
+        json(res, 200, await opts.wa().subscribe(chatId));
+        return;
+      case 'POST /chats/:id/typing': {
+        const body = TypingBody.safeParse(await readBody(req));
+        if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
+        await opts.wa().typing(chatId, body.data.state);
+        json(res, 200, {});
+        return;
+      }
+      case 'POST /presence': {
+        const body = PresenceBody.safeParse(await readBody(req));
+        if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
+        await opts.wa().setOnline(body.data.online);
         json(res, 200, {});
         return;
       }

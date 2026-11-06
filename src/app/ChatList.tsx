@@ -19,11 +19,11 @@ export const fold = (s: string): string => s.normalize('NFD').replaceAll(/\p{M}/
 /** Texte de l'avatar : sans le « ~ » des noms publics (initiales du nom). */
 export const avatarText = (name: string): string => name.replace(/^~ /u, '');
 
-function chatRow(pictures: Pictures) {
-  return (chat: Chat, live: Accessor<Chat>): Gtk.Widget => ChatRow(chat, live, pictures);
+function chatRow(pictures: Pictures, store: Store) {
+  return (chat: Chat, live: Accessor<Chat>): Gtk.Widget => ChatRow(chat, live, pictures, store);
 }
 
-function ChatRow(chat: Chat, live: Accessor<Chat>, pictures: Pictures): Gtk.Widget {
+function ChatRow(chat: Chat, live: Accessor<Chat>, pictures: Pictures, store: Store): Gtk.Widget {
   return asWidget(
     <Gtk.ListBoxRow name={chat.id} cssClasses={['chat-row']} tooltipText={live((c) => c.name)}>
       <Gtk.Box spacing={12} marginTop={8} marginBottom={8} marginStart={8} marginEnd={8}>
@@ -34,7 +34,13 @@ function ChatRow(chat: Chat, live: Accessor<Chat>, pictures: Pictures): Gtk.Widg
             <Gtk.Label label={live((c) => fmtShortDate(c.timestamp))} cssClasses={live((c) => (c.unread > 0 && !isMuted(c) ? ['caption', 'accent'] : ['caption', 'dim-label']))} />
           </Gtk.Box>
           <Gtk.Box spacing={6}>
-            <Gtk.Label label={live((c) => c.preview.replaceAll('\n', ' '))} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} cssClasses={['dim-label']} />
+            <Gtk.Label
+              label={createMemo(() => store.typing().get(live().id) ?? live().preview.replaceAll('\n', ' '))}
+              xalign={0}
+              hexpand
+              ellipsize={Pango.EllipsizeMode.END}
+              cssClasses={createMemo(() => (store.typing().has(live().id) ? ['accent'] : ['dim-label']))}
+            />
             <Gtk.Image iconName="notifications-disabled-symbolic" visible={live((c) => isMuted(c))} tooltipText="Mode silencieux" cssClasses={['dim-label']} />
             <Gtk.Image iconName="view-pin-symbolic" visible={live((c) => c.pinned > 0)} tooltipText="Épinglée" cssClasses={['dim-label']} />
             {/* nombre de non-lus, ou pastille vide pour « marquée comme non lue » */}
@@ -180,7 +186,7 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
             <Gtk.ListBox
               cssClasses={['navigation-sidebar']}
               $={(self: Gtk.ListBox) => {
-                onCleanup(keyedListBox(self, shown, (c) => c.id, chatRow(pictures)));
+                onCleanup(keyedListBox(self, shown, (c) => c.id, chatRow(pictures, store)));
                 self.connect('row-activated', (_l: Gtk.ListBox, row: Gtk.ListBoxRow) => store.open(row.name));
                 // sélection suivie depuis le store (ouverture par notification, déconnexion)
                 const select = (): void => {

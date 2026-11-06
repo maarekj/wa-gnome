@@ -2,8 +2,8 @@
 import type { Chat, Message } from '../src/shared/api.ts';
 import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
-import { mergeMessage, prependPage, sortChats, Store } from '../src/shared/store.ts';
-import { itemsOf, myReaction } from '../src/app/ConversationPage.tsx';
+import { mergeMessage, prependPage, sortChats, Store, typingText } from '../src/shared/store.ts';
+import { itemsOf, myReaction, presenceLine } from '../src/app/ConversationPage.tsx';
 import { fold, inList, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
@@ -60,6 +60,24 @@ describe('infos du message', () => {
   it('étape atteinte sans date connue', () => {
     expect(stepText(null, false)).toBe('—');
     expect(stepText(null, true)).toContain('Date inconnue');
+  });
+});
+
+/** Présence de test. */
+const p = (extra: Partial<{ online: boolean; lastSeen: number | null; typing: { name: string; recording: boolean }[] }> = {}) => ({ online: false, lastSeen: null, typing: [], ...extra });
+
+describe('présence', () => {
+  it('écrit…, en ligne, vu', () => {
+    expect(presenceLine(null, false)).toBe('');
+    expect(presenceLine(p({ online: true }), false)).toBe('en ligne');
+    expect(presenceLine(p({ online: true, typing: [{ name: 'A', recording: false }] }), false)).toBe('en train d’écrire…');
+    expect(presenceLine(p({ lastSeen: 1000 }), false, 1000 + 60)).toContain('vu aujourd');
+    expect(presenceLine(p({ online: true }), true)).toBe('');
+  });
+  it('groupes', () => {
+    expect(typingText(p({ typing: [{ name: 'Bob', recording: true }] }), true)).toBe('Bob enregistre un audio…');
+    expect(typingText(p({ typing: [{ name: 'A', recording: false }, { name: 'B', recording: false }] }), true)).toBe('2 personnes écrivent…');
+    expect(typingText(p(), true)).toBeNull();
   });
 });
 

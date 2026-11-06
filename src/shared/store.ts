@@ -2,7 +2,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { createState, type Accessor } from 'gnim';
-import type { Chat, ChatAction, ChatList, Event, Message, Status } from './api.ts';
+import type { Chat, ChatAction, ChatList, Event, Message, Presence, Status } from './api.ts';
 import type { Link, WaClient } from './client.ts';
 import { errorMessage } from './errors.ts';
 
@@ -12,6 +12,18 @@ const PAGE = 60;
 /** Discussions triées : épinglées d'abord (la dernière épinglée en tête), puis la plus récente d'abord. */
 export const sortChats = (chats: Iterable<Chat>): Chat[] =>
   [...chats].toSorted((a, b) => Number(b.pinned > 0) - Number(a.pinned > 0) || b.pinned - a.pinned || b.timestamp - a.timestamp || a.name.localeCompare(b.name));
+
+/** « écrit… » sans nouvelle de WhatsApp pendant ce délai : retiré (ms). */
+const TYPING_TIMEOUT_MS = 15_000;
+
+/** « Alice écrit… », « en train d'écrire… », « enregistre un audio… » ; null si personne n'écrit. */
+export function typingText(p: Presence, group: boolean): string | null {
+  const first = p.typing[0];
+  if (first === undefined) return null;
+  if (!group) return first.recording ? 'enregistre un audio…' : 'en train d’écrire…';
+  if (p.typing.length > 1) return `${p.typing.length} personnes écrivent…`;
+  return `${first.name} ${first.recording ? 'enregistre un audio…' : 'écrit…'}`;
+}
 
 /** Messages plus anciens : `idle` (on peut en demander), `loading`, `phone` (demandés au téléphone), `end` (début de la discussion). */
 export type OlderState = 'idle' | 'loading' | 'phone' | 'end';
@@ -44,6 +56,12 @@ export class Store {
   readonly current: Accessor<string | null>;
   /** messages de la discussion ouverte */
   readonly messages: Accessor<readonly Message[]>;
+  /** présence de la discussion ouverte (null : inconnue) */
+  readonly presence: Accessor<Presence | null>;
+  readonly #setPresence: (p: Presence | null) => void;
+  /** personnes en train d'écrire, par discussion (aperçu de la liste) */
+  readonly typing: Accessor<ReadonlyMap<string, string>>;
+  readonly #setTyping: (t: ReadonlyMap<string, string>) => void;
   /** chargement des messages plus anciens de la discussion ouverte */
   readonly older: Accessor<OlderState>;
   /** message en cours de modification (zone de saisie), null sinon */
@@ -79,6 +97,8 @@ export class Store {
     [this.current, this.#setCurrent] = createState<string | null>(null);
     [this.messages, this.#setMessages] = createState<readonly Message[]>([]);
     [this.older, this.#setOlder] = createState<OlderState>('idle');
+    [this.presence, this.#setPresence] = createState<Presence | null>(null);
+    [this.typing, this.#setTyping] = createState<ReadonlyMap<string, string>>(new Map());
     [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
     [this.editing, this.setEditing] = createState<Message | null>(null);
   }
@@ -147,6 +167,11 @@ export class Store {
         this.#setChats(sortChats(this.#byId.values()));
         if (e.ids.includes(this.current.peek() ?? '')) this.open(null);
         break;
+      case 'presence': {
+        if (e.chatId === this.current.peek()) this.#setPresence(e.presence);
+        this.#setTypingText(e.chatId, typingText(e.presence, e.chatId.endsWith('@g.us')));
+        break;
+      }
       case 'lists':
         this.#setLists(e.lists);
         break;
@@ -194,9 +219,47 @@ export class Store {
     this.#setOlder('idle');
     this.setReplyTo(null);
     this.setEditing(null);
+    this.#setPresence(null);
     if (id === null) return;
+    void this.#subscribe(id);
     void this.#load(id);
     this.markRead(id);
+  }
+
+  /** minuteries d'expiration de « écrit… » (WhatsApp n'envoie pas toujours la pause) */
+  readonly #typingTimers = new Map<string, number>();
+
+  #setTypingText(chatId: string, text: string | null): void {
+    const typing = new Map(this.typing.peek());
+    if (text === null) typing.delete(chatId);
+    else typing.set(chatId, text);
+    this.#setTyping(typing);
+    const old = this.#typingTimers.get(chatId);
+    if (old !== undefined) GLib.source_remove(old);
+    this.#typingTimers.delete(chatId);
+    if (text === null) return;
+    this.#typingTimers.set(
+      chatId,
+      GLib.timeout_add(GLib.PRIORITY_DEFAULT, TYPING_TIMEOUT_MS, () => {
+        this.#typingTimers.delete(chatId);
+        this.#setTypingText(chatId, null);
+        const p = this.presence.peek();
+        if (chatId === this.current.peek() && p !== null) this.#setPresence({ ...p, typing: [] });
+        return GLib.SOURCE_REMOVE;
+      }),
+    );
+  }
+
+  async #subscribe(id: string): Promise<void> {
+    try {
+      const p = await this.client.subscribePresence(id);
+      if (this.current.peek() !== id) return;
+      this.#setPresence(p);
+      // même chemin qu'un événement : « écrit… » expire aussi
+      this.#setTypingText(id, typingText(p, id.endsWith('@g.us')));
+    } catch (error) {
+      console.error(`présence : ${errorMessage(error)}`);
+    }
   }
 
   async #load(id: string): Promise<void> {

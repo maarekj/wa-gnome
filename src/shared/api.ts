@@ -264,6 +264,21 @@ export function uploadKind(mimetype: string, asDocument = false): 'image' | 'vid
 }
 export type SendBody = z.infer<typeof SendBody>;
 
+/** Présence d'une discussion : en ligne / vu (discussion directe), personnes en train d'écrire. */
+export const Presence = z.object({
+  online: z.boolean(),
+  /** dernière connexion (secondes), si la personne la partage */
+  lastSeen: z.nullable(z.number()),
+  /** en train d'écrire ou d'enregistrer : noms (groupe) ou l'autre personne */
+  typing: z.array(z.object({ name: z.string(), recording: z.boolean() })),
+});
+export type Presence = z.infer<typeof Presence>;
+
+/** Ma présence (`POST /presence`) : en ligne quand la fenêtre a le focus, comme WhatsApp Web. */
+export const PresenceBody = z.object({ online: z.boolean() });
+/** Ma saisie dans une discussion (`POST /chats/:id/typing`). */
+export const TypingBody = z.object({ state: z.enum(['composing', 'recording', 'paused']) });
+
 /** Événements du flux `GET /events` (une ligne `data:` JSON par événement). */
 export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('status'), status: Status }),
@@ -279,6 +294,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('message.update'), message: Message }),
   /** historique plus ancien reçu du téléphone (demande `POST /chats/:id/history`) */
   z.object({ type: z.literal('history'), ids: z.array(z.string()) }),
+  /** présence d'une discussion suivie (`POST /chats/:id/subscribe`) */
+  z.object({ type: z.literal('presence'), chatId: z.string(), presence: Presence }),
   /** listes modifiées (liste complète) */
   z.object({ type: z.literal('lists'), lists: z.array(ChatList) }),
   z.object({ type: z.literal('message'), message: Message }),

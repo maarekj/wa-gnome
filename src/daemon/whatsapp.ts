@@ -19,6 +19,7 @@ import {
   ALL_WA_PATCH_NAMES,
   type ChatUpdate,
   type Contact,
+  type PresenceData,
   type SignalKeyStore,
   type WAMessage,
   type WAMessageKey,
@@ -26,7 +27,7 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { type ChatAction, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { type ChatAction, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import type { Upload } from './server.ts';
 import { type Change, changeOf, editedContent, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
@@ -38,6 +39,10 @@ const logger = pino({ level: process.env['WA_GNOME_LOG'] ?? 'warn' });
 const RECONNECT_MS = 3000;
 /** Délai de réponse de WhatsApp pour une photo de profil (une requête bloquée retient la file). */
 const PICTURE_TIMEOUT_MS = 10_000;
+/** « En train d'écrire » plus ancien : ignoré (WhatsApp n'envoie pas toujours la pause). */
+const TYPING_STALE_MS = 15_000;
+/** Présence reçue récemment : « écrit… » plus ancien ignoré (la pause n'est pas toujours envoyée). */
+const fresh = (at: number): boolean => Date.now() - at < TYPING_STALE_MS;
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 /** Code HTTP d'une erreur Boom de Baileys (sans dépendre de @hapi/boom). */
@@ -56,6 +61,10 @@ export class WhatsApp {
   readonly #emit: (e: Event) => void;
   #sock: WASocket | null = null;
   #keys: SignalKeyStore | null = null;
+  /** présences reçues : discussion → participant → état (WhatsApp n'envoie que des changements) */
+  readonly #presence = new Map<string, Map<string, { data: PresenceData; at: number }>>();
+  /** en ligne d'après l'app (fenêtre active) : présence renvoyée après une reconnexion */
+  #online = false;
   #status: Status = { state: 'starting', qr: null, me: null, error: null };
   #stopped = false;
 
@@ -108,6 +117,8 @@ export class WhatsApp {
         if (me !== undefined) this.#store.setMe([jidNormalizedUser(me.id), ...(me.lid === undefined || me.lid === null ? [] : [jidNormalizedUser(me.lid)])]);
         this.#setStatus({ state: 'open', qr: null, error: null, me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null } });
         void this.#resolveLids(sock);
+        // reconnexion pendant que l'app est au premier plan : de nouveau en ligne
+        if (this.#online) void sock.sendPresenceUpdate('available').catch((error: unknown) => logger.warn({ error }, 'présence'));
         void this.#fetchGroups(sock);
         void this.#resyncChatState(sock);
       }
@@ -269,6 +280,15 @@ export class WhatsApp {
         const m = this.#store.message(chatId, key.id);
         if (m !== null) this.#emit({ type: 'message.update', message: m });
       }
+    });
+
+    // présence : en ligne, vu, en train d'écrire (discussions suivies par l'app)
+    sock.ev.on('presence.update', ({ id, presences }) => {
+      const chatId = this.#jid(id);
+      const known = this.#presence.get(chatId) ?? new Map<string, { data: PresenceData; at: number }>();
+      for (const [who, data] of Object.entries(presences)) known.set(this.#jid(who), { data, at: Date.now() });
+      this.#presence.set(chatId, known);
+      this.#emit({ type: 'presence', chatId, presence: this.presenceOf(chatId) });
     });
 
     // accusés par participant (groupes) : dates de distribution, de lecture, d'écoute
@@ -742,6 +762,40 @@ export class WhatsApp {
     });
     this.#store.setMeta('favorites-patch', JSON.stringify({ ...shape, ids }));
     this.#store.setFavorites(ids.map((id) => this.#jid(id)));
+  }
+
+  // ------------------------------------------------------------------ présence
+
+  /** Présence d'une discussion, telle que l'app l'affiche. */
+  presenceOf(chatId: string): Presence {
+    const known = this.#presence.get(chatId) ?? new Map<string, { data: PresenceData; at: number }>();
+    const typing = [...known].flatMap(([who, { data, at }]) =>
+      (data.lastKnownPresence === 'composing' || data.lastKnownPresence === 'recording') && fresh(at) ? [{ name: this.#store.chat(who)?.name ?? this.#store.displayName(who), recording: data.lastKnownPresence === 'recording' }] : [],
+    );
+    // discussion directe : la seule présence est celle de l'autre personne
+    const other = chatId.endsWith('@g.us') ? undefined : known.get(chatId);
+    const state = other?.data.lastKnownPresence;
+    const typingStale = (state === 'composing' || state === 'recording') && other !== undefined && !fresh(other.at);
+    return { online: !typingStale && (state === 'available' || state === 'composing' || state === 'recording'), lastSeen: other?.data.lastSeen ?? null, typing };
+  }
+
+  /** Suit la présence d'une discussion (ouverte dans l'app) ; renvoie ce qui est connu. */
+  async subscribe(chatId: string): Promise<Presence> {
+    const { jid } = this.#target(chatId);
+    await this.#open().presenceSubscribe(jid);
+    return this.presenceOf(chatId);
+  }
+
+  /** Ma présence : en ligne pendant que la fenêtre de l'app a le focus (comme WhatsApp Web). */
+  async setOnline(online: boolean): Promise<void> {
+    this.#online = online;
+    await this.#open().sendPresenceUpdate(online ? 'available' : 'unavailable');
+  }
+
+  /** Ma saisie dans une discussion (en train d'écrire, d'enregistrer, ou pause). */
+  async typing(chatId: string, state: 'composing' | 'recording' | 'paused'): Promise<void> {
+    const { jid } = this.#target(chatId);
+    await this.#open().sendPresenceUpdate(state, jid);
   }
 
   /** Photo de profil d'une discussion (personne ou groupe), null sans photo. */

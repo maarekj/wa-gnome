@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, type MessageAction, MessageInfo, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
+import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, type MessageAction, MessageInfo, Presence, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -141,6 +141,21 @@ export class WaClient {
 
   async chatAction(chatId: string, action: ChatAction): Promise<void> {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
+  }
+
+  /** Suit la présence d'une discussion ; présence connue. */
+  subscribePresence(chatId: string): Promise<Presence> {
+    return this.request('POST', `/chats/${encodeURIComponent(chatId)}/subscribe`, Presence);
+  }
+
+  /** Ma présence (fenêtre active ou non). */
+  async setOnline(online: boolean): Promise<void> {
+    await this.request('POST', '/presence', z.unknown(), { online });
+  }
+
+  /** Ma saisie dans une discussion. */
+  async typing(chatId: string, state: 'composing' | 'recording' | 'paused'): Promise<void> {
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/typing`, z.unknown(), { state });
   }
 
   /** Modifier, supprimer pour tous ou pour moi un message. */
