@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
+import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, MessageInfo, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -141,6 +141,11 @@ export class WaClient {
 
   async chatAction(chatId: string, action: ChatAction): Promise<void> {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
+  }
+
+  /** Infos d'un message envoyé : accusés par destinataire. */
+  messageInfo(chatId: string, messageId: string): Promise<MessageInfo> {
+    return this.request('GET', `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/info`, MessageInfo);
   }
 
   /** Réagit à un message (émoji vide : réaction retirée). */

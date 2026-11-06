@@ -100,6 +100,41 @@ export const STYLESHEET = `
 .reaction-people {
   background: none;
 }
+.ticks {
+  opacity: 0.65;
+  font-weight: 900;
+  font-size: 0.95em;
+  /* chevauchement léger : deux coches lisibles quelle que soit la police */
+  letter-spacing: -0.25em;
+  margin-right: 3px;
+}
+.ticks.read,
+.ticks.played {
+  opacity: 1;
+  color: #1d9bf0;
+}
+.ticks.error {
+  opacity: 1;
+  color: var(--error-color);
+  letter-spacing: 0;
+}
+.ticks.pending {
+  letter-spacing: 0;
+  font-size: 0.75em;
+}
+.ticks.info-ticks {
+  font-size: 1em;
+  letter-spacing: -0.25em;
+  margin-right: 6px;
+}
+.info-preview {
+  background: alpha(currentColor, 0.04);
+  border-radius: 12px;
+  padding: 16px;
+}
+.ticks.delivered {
+  opacity: 0.65;
+}
 .day-separator {
   background: alpha(currentColor, 0.06);
   border-radius: 999px;

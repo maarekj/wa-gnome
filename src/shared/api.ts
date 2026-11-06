@@ -143,6 +143,42 @@ export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'
 
 export const ReactBody = z.object({ emoji: z.string() });
 
+/** État d'un message envoyé : en attente, envoyé (1 coche), reçu (2 coches), lu / écouté (2 coches bleues). */
+export const MessageStatus = z.enum(['error', 'pending', 'sent', 'delivered', 'read', 'played']);
+export type MessageStatus = z.infer<typeof MessageStatus>;
+
+/** proto.WebMessageInfo.Status (nombre, ou nom dans l'historique) → état ; null si inconnu. */
+export function statusOf(s: unknown): MessageStatus | null {
+  const byNumber: readonly MessageStatus[] = ['error', 'pending', 'sent', 'delivered', 'read', 'played'];
+  const byName: Readonly<Record<string, MessageStatus>> = { ERROR: 'error', PENDING: 'pending', SERVER_ACK: 'sent', DELIVERY_ACK: 'delivered', READ: 'read', PLAYED: 'played' };
+  if (typeof s === 'number') return byNumber[s] ?? null;
+  if (typeof s === 'string') return byName[s] ?? null;
+  return null;
+}
+
+/** « En attente » depuis plus longtemps que ce délai : état périmé de l'historique, considéré envoyé. */
+export const PENDING_STALE_S = 10 * 60;
+
+/** État affiché d'un message envoyé à `timestamp` (secondes). */
+export const effectiveStatus = (s: MessageStatus, timestamp: number, now = Date.now() / 1000): MessageStatus => (s === 'pending' && now - timestamp > PENDING_STALE_S ? 'sent' : s);
+
+/** Rang d'un état : un état n'est jamais remplacé par un moins avancé (accusés dans le désordre). */
+export const statusRank = (s: MessageStatus): number => ['pending', 'sent', 'delivered', 'read', 'played', 'error'].indexOf(s);
+
+/** Accusés d'un destinataire (secondes, null : pas encore). */
+export const Receipt = z.object({
+  id: z.string(),
+  name: z.string(),
+  delivered: z.nullable(z.number()),
+  read: z.nullable(z.number()),
+  played: z.nullable(z.number()),
+});
+export type Receipt = z.infer<typeof Receipt>;
+
+/** Infos d'un message envoyé (`GET /chats/:id/messages/:mid/info`). */
+export const MessageInfo = z.object({ receipts: z.array(Receipt) });
+export type MessageInfo = z.infer<typeof MessageInfo>;
+
 export const Message = z.object({
   id: z.string(),
   chatId: z.string(),
@@ -159,6 +195,8 @@ export const Message = z.object({
   /** message auquel celui-ci répond */
   quoted: z.nullable(Quoted),
   reactions: z.array(Reaction),
+  /** messages envoyés seulement */
+  status: z.nullable(MessageStatus),
 });
 export type Message = z.infer<typeof Message>;
 

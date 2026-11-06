@@ -7,12 +7,13 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Media, previewOf, type Message, QUICK_REACTIONS, type Quoted, uploadKind } from '../shared/api.ts';
+import { type Media, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText } from './ChatList.tsx';
+import { openMessageInfo } from './MessageInfo.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
@@ -57,7 +58,13 @@ interface BubbleContext {
   readonly react: (m: Message, emoji: string) => void;
   /** photos des personnes (fenêtre des réactions) */
   readonly pictures: Pictures;
+  /** infos d'un message envoyé (accusés) */
+  readonly info: (m: Message) => void;
 }
+
+/** Coches d'un message envoyé (comme WhatsApp). */
+export const STATUS_MARK: Readonly<Record<MessageStatus, string>> = { pending: '🕓', sent: '✓', delivered: '✓✓', read: '✓✓', played: '✓✓', error: '⚠' };
+const STATUS_TEXT: Readonly<Record<MessageStatus, string>> = { pending: 'En attente d’envoi', sent: 'Envoyé', delivered: 'Reçu', read: 'Lu', played: 'Écouté', error: 'Échec de l’envoi' };
 
 /** Ma réaction sur un message, ou null. */
 export const myReaction = (m: Pick<Message, 'reactions'>): string | null => m.reactions.find((r) => r.mine)?.emoji ?? null;
@@ -85,6 +92,9 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   const reactAction = new Gio.SimpleAction({ name: 'react', parameterType: new GLib.VariantType('s') });
   reactAction.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => ctx.react(msg(), param?.get_string()[0] ?? ''));
   group.add_action(reactAction);
+  const infoAction = new Gio.SimpleAction({ name: 'info' });
+  infoAction.connect('activate', () => ctx.info(msg()));
+  group.add_action(infoAction);
   const replyAction = new Gio.SimpleAction({ name: 'reply' });
   replyAction.connect('activate', () => ctx.reply(msg()));
   group.add_action(replyAction);
@@ -98,6 +108,7 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   const popup = (x: number, y: number): void => {
     const model = new Gio.Menu();
     model.append('Répondre', 'msg.reply');
+    if (msg().fromMe) model.append('Infos du message', 'msg.info');
     const reactions = new Gio.Menu();
     const mine = myReaction(msg());
     for (const emoji of QUICK_REACTIONS) {
@@ -219,7 +230,23 @@ function bubble(ctx: BubbleContext) {
             // sous une image : la légende prend la largeur de l'image au lieu d'élargir la bulle
             maxWidthChars={picture === null ? 60 : 1}
           />
-          <Gtk.Label label={live(() => fmtTime(msg().timestamp))} halign={Gtk.Align.END} cssClasses={['caption', 'dim-label']} />
+          <Gtk.Box spacing={4} halign={Gtk.Align.END}>
+            <Gtk.Label label={live(() => fmtTime(msg().timestamp))} cssClasses={['caption', 'dim-label']} />
+            {/* coches des messages envoyés */}
+            <Gtk.Label
+              visible={live(() => msg().status !== null)}
+              label={live(() => STATUS_MARK[msg().status ?? 'sent'])}
+              tooltipText={live(() => `${STATUS_TEXT[msg().status ?? 'sent']} — infos du message`)}
+              cssClasses={live(() => ['caption', 'ticks', msg().status ?? 'sent'])}
+              $={(self: Gtk.Label) => {
+                // clic sur les coches : infos du message (comme WhatsApp Web)
+                self.set_cursor_from_name('pointer');
+                const click = new Gtk.GestureClick();
+                click.connect('released', () => ctx.info(msg()));
+                self.add_controller(click);
+              }}
+            />
+          </Gtk.Box>
         </Gtk.Box>
         {ReactionsRow(ctx, msg, (fn) => live.subscribe(fn), m.fromMe)}
       </Gtk.Box>,
@@ -536,7 +563,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     spacing={4}
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', pictures, reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

@@ -37,6 +37,7 @@ const wa = new WhatsApp(store, dataDir, (e) => server?.emit(e));
 if (store.needsMediaBackfill) wa.backfillMedia();
 wa.backfillQuoted();
 wa.backfillReactions();
+wa.backfillReceipts();
 server = await startServer({
   host: process.env['WA_GNOME_HOST'] ?? '127.0.0.1',
   port: Number(process.env['WA_GNOME_PORT'] ?? DEFAULT_PORT),

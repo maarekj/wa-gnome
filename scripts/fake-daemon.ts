@@ -165,7 +165,7 @@ const add = (
   seq += 1;
   const id = `fake${seq}`;
   if (attached !== null) media.set(id, { mimetype: attached.media.mimetype, data: attached.data });
-  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo) }, '{}');
+  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo), status: fromMe ? (ago === 0 ? 'pending' : 'read') : null }, '{}');
   const m = store.message(chatId, id);
   if (m === null) throw new Error('message de démonstration introuvable');
   return m;
@@ -187,6 +187,8 @@ add(ALICE, false, 'La vue depuis le chalet', 2 * H - 120, null, null, { kind: 'i
 add(ALICE, true, '', 2 * H - 60, null, null, { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });
 add(GROUP, false, 'Qui vient dimanche ?', 3 * H, BOB, 'Bob');
 const moi = add(GROUP, true, 'Moi !', 3 * H - 60);
+store.setReceipt({ chatId: GROUP, messageId: moi.id, user: BOB, delivered: now - 3 * H + 30, read: now - 3 * H + 120 });
+store.setReceipt({ chatId: GROUP, messageId: moi.id, user: ALICE, delivered: now - 3 * H + 40, read: now - 2 * H });
 const dessert = add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
 // réactions de démonstration
 for (const [sender, emoji] of [[BOB, '❤️'], [ME, '❤️'], [ALICE, '😂']] as const) store.setReaction({ chatId: GROUP, targetId: dessert.id, sender: sender === ME ? 'me' : sender, emoji, timestamp: Date.now() });
@@ -221,6 +223,21 @@ store.upsertContact(LONG, { name: 'Claire (longue discussion)' });
 for (let i = 150; i >= 1; i -= 1) add(LONG, i % 2 === 0, `Message n° ${151 - i}`, 3 * H + i * 600);
 const historyGiven = new Set<string>();
 
+/** Coches d'un message envoyé : envoyé, reçu, puis lu (comme un vrai correspondant). */
+const progress = (chatId: string, id: string): void => {
+  for (const [delay, status] of [[1000, 'sent'], [3000, 'delivered'], [5000, 'read']] as const) {
+    setTimeout(() => {
+      store.setStatus(chatId, id, status);
+      // destinataires : la personne, ou deux membres du groupe (Bob lit, Alice seulement distribué)
+      const t = Math.floor(Date.now() / 1000);
+      const users = chatId === GROUP ? [BOB, ALICE] : [chatId];
+      for (const user of users) store.setReceipt({ chatId, messageId: id, user, delivered: status === 'sent' ? null : t, read: status === 'read' && user !== ALICE ? t : null });
+      const m = store.message(chatId, id);
+      if (m !== null) emit({ type: 'message.update', message: m });
+    }, delay);
+  }
+};
+
 let server: Server | null = null;
 const emit = (e: Event): void => server?.emit(e);
 let status: Status = { state: ConnectionState.parse(values.state), qr: values.state === 'qr' ? 'https://wa.me/settings/linked_devices#fake-qr-code' : null, me: values.state === 'open' ? { id: '33600000000@s.whatsapp.net', name: 'Moi' } : null, error: null };
@@ -231,6 +248,7 @@ const backend: Backend = {
   },
   send: (chatId, text, replyTo) => {
     const m = add(chatId, true, text, 0, null, null, null, replyTo);
+    progress(chatId, m.id);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
     // réponse automatique
@@ -240,7 +258,7 @@ const backend: Backend = {
       if (chatId === GROUP) store.incrementUnread(chatId);
       emit({ type: 'message', message: r });
       emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
-    }, 1500);
+    }, 6000);
     return Promise.resolve();
   },
   markRead: (chatId) => {
@@ -301,6 +319,7 @@ const backend: Backend = {
     }, 800);
     return Promise.resolve(true);
   },
+  messageInfo: (chatId, messageId) => ({ receipts: store.receipts(chatId, messageId) }),
   react: (chatId, messageId, emoji) => {
     store.setReaction({ chatId, targetId: messageId, sender: 'me', emoji, timestamp: Date.now() });
     const m = store.message(chatId, messageId);
@@ -314,6 +333,7 @@ const backend: Backend = {
       media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: null },
       data: f.data,
     }, f.replyTo);
+    progress(chatId, m.id);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
     return Promise.resolve();

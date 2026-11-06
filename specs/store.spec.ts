@@ -1,6 +1,6 @@
 // État de l'application : application des événements du démon, ordre des messages.
 import type { Chat, Message } from '../src/shared/api.ts';
-import { formatPhone, isMuted, previewOf, uploadKind } from '../src/shared/api.ts';
+import { effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf, myReaction } from '../src/app/ConversationPage.tsx';
@@ -8,9 +8,10 @@ import { fold, inList, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
 import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
+import { splitReceipts, stepText } from '../src/app/MessageInfo.ts';
 import { displaySize } from '../src/app/media.ts';
 
-const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], ...extra });
+const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
 
 describe('mergeMessage', () => {
@@ -43,6 +44,22 @@ describe('fenêtre des réactions', () => {
     expect(reactionPeople(reactions, '❤️').map((p) => p.name)).toEqual(['B']);
     expect(reactionCount(reactions)).toBe('3 réactions');
     expect(reactionCount([{ emoji: '👍', count: 1, mine: false, people: [] }])).toBe('1 réaction');
+  });
+});
+
+/** Accusé de test. */
+const receipt = (id: string, delivered: number | null, read: number | null) => ({ id, name: id, delivered, read, played: null });
+
+describe('infos du message', () => {
+  it('groupe : lus d’abord (le plus récent en tête), puis distribués', () => {
+    const { read, delivered } = splitReceipts([receipt('a', 1, 5), receipt('b', 2, null), receipt('c', 1, 9), receipt('d', null, null)]);
+    expect(read.map((x) => x.id)).toEqual(['c', 'a']);
+    expect(delivered.map((x) => x.id)).toEqual(['b']);
+  });
+
+  it('étape atteinte sans date connue', () => {
+    expect(stepText(null, false)).toBe('—');
+    expect(stepText(null, true)).toContain('Date inconnue');
   });
 });
 
@@ -163,6 +180,17 @@ describe('divers', () => {
     expect(formatPhone('33612345678')).toBe('+33 6 12 34 56 78');
     expect(formatPhone('972541234567')).toBe('+972 54 123 4567');
     expect(formatPhone('4915112345678')).toBe('+4915112345678');
+  });
+
+  it('état d’un message envoyé (nombre ou nom)', () => {
+    expect(statusOf(4)).toBe('read');
+    expect(statusOf('DELIVERY_ACK')).toBe('delivered');
+    expect(statusOf('SERVER_ACK')).toBe('sent');
+    expect(statusOf(null)).toBeNull();
+    // « en attente » ancien (historique) : envoyé
+    expect(effectiveStatus('pending', 1000, 1100)).toBe('pending');
+    expect(effectiveStatus('pending', 1000, 5000)).toBe('sent');
+    expect(effectiveStatus('read', 1000, 5000)).toBe('read');
   });
 
   it('genre d’envoi d’un fichier', () => {

@@ -12,7 +12,7 @@ const LID = '111@lid';
 const PN = '33600000001@s.whatsapp.net';
 const GROUP = '1203@g.us';
 
-const msg = (chatId: string, id: string, timestamp: number, sender: string | null = null): Converted => ({ id, chatId, fromMe: false, sender, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null });
+const msg = (chatId: string, id: string, timestamp: number, sender: string | null = null): Converted => ({ id, chatId, fromMe: false, sender, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, status: null });
 
 void describe('Store : lid → numéro', () => {
   void it('fusionne la discussion lid dans celle du numéro', () => {
@@ -155,6 +155,40 @@ void describe('réactions', () => {
     assert.deepEqual(store.message(GROUP, 'm')?.reactions.map((r) => [r.emoji, r.count, r.mine]), [
       ['❤️', 1, false],
       ['😂', 1, false],
+    ]);
+  });
+});
+
+void describe('état des messages envoyés', () => {
+  void it('ne recule jamais (accusés dans le désordre), sauf erreur', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage({ ...msg(PN, 'e', 10), fromMe: true, status: 'pending' }, '{}');
+    const st = (): string | null | undefined => store.message(PN, 'e')?.status;
+    assert.equal(store.setStatus(PN, 'e', 'delivered'), true);
+    assert.equal(store.setStatus(PN, 'e', 'sent'), false);
+    assert.equal(st(), 'delivered');
+    store.setStatus(PN, 'e', 'read');
+    // message renvoyé par WhatsApp (écho de l'envoi) avec un état moins avancé : conservé
+    store.upsertMessage({ ...msg(PN, 'e', 10), fromMe: true, status: 'sent' }, '{}');
+    assert.equal(st(), 'read');
+    // message reçu : pas d'état
+    store.upsertMessage(msg(PN, 'r', 11), '{}');
+    assert.equal(store.message(PN, 'r')?.status, null);
+    assert.equal(store.setStatus(PN, 'r', 'read'), false);
+  });
+});
+
+void describe('accusés', () => {
+  void it('première date gardée, lu implique distribué, lid rattaché au numéro', () => {
+    const store = new Store(':memory:');
+    store.upsertContact(PN, { name: 'Alice' });
+    store.setReceipt({ chatId: GROUP, messageId: 'm', user: LID, delivered: 10 });
+    store.setReceipt({ chatId: GROUP, messageId: 'm', user: LID, delivered: 99, read: 20 });
+    store.setReceipt({ chatId: GROUP, messageId: 'm', user: '222@s.whatsapp.net', read: 30 });
+    store.addMappings([{ lid: LID, pn: PN }]);
+    assert.deepEqual(store.receipts(GROUP, 'm'), [
+      { id: '222@s.whatsapp.net', name: '+222', delivered: 30, read: 30, played: null },
+      { id: PN, name: 'Alice', delivered: 10, read: 20, played: null },
     ]);
   });
 });

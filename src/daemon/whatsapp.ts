@@ -25,7 +25,7 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { type ChatAction, type Event, MAX_PINNED, type Message, type Status, uploadKind } from '../shared/api.ts';
+import { type ChatAction, type Event, MAX_PINNED, type Message, type MessageInfo, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import type { Upload } from './server.ts';
 import { mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
@@ -229,6 +229,28 @@ export class WhatsApp {
       this.#emit({ type: 'chats', chats: this.#store.chats() });
     });
 
+    // accusés : envoyé, reçu, lu, écouté (messages envoyés)
+    sock.ev.on('messages.update', (updates) => {
+      for (const { key, update } of updates) {
+        const status = statusOf(update.status);
+        if (status === null || key.fromMe !== true || key.id === null || key.id === undefined) continue;
+        const chatId = this.#jid(key.remoteJid);
+        // discussion directe : dates d'accusé du destinataire (les groupes ont message-receipt.update)
+        if (!chatId.endsWith('@g.us')) {
+          const now = Math.floor(Date.now() / 1000);
+          this.#store.setReceipt({ chatId, messageId: key.id, user: chatId, delivered: statusRank(status) >= statusRank('delivered') ? now : null, read: status === 'read' || status === 'played' ? now : null, played: status === 'played' ? now : null });
+        }
+        if (!this.#store.setStatus(chatId, key.id, status)) continue;
+        const m = this.#store.message(chatId, key.id);
+        if (m !== null) this.#emit({ type: 'message.update', message: m });
+      }
+    });
+
+    // accusés par participant (groupes) : dates de distribution, de lecture, d'écoute
+    sock.ev.on('message-receipt.update', (updates) => {
+      for (const { key, receipt } of updates) this.#saveReceipt(key, receipt);
+    });
+
     // groupe renommé
     sock.ev.on('groups.update', (groups) => {
       const named = groups.filter((g): g is typeof g & { id: string; subject: string } => g.id !== undefined && g.subject !== undefined);
@@ -252,8 +274,35 @@ export class WhatsApp {
     if (target !== null) this.#emit({ type: 'message.update', message: target });
   }
 
+  /** Accusé d'un destinataire pour un message envoyé. */
+  #saveReceipt(key: WAMessageKey, r: proto.IUserReceipt): void {
+    if (key.fromMe !== true || key.id === null || key.id === undefined || r.userJid === null || r.userJid === undefined) return;
+    this.#store.setReceipt({ chatId: this.#jid(key.remoteJid), messageId: key.id, user: this.#jid(r.userJid), delivered: seconds(r.receiptTimestamp), read: seconds(r.readTimestamp), played: seconds(r.playedTimestamp) });
+  }
+
+  /** Accusés des messages envoyés déjà enregistrés (base antérieure). */
+  backfillReceipts(): void {
+    if (!this.#store.flag('backfill-receipts')) return;
+    const rows = this.#store.messagesWithReceipts();
+    this.#store.transaction(() => {
+      for (const row of rows) {
+        const wa = this.#parseRaw(row.raw);
+        for (const r of wa?.userReceipt ?? []) if (wa !== null) this.#saveReceipt(wa.key, r);
+      }
+    });
+    this.#store.setFlag('backfill-receipts', false);
+    logger.info(`accusés : ${rows.length} message(s) de l'historique`);
+  }
+
+  /** Infos d'un message envoyé : accusés par destinataire. */
+  messageInfo(chatId: string, id: string): MessageInfo {
+    return { receipts: this.#store.receipts(chatId, id) };
+  }
+
   #saveMessage(wa: WAMessage): Message | null {
     const converted = toMessage(wa);
+    // accusés portés par un message envoyé (historique)
+    for (const r of wa.userReceipt ?? []) this.#saveReceipt(wa.key, r);
     // réactions de l'historique portées par le message lui-même
     for (const r of reactionsOf(wa)) this.#react(r, false);
     if (converted === null) return null;
@@ -558,7 +607,9 @@ export class WhatsApp {
   #sent(sent: WAMessage | undefined): void {
     // le message envoyé revient aussi par messages.upsert ; enregistré ici sans attendre
     if (sent !== undefined) {
-      const m = this.#saveMessage(sent);
+      let m = this.#saveMessage(sent);
+      // envoi de l'app pas encore accusé par le serveur : en attente
+      if (m !== null && statusOf(sent.status) === 'pending' && this.#store.forceStatus(m.chatId, m.id, 'pending')) m = this.#store.message(m.chatId, m.id);
       if (m !== null) {
         this.#emit({ type: 'message', message: m });
         this.#emitChats([m.chatId]);

@@ -4,7 +4,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, previewOf, type Quoted, type Reaction } from '../shared/api.ts';
+import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS messages (
   media TEXT,
   -- message cité (RawQuoted, JSON), null si ce n'est pas une réponse
   quoted TEXT,
+  -- état d'un message envoyé (MessageStatus), null pour les messages reçus
+  status TEXT,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -55,6 +57,16 @@ CREATE TABLE IF NOT EXISTS reactions (
   emoji TEXT NOT NULL,
   timestamp INTEGER NOT NULL,
   PRIMARY KEY (chat_id, message_id, sender)
+);
+-- accusés des messages envoyés, par destinataire (secondes ; null : pas encore)
+CREATE TABLE IF NOT EXISTS receipts (
+  chat_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  user TEXT NOT NULL,
+  delivered INTEGER,
+  read INTEGER,
+  played INTEGER,
+  PRIMARY KEY (chat_id, message_id, user)
 );
 -- indicateurs du démon (opérations à faire une fois, survivant aux redémarrages)
 CREATE TABLE IF NOT EXISTS meta (
@@ -116,6 +128,7 @@ const MessageRow = z.object({
   text: z.string(),
   media: z.nullable(z.string()),
   quoted: z.nullable(z.string()),
+  status: z.nullable(z.string()),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
@@ -147,7 +160,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 6;
+const VERSION = 8;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -166,6 +179,10 @@ const userPart = (jid: string): string => {
 /** Champs modifiables d'une discussion (absents : inchangés). */
 /** Booléen → 0/1 pour SQLite ; absent : null (inchangé). */
 const flag = (b: boolean | null | undefined): number | null => (b === null || b === undefined ? null : Number(b));
+
+/** Date d'accusé : absente ou nulle (0) → null. */
+const dateOrNull = (v: number | null | undefined): number | null => (v === null || v === undefined || v <= 0 ? null : v);
+const numberOrNull = (v: unknown): number | null => (typeof v === 'number' ? v : null);
 
 export interface ChatPatch {
   id: string;
@@ -195,6 +212,19 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 8) {
+      // accusés par destinataire des messages déjà envoyés : relus dans les messages bruts
+      this.setFlag('backfill-receipts', true);
+    }
+    if (!fresh && version < 7) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN status TEXT');
+      // état des messages envoyés : relu dans le message brut (nombre ou nom selon la source)
+      const rows = this.#db.prepare("SELECT chat_id, id, json_extract(raw, '$.status') AS s FROM messages WHERE from_me = 1").all();
+      const upd = this.#db.prepare('UPDATE messages SET status = ? WHERE chat_id = ? AND id = ?');
+      this.transaction(() => {
+        for (const r of rows) upd.run(statusOf(r['s']) ?? 'sent', String(r['chat_id']), String(r['id']));
+      });
     }
     if (!fresh && version < 6) {
       // réactions jusqu'ici enregistrées comme messages, ou seulement dans `raw` : relues au démarrage
@@ -290,6 +320,10 @@ export class Store {
     db.prepare('UPDATE OR IGNORE messages SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
     db.prepare('DELETE FROM messages WHERE chat_id = ?').run(lid);
     db.prepare('UPDATE messages SET sender = ? WHERE sender = ?').run(pn, lid);
+    db.prepare('UPDATE OR IGNORE receipts SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
+    db.prepare('DELETE FROM receipts WHERE chat_id = ?').run(lid);
+    db.prepare('UPDATE OR IGNORE receipts SET user = ? WHERE user = ?').run(pn, lid);
+    db.prepare('DELETE FROM receipts WHERE user = ?').run(lid);
     db.prepare('UPDATE OR IGNORE reactions SET chat_id = ? WHERE chat_id = ?').run(pn, lid);
     db.prepare('DELETE FROM reactions WHERE chat_id = ?').run(lid);
     db.prepare('UPDATE OR IGNORE reactions SET sender = ? WHERE sender = ?').run(pn, lid);
@@ -421,6 +455,7 @@ export class Store {
   clearMessages(chatId: string): void {
     this.#db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
     this.#db.prepare('DELETE FROM reactions WHERE chat_id = ?').run(chatId);
+    this.#db.prepare('DELETE FROM receipts WHERE chat_id = ?').run(chatId);
   }
 
   /** Nombre de discussions épinglées. */
@@ -448,6 +483,7 @@ export class Store {
       del.run(id);
       msgs.run(id);
       reacts.run(id);
+      this.#db.prepare('DELETE FROM receipts WHERE chat_id = ?').run(id);
     }
   }
 
@@ -468,8 +504,10 @@ export class Store {
   upsertMessage(m: Converted, raw: string): void {
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted)
-         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted)`,
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, status)
+         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted,
+           -- état déjà plus avancé (accusé arrivé avant le message lui-même) : conservé
+           (SELECT CASE WHEN :status IS NULL THEN NULL ELSE coalesce((SELECT status FROM messages WHERE chat_id = :chat_id AND id = :id), :status) END))`,
       )
       .run({
         chat_id: m.chatId,
@@ -483,7 +521,9 @@ export class Store {
         raw,
         media: m.media === null ? null : JSON.stringify(m.media),
         quoted: m.quoted === null ? null : JSON.stringify(m.quoted),
+        status: m.status,
       });
+    if (m.status !== null) this.setStatus(m.chatId, m.id, m.status);
     this.upsertChat({ id: m.chatId, timestamp: m.timestamp });
   }
 
@@ -497,7 +537,7 @@ export class Store {
 
   /** Tout effacer (déconnexion du compte). */
   clear(): void {
-    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM labels; DELETE FROM chat_labels; DELETE FROM favorites; DELETE FROM reactions;');
+    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM labels; DELETE FROM chat_labels; DELETE FROM favorites; DELETE FROM reactions; DELETE FROM receipts;');
     this.#pn.clear();
   }
 
@@ -599,7 +639,53 @@ export class Store {
       media: parseMedia(r.media),
       quoted: this.#resolveQuoted(parseQuoted(r.quoted), r.chat_id),
       reactions: reactions.get(r.id) ?? [],
+      status: r.from_me === 1 ? effectiveStatus(MessageStatus.safeParse(r.status).data ?? 'sent', r.timestamp) : null,
     }));
+  }
+
+  /** État d'un message envoyé, s'il est plus avancé que celui connu ; true s'il a changé. */
+  setStatus(chatId: string, id: string, status: MessageStatus): boolean {
+    const row = this.#db.prepare('SELECT status FROM messages WHERE chat_id = ? AND id = ? AND from_me = 1').get(chatId, id);
+    if (row === undefined) return false;
+    const current = typeof row['status'] === 'string' ? MessageStatus.safeParse(row['status']) : null;
+    if (current?.success === true && (current.data === status || (statusRank(current.data) > statusRank(status) && status !== 'error'))) return false;
+    this.#db.prepare('UPDATE messages SET status = ? WHERE chat_id = ? AND id = ?').run(status, chatId, id);
+    return true;
+  }
+
+  /** Accusé d'un destinataire : chaque date n'est renseignée qu'une fois (la première connue). */
+  setReceipt(r: { chatId: string; messageId: string; user: string; delivered?: number | null; read?: number | null; played?: number | null }): void {
+    this.#db
+      .prepare(
+        `INSERT INTO receipts (chat_id, message_id, user, delivered, read, played) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (chat_id, message_id, user) DO UPDATE SET
+           delivered = coalesce(receipts.delivered, excluded.delivered),
+           read = coalesce(receipts.read, excluded.read),
+           played = coalesce(receipts.played, excluded.played)`,
+      )
+      .run(r.chatId, r.messageId, r.user, dateOrNull(r.delivered), dateOrNull(r.read), dateOrNull(r.played));
+  }
+
+  /** Accusés d'un message, noms résolus ; lu (ou écouté) implique distribué. */
+  receipts(chatId: string, messageId: string): Receipt[] {
+    return this.#db
+      .prepare('SELECT user, delivered, read, played FROM receipts WHERE chat_id = ? AND message_id = ? ORDER BY coalesce(read, delivered, played) DESC')
+      .all(chatId, messageId)
+      .flatMap((r) => {
+        if (typeof r['user'] !== 'string') return [];
+        const read = numberOrNull(r['read']) ?? numberOrNull(r['played']);
+        return [{ id: r['user'], name: this.#displayName(r['user']), delivered: numberOrNull(r['delivered']) ?? read, read, played: numberOrNull(r['played']) }];
+      });
+  }
+
+  /** Messages envoyés dont la forme brute porte des accusés (historique). */
+  messagesWithReceipts(): { chatId: string; id: string; raw: string }[] {
+    return this.#rawRows(`from_me = 1 AND raw LIKE '%"userReceipt":[{%'`);
+  }
+
+  /** État d'un envoi de l'app, imposé tant qu'aucun accusé n'est arrivé (état « envoyé » par défaut). */
+  forceStatus(chatId: string, id: string, status: MessageStatus): boolean {
+    return this.#db.prepare("UPDATE messages SET status = ? WHERE chat_id = ? AND id = ? AND from_me = 1 AND status = 'sent'").run(status, chatId, id).changes > 0;
   }
 
   // ------------------------------------------------------------------ réactions

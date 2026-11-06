@@ -1,6 +1,6 @@
 // Conversion des messages Baileys (protobuf) vers le format de l'API.
 import { getContentType, isJidGroup, jidNormalizedUser, normalizeMessageContent, proto, type WAMessage } from 'baileys';
-import type { Media, Message, MessageKind, Quoted } from '../shared/api.ts';
+import { type Media, type Message, type MessageKind, type Quoted, statusOf } from '../shared/api.ts';
 
 /** Horodatage protobuf (number ou Long) en secondes. */
 export const seconds = (ts: number | { toNumber: () => number } | null | undefined): number => {
@@ -153,5 +153,8 @@ export function toMessage(wa: WAMessage): Converted | null {
     text,
     media: mediaOf(content),
     quoted: quotedOf(content),
+    // « en attente » : seulement pour un envoi de l'app (voir WhatsApp.#sent) ; un message envoyé
+    // depuis un autre appareil est déjà parti
+    status: fromMe ? (statusOf(wa.status) === 'pending' || statusOf(wa.status) === null ? 'sent' : statusOf(wa.status)) : null,
   };
 }
