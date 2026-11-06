@@ -17,7 +17,7 @@ import { openMessageInfo } from './MessageInfo.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
-import { displaySize, type Loaded, MediaLoader, openViewer, thumbnailTexture } from './media.ts';
+import { displaySize, type Loaded, MediaLoader, openViewer, type Photo, thumbnailTexture } from './media.ts';
 import { MediaFrame } from './MediaFrame.ts';
 import { AudioView, DocumentView, VideoView } from './MediaViews.ts';
 import { asWidget } from './widgets.ts';
@@ -51,6 +51,8 @@ interface BubbleContext {
   readonly loader: MediaLoader;
   readonly toast: (text: string) => void;
   readonly chatName: () => string;
+  /** photos chargées de la discussion (visionneuse : précédente / suivante) */
+  readonly photos: () => readonly Photo[];
   /** répondre à ce message (bandeau dans la zone de saisie) */
   readonly reply: (m: Message) => void;
   /** amène le message à l'écran s'il est chargé ; false sinon */
@@ -227,7 +229,11 @@ function MessagePicture(ctx: BubbleContext, m: Message & { media: Media }): Gtk.
     frame.set_cursor_from_name('pointer');
     const click = new Gtk.GestureClick();
     click.connect('released', () => {
-      if (loaded !== null) openViewer(frame, ctx.chatName(), m, m.media, loaded, ctx.toast);
+      if (loaded === null) return;
+      // photos chargées de la discussion (ordre chronologique), pour précédente / suivante
+      const photos = ctx.photos();
+      const start = photos.findIndex((p) => p.id === m.id);
+      openViewer(frame, ctx.chatName(), start < 0 ? [m] : photos, Math.max(0, start), ctx.loader, ctx.toast);
     });
     frame.add_controller(click);
   }
@@ -770,7 +776,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     spacing={4}
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

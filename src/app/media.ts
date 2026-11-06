@@ -192,21 +192,200 @@ export async function openExternal(parent: Gtk.Widget, file: Gio.File, toast: (t
   }
 }
 
-/** Aperçu en grand (Échap ou clic hors de l'image pour fermer), avec enregistrement. */
-export function openViewer(parent: Gtk.Widget, title: string, m: Message, media: Media, loaded: Loaded, toast: (t: string) => void): void {
-  const picture = new Gtk.Picture({ paintable: loaded.texture, contentFit: Gtk.ContentFit.CONTAIN, canShrink: true, hexpand: true, vexpand: true });
+/** Zoom maximal (multiple de la taille réelle). */
+const MAX_ZOOM = 8;
+/** Facteur de zoom par cran de molette. */
+const ZOOM_STEP = 1.25;
+
+/** Bouton flottant précédente / suivante. */
+const navButton = (icon: string, tip: string, align: Gtk.Align): Gtk.Button =>
+  new Gtk.Button({ iconName: icon, tooltipText: tip, halign: align, valign: Gtk.Align.CENTER, marginStart: 12, marginEnd: 12, cssClasses: ['osd', 'circular'], widthRequest: 40, heightRequest: 40 });
+
+/** Photo de la visionneuse (message avec média). */
+export type Photo = Message & { media: Media };
+
+/**
+ * Aperçu en grand (Échap pour fermer) : zoom à la molette centré sur le pointeur, déplacement en
+ * glissant, double-clic ajustée / taille réelle ; photos précédente / suivante de la discussion.
+ */
+export function openViewer(parent: Gtk.Widget, title: string, photos: readonly Photo[], start: number, loader: MediaLoader, toast: (t: string) => void): void {
+  let index = Math.max(0, Math.min(start, photos.length - 1));
+  let loaded: Loaded | null = null;
+  /** null : ajustée à la fenêtre ; sinon échelle par rapport à la taille réelle */
+  let scale: number | null = null;
+  const picture = new Gtk.Picture({ contentFit: Gtk.ContentFit.CONTAIN, canShrink: true, hexpand: true, vexpand: true, halign: Gtk.Align.FILL, valign: Gtk.Align.FILL });
+  const scroller = new Gtk.ScrolledWindow({ child: picture, hscrollbarPolicy: Gtk.PolicyType.NEVER, vscrollbarPolicy: Gtk.PolicyType.NEVER, hexpand: true, vexpand: true });
+  const hadj = scroller.get_hadjustment();
+  const vadj = scroller.get_vadjustment();
+  const spinner = new Adw.Spinner({ halign: Gtk.Align.CENTER, valign: Gtk.Align.CENTER, widthRequest: 32, heightRequest: 32, canTarget: false });
+  const prev = navButton('go-previous-symbolic', 'Photo précédente', Gtk.Align.START);
+  const next = navButton('go-next-symbolic', 'Photo suivante', Gtk.Align.END);
+  const overlay = new Gtk.Overlay({ child: scroller });
+  overlay.add_overlay(spinner);
+  overlay.add_overlay(prev);
+  overlay.add_overlay(next);
   const header = new Adw.HeaderBar();
   const saveButton = new Gtk.Button({ iconName: 'document-save-symbolic', tooltipText: 'Enregistrer sous…' });
   header.pack_start(saveButton);
-  const view = new Adw.ToolbarView({ content: picture });
+  const zoomLabel = new Gtk.Button({ label: 'Ajustée', tooltipText: 'Ajuster à la fenêtre (0)', cssClasses: ['flat', 'numeric'] });
+  header.pack_end(zoomLabel);
+  const view = new Adw.ToolbarView({ content: overlay });
   view.add_top_bar(header);
-  const caption = m.text === '' ? null : new Gtk.Label({ label: m.text, wrap: true, marginTop: 6, marginBottom: 12, marginStart: 12, marginEnd: 12 });
-  if (caption !== null) view.add_bottom_bar(caption);
+  const caption = new Gtk.Label({ wrap: true, marginTop: 6, marginBottom: 12, marginStart: 12, marginEnd: 12, selectable: true });
+  view.add_bottom_bar(caption);
   const root = parent.get_root();
   const [ww, wh] = root instanceof Gtk.Window ? [root.get_width(), root.get_height()] : [900, 700];
   const dialog = new Adw.Dialog({ title, child: view, contentWidth: Math.round(ww * 0.9), contentHeight: Math.round(wh * 0.9) });
+
+  const size = (): [number, number] => (loaded === null ? [0, 0] : [loaded.texture.get_width(), loaded.texture.get_height()]);
+  /** échelle de l'image ajustée à la fenêtre (jamais agrandie) */
+  const fitScale = (): number => {
+    const [iw, ih] = size();
+    if (iw === 0 || ih === 0) return 1;
+    return Math.min(1, scroller.get_width() / iw, scroller.get_height() / ih);
+  };
+  const current = (): number => scale ?? fitScale();
+  /** position visée après le prochain calcul des tailles (zoom centré sur un point) */
+  let pending: { fx: number; fy: number; x: number; y: number } | null = null;
+  const applyPending = (): void => {
+    if (pending === null) return;
+    const [iw, ih] = size();
+    const s = current();
+    const offX = Math.max(0, (scroller.get_width() - iw * s) / 2);
+    const offY = Math.max(0, (scroller.get_height() - ih * s) / 2);
+    hadj.set_value(pending.fx * iw * s + offX - pending.x);
+    vadj.set_value(pending.fy * ih * s + offY - pending.y);
+  };
+  hadj.connect('changed', applyPending);
+  vadj.connect('changed', applyPending);
+  const setScale = (wanted: number | null, x = scroller.get_width() / 2, y = scroller.get_height() / 2): void => {
+    const [iw, ih] = size();
+    if (iw === 0) return;
+    const fit = fitScale();
+    const target = wanted === null || wanted <= fit * 1.001 ? null : Math.min(MAX_ZOOM, wanted);
+    // point de l'image sous le pointeur (fraction), gardé au même endroit
+    const old = current();
+    const offX = Math.max(0, (scroller.get_width() - iw * old) / 2);
+    const offY = Math.max(0, (scroller.get_height() - ih * old) / 2);
+    pending = target === null ? null : { fx: (hadj.get_value() + x - offX) / (iw * old), fy: (vadj.get_value() + y - offY) / (ih * old), x, y };
+    scale = target;
+    const zoomed = target !== null;
+    picture.contentFit = zoomed ? Gtk.ContentFit.FILL : Gtk.ContentFit.CONTAIN;
+    picture.set_size_request(zoomed ? Math.round(iw * target) : -1, zoomed ? Math.round(ih * target) : -1);
+    picture.halign = zoomed ? Gtk.Align.CENTER : Gtk.Align.FILL;
+    picture.valign = zoomed ? Gtk.Align.CENTER : Gtk.Align.FILL;
+    picture.canShrink = !zoomed;
+    const policy = zoomed ? Gtk.PolicyType.EXTERNAL : Gtk.PolicyType.NEVER;
+    scroller.set_policy(policy, policy);
+    scroller.set_cursor_from_name(zoomed ? 'grab' : null);
+    zoomLabel.label = zoomed ? `${Math.round(target * 100)} %` : 'Ajustée';
+    applyPending();
+  };
+
+  // molette : zoom centré sur le pointeur (pas de défilement)
+  let pointer: [number, number] = [0, 0];
+  const motion = new Gtk.EventControllerMotion();
+  motion.connect('motion', (_c: Gtk.EventControllerMotion, x: number, y: number) => {
+    pointer = [x, y];
+  });
+  scroller.add_controller(motion);
+  const wheel = new Gtk.EventControllerScroll({ flags: Gtk.EventControllerScrollFlags.VERTICAL, propagationPhase: Gtk.PropagationPhase.CAPTURE });
+  wheel.connect('scroll', (_c: Gtk.EventControllerScroll, _dx: number, dy: number) => {
+    if (dy === 0) return true;
+    setScale(current() * ZOOM_STEP ** -dy, ...pointer);
+    return true;
+  });
+  scroller.add_controller(wheel);
+  // glisser : déplacement dans l'image zoomée
+  const drag = new Gtk.GestureDrag();
+  let origin: [number, number] = [0, 0];
+  drag.connect('drag-begin', () => {
+    origin = [hadj.get_value(), vadj.get_value()];
+    if (scale !== null) scroller.set_cursor_from_name('grabbing');
+  });
+  drag.connect('drag-update', (_g: Gtk.GestureDrag, dx: number, dy: number) => {
+    if (scale === null) return;
+    hadj.set_value(origin[0] - dx);
+    vadj.set_value(origin[1] - dy);
+  });
+  drag.connect('drag-end', () => scroller.set_cursor_from_name(scale === null ? null : 'grab'));
+  scroller.add_controller(drag);
+  // double-clic : ajustée ↔ taille réelle (au point cliqué)
+  const dbl = new Gtk.GestureClick();
+  dbl.connect('pressed', (_g: Gtk.GestureClick, n: number, x: number, y: number) => {
+    if (n === 2) setScale(scale === null ? Math.max(1, fitScale() * 2) : null, x, y);
+  });
+  scroller.add_controller(dbl);
+  zoomLabel.connect('clicked', () => setScale(null));
+
+  let generation = 0;
+  const show = async (i: number): Promise<void> => {
+    index = i;
+    const photo = photos[i];
+    if (photo === undefined) return;
+    const mine = (generation += 1);
+    prev.visible = i > 0;
+    next.visible = i < photos.length - 1;
+    dialog.title = photos.length > 1 ? `${title} — ${i + 1} / ${photos.length}` : title;
+    caption.label = photo.text;
+    caption.visible = photo.text !== '';
+    saveButton.sensitive = false;
+    // zoom remis à « ajustée » avant de changer d'image (setScale a besoin de sa taille)
+    setScale(null);
+    loaded = null;
+    picture.paintable = thumbnailTexture(photo.media);
+    spinner.visible = true;
+    try {
+      const l = await loader.load(photo);
+      if (mine !== generation) return;
+      loaded = l;
+      picture.paintable = l.texture;
+      saveButton.sensitive = true;
+    } catch (error) {
+      if (mine === generation) toast(`Image indisponible : ${errorMessage(error)}`);
+    } finally {
+      if (mine === generation) spinner.visible = false;
+    }
+    // voisines préchargées
+    for (const n of [photos[i - 1], photos[i + 1]]) if (n !== undefined) loader.load(n).catch((error: unknown) => console.error(`préchargement : ${errorMessage(error)}`));
+  };
+  const go = (delta: number): void => {
+    const i = index + delta;
+    if (i >= 0 && i < photos.length && i !== index) void show(i);
+  };
+  prev.connect('clicked', () => go(-1));
+  next.connect('clicked', () => go(1));
+  const keys = new Gtk.EventControllerKey({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
+  keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number) => {
+    switch (keyval) {
+      case Gdk.KEY_Left:
+        go(-1);
+        return true;
+      case Gdk.KEY_Right:
+        go(1);
+        return true;
+      case Gdk.KEY_plus:
+      case Gdk.KEY_KP_Add:
+      case Gdk.KEY_equal:
+        setScale(current() * ZOOM_STEP);
+        return true;
+      case Gdk.KEY_minus:
+      case Gdk.KEY_KP_Subtract:
+        setScale(current() / ZOOM_STEP);
+        return true;
+      case Gdk.KEY_0:
+      case Gdk.KEY_KP_0:
+        setScale(null);
+        return true;
+      default:
+        return false;
+    }
+  });
+  dialog.add_controller(keys);
   saveButton.connect('clicked', () => {
-    void save(parent, suggestedName(m, media), loaded.bytes, toast);
+    const photo = photos[index];
+    if (photo !== undefined && loaded !== null) void save(parent, suggestedName(photo, photo.media), loaded.bytes, toast);
   });
   dialog.present(parent);
+  void show(index);
 }
