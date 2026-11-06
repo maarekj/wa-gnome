@@ -1,13 +1,13 @@
 // Discussion ouverte : messages (bulles, séparateurs de jour) et zone de saisie.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
-import type Gio from 'gi://Gio';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Media, previewOf, type Message, uploadKind } from '../shared/api.ts';
+import { type Media, previewOf, type Message, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
@@ -48,6 +48,69 @@ interface BubbleContext {
   readonly loader: MediaLoader;
   readonly toast: (text: string) => void;
   readonly chatName: () => string;
+  /** répondre à ce message (bandeau dans la zone de saisie) */
+  readonly reply: (m: Message) => void;
+  /** amène le message à l'écran s'il est chargé ; false sinon */
+  readonly scrollTo: (id: string) => boolean;
+}
+
+/** Aperçu d'une citation : auteur et début du texte (ou genre du média). */
+export const quotePreview = (q: Pick<Quoted, 'kind' | 'text'>): string => previewOf(q).replaceAll('\n', ' ');
+
+/** Bloc de citation dans une bulle ; clic : message cité à l'écran. */
+function QuoteBlock(ctx: BubbleContext, q: Quoted): Gtk.Widget {
+  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, cssClasses: ['quote', ...(q.fromMe ? ['mine'] : [])], tooltipText: 'Voir le message cité' });
+  box.append(new Gtk.Label({ label: q.senderName ?? '', xalign: 0, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['caption-heading', 'accent'], visible: q.senderName !== null }));
+  box.append(new Gtk.Label({ label: quotePreview(q), xalign: 0, ellipsize: Pango.EllipsizeMode.END, lines: 2, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, maxWidthChars: 40, cssClasses: ['caption'] }));
+  box.set_cursor_from_name('pointer');
+  const click = new Gtk.GestureClick();
+  click.connect('released', () => {
+    if (!ctx.scrollTo(q.id)) ctx.toast('Message cité plus ancien que ceux affichés');
+  });
+  box.add_controller(click);
+  return box;
+}
+
+/** Menu d'une bulle (clic droit, appui long) : répondre, copier le texte. */
+function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Message): void {
+  const group = new Gio.SimpleActionGroup();
+  const replyAction = new Gio.SimpleAction({ name: 'reply' });
+  replyAction.connect('activate', () => ctx.reply(msg()));
+  group.add_action(replyAction);
+  const copy = new Gio.SimpleAction({ name: 'copy' });
+  copy.connect('activate', () => {
+    widget.get_clipboard().set(msg().text);
+    ctx.toast('Texte copié');
+  });
+  group.add_action(copy);
+  widget.insert_action_group('msg', group);
+  const popup = (x: number, y: number): void => {
+    const model = new Gio.Menu();
+    model.append('Répondre', 'msg.reply');
+    if (msg().text !== '') model.append('Copier le texte', 'msg.copy');
+    const menu = Gtk.PopoverMenu.new_from_model(model);
+    menu.hasArrow = false;
+    menu.halign = Gtk.Align.START;
+    menu.set_parent(widget);
+    menu.set_pointing_to(new Gdk.Rectangle({ x: Math.round(x), y: Math.round(y), width: 1, height: 1 }));
+    menu.connect('closed', () => {
+      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        menu.unparent();
+        return GLib.SOURCE_REMOVE;
+      });
+    });
+    menu.popup();
+  };
+  // capture : avant le menu du texte sélectionnable
+  const click = new Gtk.GestureClick({ button: Gdk.BUTTON_SECONDARY, propagationPhase: Gtk.PropagationPhase.CAPTURE });
+  click.connect('pressed', (g: Gtk.GestureClick, _n: number, x: number, y: number) => {
+    g.set_state(Gtk.EventSequenceState.CLAIMED);
+    popup(x, y);
+  });
+  widget.add_controller(click);
+  const press = new Gtk.GestureLongPress({ touchOnly: true });
+  press.connect('pressed', (_g: Gtk.GestureLongPress, x: number, y: number) => popup(x, y));
+  widget.add_controller(press);
 }
 
 /** Document, vocal ou vidéo (null : pas de média ou type sans lecteur). */
@@ -103,14 +166,22 @@ function bubble(ctx: BubbleContext) {
     const bare = picture !== null && m.kind === 'sticker';
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
     return asWidget(
-      <Gtk.Box halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
-        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={2} cssClasses={classes}>
+      <Gtk.Box name={item.key} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
+        <Gtk.Box
+          orientation={Gtk.Orientation.VERTICAL}
+          spacing={2}
+          cssClasses={classes}
+          $={(self: Gtk.Box) => {
+            attachBubbleMenu(ctx, self, msg);
+          }}
+        >
           <Gtk.Label
             visible={live((it) => it.kind === 'message' && it.showSender)}
             label={live(() => msg().senderName ?? msg().sender?.split('@')[0] ?? '')}
             xalign={0}
             cssClasses={['caption-heading', 'accent']}
           />
+          {m.quoted === null ? null : QuoteBlock(ctx, m.quoted)}
           {picture}
           <Gtk.Label
             visible={live(() => picture === null || msg().text !== '')}
@@ -155,15 +226,18 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
     const files = attachments.peek();
     if (text === '' && files.length === 0) return;
     setSending(true);
+    // réponse : portée par le message texte, ou par le premier fichier
+    const replyTo = store.replyTo.peek()?.id;
     const run = async (): Promise<void> => {
       // le texte sert de légende au premier fichier (comme WhatsApp)
       for (const [i, f] of files.entries()) {
         // oxlint-disable-next-line no-await-in-loop -- envois dans l'ordre choisi
-        await store.client.sendFile(id, { bytes: f.bytes, mimetype: f.mimetype, name: f.name, caption: i === 0 ? text : '', asDocument: asDocument.peek() });
+        await store.client.sendFile(id, { bytes: f.bytes, mimetype: f.mimetype, name: f.name, caption: i === 0 ? text : '', asDocument: asDocument.peek(), ...(i === 0 && replyTo !== undefined ? { replyTo } : {}) });
         setAttachments(attachments.peek().filter((x) => x.id !== f.id));
       }
-      if (files.length === 0) await store.send(id, text);
+      if (files.length === 0) await store.send(id, text, replyTo);
       buffer.set_text('', -1);
+      store.setReplyTo(null);
     };
     run()
       .catch((error: unknown) => toast(`Envoi impossible : ${errorMessage(error)}`))
@@ -184,6 +258,12 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
       cssClasses={['composer']}
       $={() => {
         register((files) => addFiles(files));
+        // réponse choisie : saisie au premier plan
+        onCleanup(
+          store.replyTo.subscribe(() => {
+            if (store.replyTo.peek() !== null) view?.grab_focus();
+          }),
+        );
         // autre discussion : pièces jointes abandonnées
         onCleanup(
           chatId.subscribe(() => {
@@ -193,6 +273,20 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
         );
       }}
     >
+      {/* réponse en cours : message cité, annulable (croix, Échap) */}
+      <Gtk.Box spacing={8} visible={store.replyTo((r) => r !== null)} cssClasses={['reply-banner']}>
+        <Gtk.Image iconName="mail-reply-sender-symbolic" valign={Gtk.Align.CENTER} cssClasses={['accent']} />
+        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} hexpand>
+          <Gtk.Label
+            label={store.replyTo((r) => (r === null ? '' : `Réponse à ${r.fromMe ? 'vous-même' : (r.senderName ?? store.chat(r.chatId)?.name ?? '')}`))}
+            xalign={0}
+            ellipsize={Pango.EllipsizeMode.END}
+            cssClasses={['caption-heading', 'accent']}
+          />
+          <Gtk.Label label={store.replyTo((r) => (r === null ? '' : quotePreview(r)))} xalign={0} ellipsize={Pango.EllipsizeMode.END} cssClasses={['caption']} />
+        </Gtk.Box>
+        <Gtk.Button iconName="window-close-symbolic" tooltipText="Annuler la réponse (Échap)" valign={Gtk.Align.CENTER} cssClasses={['flat', 'circular']} onClicked={() => store.setReplyTo(null)} />
+      </Gtk.Box>
       <Gtk.Box spacing={6} visible={attachments((l) => l.length > 0)}>
         <Gtk.ScrolledWindow hexpand vscrollbarPolicy={Gtk.PolicyType.NEVER} propagateNaturalHeight>
           <Gtk.Box
@@ -238,6 +332,10 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
               view = self;
               const keys = new Gtk.EventControllerKey();
               keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
+                if (keyval === Gdk.KEY_Escape && store.replyTo.peek() !== null) {
+                  store.setReplyTo(null);
+                  return true;
+                }
                 if ((keyval !== Gdk.KEY_Return && keyval !== Gdk.KEY_KP_Enter) || (state & Gdk.ModifierType.SHIFT_MASK) !== 0) return false;
                 send();
                 return true;
@@ -272,6 +370,25 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
   });
   const items = createMemo(() => itemsOf(store.messages(), chat()?.group ?? false));
   const loader = new MediaLoader(store.client);
+  /** fenêtre défilante de la conversation (défilement vers un message cité) */
+  let scroller: Gtk.ScrolledWindow | null = null;
+  /** Message `id` à l'écran (s'il est chargé), brièvement mis en évidence. */
+  const scrollToMessage = (box: Gtk.Box, id: string): boolean => {
+    let target: Gtk.Widget | null = null;
+    for (let c = box.get_first_child(); c !== null; c = c.get_next_sibling()) if (c.name === `m:${id}`) target = c;
+    if (target === null || scroller === null) return false;
+    const [ok, bounds] = target.compute_bounds(box);
+    if (!ok) return false;
+    const adj = scroller.vadjustment;
+    adj.value = Math.max(0, bounds.get_y() + bounds.get_height() / 2 - adj.pageSize / 2);
+    const bubbleBox = target.get_first_child();
+    bubbleBox?.add_css_class('flash');
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+      bubbleBox?.remove_css_class('flash');
+      return GLib.SOURCE_REMOVE;
+    });
+    return true;
+  };
   /** ajout de pièces jointes du composer (renseigné à sa création) */
   let dropFiles: ((files: Gio.File[]) => void) | null = null;
   return (
@@ -313,6 +430,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               vexpand
               hscrollbarPolicy={Gtk.PolicyType.NEVER}
               $={(self: Gtk.ScrolledWindow) => {
+                scroller = self;
                 // collé en bas tant que l'utilisateur n'est pas remonté dans l'historique
                 const adj = self.vadjustment;
                 let stick = true;
@@ -392,7 +510,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     spacing={4}
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '' })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', reply: (m) => store.setReplyTo(m), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

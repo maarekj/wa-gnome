@@ -3,7 +3,8 @@
 // sont écrits ici, l'app ne lit que cette base (via l'API HTTP).
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
-import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, previewOf } from '../shared/api.ts';
+import type { Converted, RawQuoted } from './convert.ts';
+import { type Chat, type ChatList, formatPhone, listKind, Media, type Message, MessageKind, previewOf, type Quoted } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -39,6 +40,8 @@ CREATE TABLE IF NOT EXISTS messages (
   raw TEXT NOT NULL,
   -- Media de l'API (JSON), null sans média
   media TEXT,
+  -- message cité (RawQuoted, JSON), null si ce n'est pas une réponse
+  quoted TEXT,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -103,11 +106,25 @@ const MessageRow = z.object({
   kind: z.string(),
   text: z.string(),
   media: z.nullable(z.string()),
+  quoted: z.nullable(z.string()),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
 
 const LabelRow = z.object({ id: z.string(), name: z.string(), color: z.number(), list_type: z.number(), order_index: z.number() });
+
+const RawQuotedRow = z.object({ id: z.string(), sender: z.nullable(z.string()), kind: MessageKind, text: z.string() });
+
+/** Citation JSON de la base, ignorée si elle est invalide. */
+const parseQuoted = (json: string | null): RawQuoted | null => {
+  if (json === null) return null;
+  try {
+    const parsed = RawQuotedRow.safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+};
 
 /** Média JSON de la base, ignoré s'il est invalide. */
 const parseMedia = (json: string | null): Media | null => {
@@ -121,7 +138,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 4;
+const VERSION = 5;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -169,6 +186,11 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 5) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN quoted TEXT');
+      // citations des messages déjà reçus : recalculées depuis `raw` au démarrage
+      this.setFlag('backfill-quoted', true);
     }
     if (!fresh && version < 4) {
       // listes et favoris ignorés jusqu'ici : nouvelle relecture de l'état de WhatsApp
@@ -423,13 +445,25 @@ export class Store {
   }
 
   /** Message enregistré (remplacé s'il existe) ; la discussion est créée au besoin. */
-  upsertMessage(m: Message, raw: string): void {
+  upsertMessage(m: Converted, raw: string): void {
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media)
-         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media)`,
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted)
+         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted)`,
       )
-      .run({ chat_id: m.chatId, id: m.id, from_me: m.fromMe ? 1 : 0, sender: m.sender, sender_name: m.senderName, timestamp: m.timestamp, kind: m.kind, text: m.text, raw, media: m.media === null ? null : JSON.stringify(m.media) });
+      .run({
+        chat_id: m.chatId,
+        id: m.id,
+        from_me: m.fromMe ? 1 : 0,
+        sender: m.sender,
+        sender_name: m.senderName,
+        timestamp: m.timestamp,
+        kind: m.kind,
+        text: m.text,
+        raw,
+        media: m.media === null ? null : JSON.stringify(m.media),
+        quoted: m.quoted === null ? null : JSON.stringify(m.quoted),
+      });
     this.upsertChat({ id: m.chatId, timestamp: m.timestamp });
   }
 
@@ -542,7 +576,53 @@ export class Store {
       kind: asKind(r.kind),
       text: r.text,
       media: parseMedia(r.media),
+      quoted: this.#resolveQuoted(parseQuoted(r.quoted), r.chat_id),
     }));
+  }
+
+  /** Mes identifiants (numéro, lid) : citations de mes propres messages reconnues. */
+  setMe(ids: readonly string[]): void {
+    this.setMeta('me', JSON.stringify(ids));
+    this.#me = new Set(ids);
+  }
+
+  #me: Set<string> | null = null;
+
+  #myIds(): Set<string> {
+    if (this.#me === null) {
+      const parsed = z.array(z.string()).safeParse(JSON.parse(this.meta('me') ?? '[]'));
+      this.#me = new Set(parsed.success ? parsed.data : []);
+    }
+    return this.#me;
+  }
+
+  /** Nom affiché d'une personne : carnet, sinon nom public, sinon numéro. */
+  #displayName(jid: string): string {
+    const row = this.#db.prepare('SELECT name, notify FROM contacts WHERE id = ?').get(jid);
+    if (typeof row?.['name'] === 'string') return row['name'];
+    return typeof row?.['notify'] === 'string' ? publicName(row['notify']) : userPart(jid);
+  }
+
+  /** Citation : auteur rattaché au numéro, « moi » et nom résolus. Sans auteur (discussion directe) : l'autre personne. */
+  #resolveQuoted(q: RawQuoted | null, chatId: string): Quoted | null {
+    if (q === null) return null;
+    const sender = q.sender === null ? null : this.canonical(q.sender);
+    const me = this.#myIds();
+    const fromMe = sender !== null && (me.has(sender) || me.has(q.sender ?? ''));
+    const who = sender ?? (chatId.endsWith('@g.us') ? null : chatId);
+    return { ...q, sender, fromMe, senderName: fromMe ? 'Vous' : who === null ? null : this.#displayName(who) };
+  }
+
+  /** Messages répondant à un autre sans citation enregistrée (base antérieure) : à reconvertir. */
+  quotedToBackfill(): { chatId: string; id: string; raw: string }[] {
+    return this.#db
+      .prepare(`SELECT chat_id, id, raw FROM messages WHERE quoted IS NULL AND raw LIKE '%"stanzaId"%'`)
+      .all()
+      .flatMap((r) => (typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string' ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }] : []));
+  }
+
+  setQuoted(chatId: string, id: string, quoted: RawQuoted | null): void {
+    this.#db.prepare('UPDATE messages SET quoted = ? WHERE chat_id = ? AND id = ?').run(quoted === null ? null : JSON.stringify(quoted), chatId, id);
   }
 
   /** Média d'un message, ou null. */

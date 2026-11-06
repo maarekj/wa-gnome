@@ -114,6 +114,19 @@ export const Media = z.object({
 });
 export type Media = z.infer<typeof Media>;
 
+/** Message cité par une réponse (aperçu ; le message lui-même n'est pas forcément chargé). */
+export const Quoted = z.object({
+  id: z.string(),
+  fromMe: z.boolean(),
+  /** auteur (JID), null si inconnu */
+  sender: z.nullable(z.string()),
+  /** nom affiché de l'auteur (résolu par le démon) */
+  senderName: z.nullable(z.string()),
+  kind: MessageKind,
+  text: z.string(),
+});
+export type Quoted = z.infer<typeof Quoted>;
+
 export const Message = z.object({
   id: z.string(),
   chatId: z.string(),
@@ -127,10 +140,16 @@ export const Message = z.object({
   /** texte ou légende (vide pour un média sans légende) */
   text: z.string(),
   media: z.nullable(Media),
+  /** message auquel celui-ci répond */
+  quoted: z.nullable(Quoted),
 });
 export type Message = z.infer<typeof Message>;
 
-export const SendBody = z.object({ text: z.string().check(z.minLength(1)) });
+export const SendBody = z.object({
+  text: z.string().check(z.minLength(1)),
+  /** réponse à ce message (identifiant dans la même discussion) */
+  replyTo: z.optional(z.string()),
+});
 
 /** Taille maximale d'un fichier envoyé (limite de WhatsApp pour les documents : 2 Go ; ici raisonnable). */
 export const MAX_UPLOAD = 100 * 1024 * 1024;
@@ -143,6 +162,8 @@ export const UPLOAD_NAME = 'X-WA-File-Name';
 export const UPLOAD_CAPTION = 'X-WA-Caption';
 /** `document` : envoyé comme fichier même si c'est une image ou une vidéo */
 export const UPLOAD_AS = 'X-WA-Send-As';
+/** réponse à ce message (identifiant) */
+export const UPLOAD_REPLY = 'X-WA-Reply-To';
 
 /** Genre d'envoi selon le type MIME (comme WhatsApp : image, vidéo, audio, sinon document). */
 export function uploadKind(mimetype: string, asDocument = false): 'image' | 'video' | 'audio' | 'document' {

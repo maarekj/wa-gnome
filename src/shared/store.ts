@@ -46,6 +46,9 @@ export class Store {
   readonly messages: Accessor<readonly Message[]>;
   /** chargement des messages plus anciens de la discussion ouverte */
   readonly older: Accessor<OlderState>;
+  /** message auquel on répond (zone de saisie), null sinon */
+  readonly replyTo: Accessor<Message | null>;
+  readonly setReplyTo: (m: Message | null) => void;
   /** photo de profil changée */
   onPicture: ((id: string) => void) | null = null;
   /** nouveau message reçu (notifications) */
@@ -73,6 +76,7 @@ export class Store {
     [this.current, this.#setCurrent] = createState<string | null>(null);
     [this.messages, this.#setMessages] = createState<readonly Message[]>([]);
     [this.older, this.#setOlder] = createState<OlderState>('idle');
+    [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
   }
 
   chat(id: string): Chat | undefined {
@@ -174,6 +178,7 @@ export class Store {
     this.#clearPhoneTimer();
     this.#afterPhone = false;
     this.#setOlder('idle');
+    this.setReplyTo(null);
     if (id === null) return;
     void this.#load(id);
     this.markRead(id);
@@ -242,7 +247,7 @@ export class Store {
     return this.client.chatAction(chatId, action);
   }
 
-  send(chatId: string, text: string): Promise<void> {
-    return this.client.send(chatId, text);
+  send(chatId: string, text: string, replyTo?: string): Promise<void> {
+    return this.client.send(chatId, text, replyTo);
   }
 }

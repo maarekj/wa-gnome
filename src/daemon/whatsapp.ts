@@ -25,9 +25,9 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { type ChatAction, type Event, MAX_PINNED, type Status, uploadKind } from '../shared/api.ts';
+import { type ChatAction, type Event, MAX_PINNED, type Message, type Status, uploadKind } from '../shared/api.ts';
 import type { Upload } from './server.ts';
-import { mediaOf, seconds, toMessage } from './convert.ts';
+import { mediaOf, quotedOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
@@ -103,6 +103,8 @@ export class WhatsApp {
       if (u.qr !== undefined) this.#setStatus({ state: 'qr', qr: u.qr });
       if (u.connection === 'open') {
         const me = sock.user;
+        // mes identifiants : citations de mes propres messages reconnues
+        if (me !== undefined) this.#store.setMe([jidNormalizedUser(me.id), ...(me.lid === undefined || me.lid === null ? [] : [jidNormalizedUser(me.lid)])]);
         this.#setStatus({ state: 'open', qr: null, error: null, me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null } });
         void this.#resolveLids(sock);
         void this.#fetchGroups(sock);
@@ -231,16 +233,22 @@ export class WhatsApp {
     });
   }
 
-  #saveMessage(wa: WAMessage): ReturnType<typeof toMessage> {
+  #saveMessage(wa: WAMessage): Message | null {
     const converted = toMessage(wa);
     if (converted === null) return null;
-    // discussion et auteur rangés sous le numéro quand il est connu
-    const m = { ...converted, chatId: this.#jid(converted.chatId), sender: converted.sender === null ? null : this.#jid(converted.sender) };
+    // discussion et auteurs (message, citation) rangés sous le numéro quand il est connu
+    const q = converted.quoted;
+    const m = {
+      ...converted,
+      chatId: this.#jid(converted.chatId),
+      sender: converted.sender === null ? null : this.#jid(converted.sender),
+      quoted: q === null ? null : { ...q, sender: q.sender === null ? null : this.#jid(q.sender) },
+    };
     // nom public de l'auteur : nom de repli d'un contact absent du carnet
     if (!m.fromMe) this.#store.upsertContact(m.sender ?? m.chatId, { notify: wa.pushName ?? null });
     this.#store.upsertMessage(m, JSON.stringify(wa, BufferJSON.replacer));
     // relu : noms résolus comme dans les réponses de l'API
-    return this.#store.message(m.chatId, m.id) ?? m;
+    return this.#store.message(m.chatId, m.id);
   }
 
   // ------------------------------------------------------------------ identifiants lid / numéro
@@ -363,6 +371,23 @@ export class WhatsApp {
     return Object.assign(msg, { key });
   }
 
+  /**
+   * Citations manquantes recalculées depuis les messages bruts (base antérieure, ou messages
+   * envoyés avant le correctif du format de leur citation). Peu de lignes après le premier passage.
+   */
+  backfillQuoted(): void {
+    const rows = this.#store.quotedToBackfill();
+    this.#store.transaction(() => {
+      for (const r of rows) {
+        const content = normalizeContent(this.#parseRaw(r.raw));
+        const q = content === undefined ? null : quotedOf(content);
+        if (q !== null) this.#store.setQuoted(r.chatId, r.id, { ...q, sender: q.sender === null ? null : this.#jid(q.sender) });
+      }
+    });
+    this.#store.setFlag('backfill-quoted', false);
+    if (rows.length > 0) logger.info(`citations : ${rows.length} message(s) reconverti(s)`);
+  }
+
   /** Base antérieure aux médias : `media` recalculé depuis les messages bruts. */
   backfillMedia(): void {
     const rows = this.#store.mediaToBackfill();
@@ -435,8 +460,17 @@ export class WhatsApp {
     return this.#sock;
   }
 
-  async send(chatId: string, text: string): Promise<void> {
-    this.#sent(await this.#open().sendMessage(chatId, { text }));
+  async send(chatId: string, text: string, replyTo?: string): Promise<void> {
+    this.#sent(await this.#open().sendMessage(chatId, { text }, this.#quoteOptions(chatId, replyTo)));
+  }
+
+  /** Option d'envoi « en réponse à » : message cité tel qu'il est stocké (brut). */
+  #quoteOptions(chatId: string, replyTo: string | undefined): { quoted: WAMessage } | undefined {
+    if (replyTo === undefined || replyTo === '') return undefined;
+    const raw = this.#store.raw(chatId, replyTo);
+    const quoted = raw === null ? null : this.#parseRaw(raw);
+    if (quoted === null) throw new Error('message cité introuvable');
+    return { quoted };
   }
 
   /**
@@ -463,7 +497,7 @@ export class WhatsApp {
           : kind === 'audio'
             ? { audio: f.data, mimetype: f.mimetype }
             : { document: f.data, mimetype: f.mimetype, fileName: f.fileName, ...caption };
-    this.#sent(await this.#open().sendMessage(chatId, content));
+    this.#sent(await this.#open().sendMessage(chatId, content, this.#quoteOptions(chatId, f.replyTo)));
   }
 
   #sent(sent: WAMessage | undefined): void {

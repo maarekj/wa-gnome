@@ -16,7 +16,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, MAX_UPLOAD, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME } from '../shared/api.ts';
+import { ChatAction, type Event, MAX_UPLOAD, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -26,7 +26,7 @@ const MAX_BODY = 1024 * 1024;
 /** Connexion WhatsApp vue par l'API (le vrai Baileys, ou un faux pour les tests et captures). */
 export interface Backend {
   readonly status: Status;
-  send: (chatId: string, text: string) => Promise<void>;
+  send: (chatId: string, text: string, replyTo?: string) => Promise<void>;
   markRead: (chatId: string) => Promise<void>;
   chatAction: (chatId: string, action: ChatAction) => Promise<void>;
   /** photo de profil, null sans photo */
@@ -45,6 +45,8 @@ export interface Upload {
   fileName: string;
   caption: string;
   asDocument: boolean;
+  /** réponse à ce message */
+  replyTo?: string;
 }
 
 export interface Server {
@@ -131,7 +133,7 @@ export function startServer(opts: { host: string; port: number; token: string; s
       case 'POST /chats/:id/messages': {
         const body = SendBody.safeParse(await readBody(req));
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
-        await opts.wa().send(chatId, body.data.text);
+        await opts.wa().send(chatId, body.data.text, body.data.replyTo);
         json(res, 200, {});
         return;
       }
@@ -152,7 +154,7 @@ export function startServer(opts: { host: string; port: number; token: string; s
         const data = await readRaw(req, MAX_UPLOAD);
         if (data.length === 0) throw new HttpError(400, 'fichier vide');
         const mimetype = (req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]?.trim() ?? 'application/octet-stream';
-        await opts.wa().sendMedia(chatId, { data, mimetype, fileName: header(req, UPLOAD_NAME) || 'fichier', caption: header(req, UPLOAD_CAPTION), asDocument: header(req, UPLOAD_AS) === 'document' });
+        await opts.wa().sendMedia(chatId, { data, mimetype, fileName: header(req, UPLOAD_NAME) || 'fichier', caption: header(req, UPLOAD_CAPTION), asDocument: header(req, UPLOAD_AS) === 'document', replyTo: header(req, UPLOAD_REPLY) });
         json(res, 200, {});
         return;
       }

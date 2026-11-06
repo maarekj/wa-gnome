@@ -1,6 +1,6 @@
 // Conversion des messages Baileys (protobuf) vers le format de l'API.
-import { getContentType, isJidGroup, jidNormalizedUser, normalizeMessageContent, type proto, type WAMessage } from 'baileys';
-import type { Media, Message, MessageKind } from '../shared/api.ts';
+import { getContentType, isJidGroup, jidNormalizedUser, normalizeMessageContent, proto, type WAMessage } from 'baileys';
+import type { Media, Message, MessageKind, Quoted } from '../shared/api.ts';
 
 /** Horodatage protobuf (number ou Long) en secondes. */
 export const seconds = (ts: number | { toNumber: () => number } | null | undefined): number => {
@@ -67,8 +67,35 @@ export function mediaOf(content: proto.IMessage): Media | null {
   };
 }
 
+/** Citation brute d'un message : auteur tel que reçu (JID), sans nom ni « moi » (résolus à la lecture). */
+export type RawQuoted = Omit<Quoted, 'fromMe' | 'senderName'>;
+
+/** Message cité par une réponse (`contextInfo` du contenu), ou null. */
+export function quotedOf(content: proto.IMessage): RawQuoted | null {
+  // contexte porté par le contenu principal (extendedTextMessage, imageMessage…)
+  const type = getContentType(content);
+  const value: unknown = type === undefined ? undefined : content[type];
+  if (typeof value !== 'object' || value === null || !('contextInfo' in value)) return null;
+  // instance (message reçu, décodé) ou objet simple (message que l'on vient d'envoyer) : normalisé
+  const info: unknown = value.contextInfo;
+  const ctx = typeof info === 'object' && info !== null ? proto.ContextInfo.fromObject(info) : null;
+  const id = ctx?.stanzaId;
+  if (ctx === null || id === null || id === undefined || id === '') return null;
+  {
+    const inner = normalizeMessageContent(ctx.quotedMessage);
+    const innerType = getContentType(inner);
+    const extract = innerType === undefined ? undefined : EXTRACT[innerType];
+    const { kind, text } = inner === undefined || extract === undefined ? { kind: 'other' as const, text: '' } : extract(inner);
+    const sender = ctx.participant === null || ctx.participant === undefined || ctx.participant === '' ? null : jidNormalizedUser(ctx.participant);
+    return { id, sender, kind, text };
+  }
+}
+
 /** Message affichable, ou null (message technique, sans contenu, statut). */
-export function toMessage(wa: WAMessage): Message | null {
+/** Message converti : citation brute en plus (noms résolus par le Store). */
+export type Converted = Omit<Message, 'quoted'> & { quoted: RawQuoted | null };
+
+export function toMessage(wa: WAMessage): Converted | null {
   const { remoteJid, id } = wa.key;
   if (remoteJid === null || remoteJid === undefined || id === null || id === undefined) return null;
   // statuts (« stories ») : hors périmètre
@@ -91,5 +118,6 @@ export function toMessage(wa: WAMessage): Message | null {
     kind,
     text,
     media: mediaOf(content),
+    quoted: quotedOf(content),
   };
 }

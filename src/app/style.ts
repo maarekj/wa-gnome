@@ -46,6 +46,29 @@ export const STYLESHEET = `
   border-radius: 999px;
   padding: 1px 8px;
 }
+.quote {
+  border-left: 3px solid var(--accent-color);
+  background: alpha(currentColor, 0.06);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-bottom: 2px;
+}
+.quote.mine {
+  border-left-color: alpha(currentColor, 0.5);
+}
+.bubble.with-media > .quote {
+  margin: 2px 2px 4px 2px;
+}
+.reply-banner {
+  border-left: 3px solid var(--accent-color);
+  background: alpha(currentColor, 0.05);
+  border-radius: 8px;
+  padding: 4px 4px 4px 10px;
+}
+.bubble.flash {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
 .day-separator {
   background: alpha(currentColor, 0.06);
   border-radius: 999px;

@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util';
 import { deflateSync } from 'node:zlib';
 import { ConnectionState, type Event, type Media, type Message, type MessageKind, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
 import { type Backend, type Server, startServer } from '../src/daemon/server.ts';
+import type { Converted } from '../src/daemon/convert.ts';
 import { Store } from '../src/daemon/store.ts';
 
 const { values } = parseArgs({
@@ -144,14 +145,33 @@ const video = (): Buffer => {
 /** Médias des messages de démonstration (id → contenu). */
 const media = new Map<string, { mimetype: string; data: Buffer }>();
 
-const add = (chatId: string, fromMe: boolean, text: string, ago: number, sender: string | null = null, senderName: string | null = null, attached: { kind: MessageKind; media: Media; data: Buffer } | null = null): Message => {
+/** Citation d'un message existant (réponse), au format stocké. */
+const quote = (chatId: string, id: string | undefined): Converted['quoted'] => {
+  const q = id === undefined ? null : store.message(chatId, id);
+  // « moi » : pas d'auteur dans une discussion directe, numéro du compte sinon
+  return q === null ? null : { id: q.id, sender: q.fromMe ? ME : q.sender, kind: q.kind, text: q.text };
+};
+
+const add = (
+  chatId: string,
+  fromMe: boolean,
+  text: string,
+  ago: number,
+  sender: string | null = null,
+  senderName: string | null = null,
+  attached: { kind: MessageKind; media: Media; data: Buffer } | null = null,
+  replyTo?: string,
+): Message => {
   seq += 1;
   const id = `fake${seq}`;
   if (attached !== null) media.set(id, { mimetype: attached.media.mimetype, data: attached.data });
-  const m: Message = { id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null };
-  store.upsertMessage(m, '{}');
+  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo) }, '{}');
+  const m = store.message(chatId, id);
+  if (m === null) throw new Error('message de démonstration introuvable');
   return m;
 };
+const ME = '33600000000@s.whatsapp.net';
+store.setMe([ME]);
 const ALICE = '33600000001@s.whatsapp.net';
 const BOB = '33600000002@s.whatsapp.net';
 const GROUP = '120363000000000001@g.us';
@@ -166,8 +186,8 @@ const photo = { mimetype: 'image/png', width: 960, height: 600, thumbnail: lands
 add(ALICE, false, 'La vue depuis le chalet', 2 * H - 120, null, null, { kind: 'image', media: photo, data: landscape(960, 600) });
 add(ALICE, true, '', 2 * H - 60, null, null, { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });
 add(GROUP, false, 'Qui vient dimanche ?', 3 * H, BOB, 'Bob');
-add(GROUP, true, 'Moi !', 3 * H - 60);
-add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice');
+const moi = add(GROUP, true, 'Moi !', 3 * H - 60);
+add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
 add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype: 'image/png', width: 512, height: 512, thumbnail: null, fileName: null, size: null, seconds: null }, data: sticker(512) });
 store.upsertChat({ id: GROUP, unread: 1 });
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
@@ -207,13 +227,14 @@ const backend: Backend = {
   get status() {
     return status;
   },
-  send: (chatId, text) => {
-    const m = add(chatId, true, text, 0);
+  send: (chatId, text, replyTo) => {
+    const m = add(chatId, true, text, 0, null, null, null, replyTo);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
     // réponse automatique
     setTimeout(() => {
-      const r = add(chatId, false, `Bien reçu : « ${text} »`, 0);
+      // la réponse automatique cite le message envoyé
+      const r = add(chatId, false, `Bien reçu : « ${text} »`, 0, chatId === GROUP ? BOB : null, chatId === GROUP ? 'Bob' : null, null, m.id);
       if (chatId === GROUP) store.incrementUnread(chatId);
       emit({ type: 'message', message: r });
       emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
@@ -284,7 +305,7 @@ const backend: Backend = {
       kind,
       media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: null },
       data: f.data,
-    });
+    }, f.replyTo);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
     return Promise.resolve();
