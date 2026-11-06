@@ -69,6 +69,10 @@ export const STYLESHEET = `
   min-height: 10px;
   padding: 0;
 }
+.list-filters flowboxchild.filter-cell {
+  padding: 0;
+  background: none;
+}
 .filter-chip {
   padding: 2px 12px;
   min-height: 24px;

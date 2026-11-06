@@ -125,40 +125,40 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
           onSearchChanged={(self: Gtk.SearchEntry) => setQuery(self.text)}
         />
         {/* filtres : Toutes, puis les listes de WhatsApp (non lues, favoris, groupes, personnalisées) */}
-        <Gtk.ScrolledWindow
+        {/* à la ligne quand ils ne tiennent pas en largeur (une barre de défilement masquait les boutons : #23) */}
+        <Gtk.FlowBox
           $type="top"
-          vscrollbarPolicy={Gtk.PolicyType.NEVER}
-          hscrollbarPolicy={Gtk.PolicyType.AUTOMATIC}
+          selectionMode={Gtk.SelectionMode.NONE}
+          rowSpacing={6}
+          columnSpacing={6}
+          maxChildrenPerLine={20}
+          marginStart={8}
+          marginEnd={8}
+          marginBottom={6}
+          cssClasses={['list-filters']}
           visible={createMemo(() => !archived() && query().trim() === '' && filterLists(store.lists()).length > 0)}
-        >
-          <Gtk.Box
-            spacing={6}
-            marginStart={8}
-            marginEnd={8}
-            marginBottom={6}
-            cssClasses={['list-filters']}
-            $={(self: Gtk.Box) => {
-              const build = (): void => {
-                for (let c = self.get_first_child(); c !== null; c = self.get_first_child()) self.remove(c);
-                const lists = filterLists(store.lists.peek());
-                // liste disparue : retour à « Toutes »
-                if (filter.peek() !== 'all' && !lists.some((l) => l.id === filter.peek())) setFilter('all');
-                let first: Gtk.ToggleButton | null = null;
-                for (const [id, label] of [['all', 'Toutes'] as const, ...lists.map((l) => [l.id, l.name] as const)]) {
-                  const b = new Gtk.ToggleButton({ label, active: filter.peek() === id, cssClasses: ['pill', 'filter-chip'] });
-                  if (first === null) first = b;
-                  else b.set_group(first);
-                  b.connect('toggled', () => {
-                    if (b.active) setFilter(id);
-                  });
-                  self.append(b);
-                }
-              };
-              build();
-              onCleanup(store.lists.subscribe(build));
-            }}
-          />
-        </Gtk.ScrolledWindow>
+          $={(self: Gtk.FlowBox) => {
+            const build = (): void => {
+              self.remove_all();
+              const lists = filterLists(store.lists.peek());
+              // liste disparue : retour à « Toutes »
+              if (filter.peek() !== 'all' && !lists.some((l) => l.id === filter.peek())) setFilter('all');
+              let first: Gtk.ToggleButton | null = null;
+              for (const [id, label] of [['all', 'Toutes'] as const, ...lists.map((l) => [l.id, l.name] as const)]) {
+                const b = new Gtk.ToggleButton({ label, active: filter.peek() === id, cssClasses: ['pill', 'filter-chip'] });
+                if (first === null) first = b;
+                else b.set_group(first);
+                b.connect('toggled', () => {
+                  if (b.active) setFilter(id);
+                });
+                // pas de case sélectionnable autour du bouton (focus et clic directement sur lui)
+                self.append(new Gtk.FlowBoxChild({ child: b, focusable: false, cssClasses: ['filter-cell'] }));
+              }
+            };
+            build();
+            onCleanup(store.lists.subscribe(build));
+          }}
+        />
         <Gtk.Stack visibleChildName={shown((l) => (l.length === 0 ? 'empty' : 'list'))}>
           <Adw.StatusPage $type="named" name="empty" iconName="chat-message-new-symbolic" title={createMemo(() => (query() === '' ? (archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))} cssClasses={['compact']} />
           <Gtk.ScrolledWindow $type="named" name="list" hscrollbarPolicy={Gtk.PolicyType.NEVER} vexpand>
