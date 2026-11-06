@@ -25,7 +25,8 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { type ChatAction, type Event, MAX_PINNED, type Status } from '../shared/api.ts';
+import { type ChatAction, type Event, MAX_PINNED, type Status, uploadKind } from '../shared/api.ts';
+import type { Upload } from './server.ts';
 import { mediaOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
@@ -430,7 +431,25 @@ export class WhatsApp {
   }
 
   async send(chatId: string, text: string): Promise<void> {
-    const sent = await this.#open().sendMessage(chatId, { text });
+    this.#sent(await this.#open().sendMessage(chatId, { text }));
+  }
+
+  /** Fichier envoyé : photo, vidéo, audio ou document selon son type (légende sauf pour l'audio). */
+  async sendMedia(chatId: string, f: Upload): Promise<void> {
+    const caption = f.caption === '' ? {} : { caption: f.caption };
+    const kind = uploadKind(f.mimetype, f.asDocument);
+    const content =
+      kind === 'image'
+        ? { image: f.data, mimetype: f.mimetype, ...caption }
+        : kind === 'video'
+          ? { video: f.data, mimetype: f.mimetype, ...caption }
+          : kind === 'audio'
+            ? { audio: f.data, mimetype: f.mimetype }
+            : { document: f.data, mimetype: f.mimetype, fileName: f.fileName, ...caption };
+    this.#sent(await this.#open().sendMessage(chatId, content));
+  }
+
+  #sent(sent: WAMessage | undefined): void {
     // le message envoyé revient aussi par messages.upsert ; enregistré ici sans attendre
     if (sent !== undefined) {
       const m = this.#saveMessage(sent);

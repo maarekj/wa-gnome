@@ -131,6 +131,28 @@ export const Message = z.object({
 export type Message = z.infer<typeof Message>;
 
 export const SendBody = z.object({ text: z.string().check(z.minLength(1)) });
+
+/** Taille maximale d'un fichier envoyé (limite de WhatsApp pour les documents : 2 Go ; ici raisonnable). */
+export const MAX_UPLOAD = 100 * 1024 * 1024;
+
+/**
+ * Envoi d'un fichier (`POST /chats/:id/media`) : contenu brut dans le corps, type dans
+ * `Content-Type`, métadonnées dans ces en-têtes (valeurs encodées avec encodeURIComponent).
+ */
+export const UPLOAD_NAME = 'X-WA-File-Name';
+export const UPLOAD_CAPTION = 'X-WA-Caption';
+/** `document` : envoyé comme fichier même si c'est une image ou une vidéo */
+export const UPLOAD_AS = 'X-WA-Send-As';
+
+/** Genre d'envoi selon le type MIME (comme WhatsApp : image, vidéo, audio, sinon document). */
+export function uploadKind(mimetype: string, asDocument = false): 'image' | 'video' | 'audio' | 'document' {
+  if (asDocument) return 'document';
+  // GIF et SVG : pas des photos pour WhatsApp
+  if (/^image\/(jpeg|png|webp)$/u.test(mimetype)) return 'image';
+  if (/^video\/(mp4|3gpp|quicktime)$/u.test(mimetype)) return 'video';
+  if (mimetype.startsWith('audio/')) return 'audio';
+  return 'document';
+}
 export type SendBody = z.infer<typeof SendBody>;
 
 /** Événements du flux `GET /events` (une ligne `data:` JSON par événement). */

@@ -68,6 +68,7 @@ in
     pkgs.xvfb-run
     pkgs.imagemagick
     pkgs.xdotool
+    pkgs.xclip # presse-papier de l'écran virtuel (tests du collage)
     jasmine-gjs # tests unitaires (specs/*.spec.ts)
   ];
 

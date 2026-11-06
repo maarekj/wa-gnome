@@ -10,7 +10,8 @@ import { build } from 'esbuild';
 import { GJS_EXTERNALS, GJS_TSCONFIG } from './build.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
-const ENV = ['GDK_BACKEND=x11', 'GSK_RENDERER=cairo', 'GTK_A11Y=none'];
+// son coupé : lecteur sans sortie, et aucun serveur son joignable (rien sur les haut-parleurs)
+const ENV = ['GDK_BACKEND=x11', 'GSK_RENDERER=cairo', 'GTK_A11Y=none', 'WA_GNOME_SILENT=1', 'PULSE_SERVER=unix:/nonexistent', 'PIPEWIRE_REMOTE=wa-gnome-none'];
 const list = (dir: string, suffix: string): string[] => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(suffix)) : []);
 
 // ---------------------------------------------------------------- démon (node --test)

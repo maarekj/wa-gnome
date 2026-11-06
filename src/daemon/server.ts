@@ -5,6 +5,7 @@
 //   GET  /chats/:id/messages        derniers messages (?limit, ?before en secondes)
 //   POST /chats/:id/messages        envoi d'un texte { text }
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
+//   POST /chats/:id/media           envoi d'un fichier (corps brut, voir shared/api.ts)
 //   GET  /chats/:id/picture         photo de profil (JPEG), 404 sans photo
 //   POST /chats/:id/read            discussion lue
 //   POST /chats/:id/action          archiver, silencieux, épingler, non lue, effacer, supprimer, quitter
@@ -14,7 +15,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, SendBody, type Status } from '../shared/api.ts';
+import { ChatAction, type Event, MAX_UPLOAD, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -31,6 +32,16 @@ export interface Backend {
   picture: (chatId: string) => Promise<Buffer | null>;
   logout: () => Promise<void>;
   media: (chatId: string, id: string) => Promise<{ mimetype: string; data: Buffer }>;
+  sendMedia: (chatId: string, file: Upload) => Promise<void>;
+}
+
+/** Fichier à envoyer. */
+export interface Upload {
+  data: Buffer;
+  mimetype: string;
+  fileName: string;
+  caption: string;
+  asDocument: boolean;
 }
 
 export interface Server {
@@ -46,18 +57,32 @@ class HttpError extends Error {
   }
 }
 
-const readBody = async (req: http.IncomingMessage): Promise<unknown> => {
+const readRaw = async (req: http.IncomingMessage, max: number): Promise<Buffer> => {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     if (!Buffer.isBuffer(chunk)) throw new HttpError(400, 'corps invalide');
-    const buf = chunk;
-    size += buf.length;
-    if (size > MAX_BODY) throw new HttpError(413, 'corps trop volumineux');
-    chunks.push(buf);
+    size += chunk.length;
+    if (size > max) throw new HttpError(413, 'corps trop volumineux');
+    chunks.push(chunk);
   }
+  return Buffer.concat(chunks);
+};
+
+/** En-tête encodé (encodeURIComponent), vide s'il est absent ou mal formé. */
+const header = (req: http.IncomingMessage, name: string): string => {
+  const v = req.headers[name.toLowerCase()];
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return typeof v === 'string' ? decodeURIComponent(v) : '';
+  } catch {
+    return '';
+  }
+};
+
+const readBody = async (req: http.IncomingMessage): Promise<unknown> => {
+  const raw = await readRaw(req, MAX_BODY);
+  try {
+    return JSON.parse(raw.toString('utf8'));
   } catch {
     throw new HttpError(400, 'JSON invalide');
   }
@@ -118,6 +143,14 @@ export function startServer(opts: { host: string; port: number; token: string; s
         if (data === null) throw new HttpError(404, 'pas de photo');
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': data.length, 'Cache-Control': 'private, no-cache' });
         res.end(data);
+        return;
+      }
+      case 'POST /chats/:id/media': {
+        const data = await readRaw(req, MAX_UPLOAD);
+        if (data.length === 0) throw new HttpError(400, 'fichier vide');
+        const mimetype = (req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]?.trim() ?? 'application/octet-stream';
+        await opts.wa().sendMedia(chatId, { data, mimetype, fileName: header(req, UPLOAD_NAME) || 'fichier', caption: header(req, UPLOAD_CAPTION), asDocument: header(req, UPLOAD_AS) === 'document' });
+        json(res, 200, {});
         return;
       }
       case 'POST /chats/:id/read':

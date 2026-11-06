@@ -46,6 +46,15 @@ export class AudioPlayer {
     bin.set_property('uri', uri);
     // pas de vidéo ; hauteur de voix conservée quand la vitesse change
     bin.set_property('flags', 0x02 | 0x10);
+    // tests et captures : sortie muette (WA_GNOME_SILENT), jamais sur les haut-parleurs de l'utilisateur
+    if (GLib.getenv('WA_GNOME_SILENT') !== null) {
+      const sink = Gst.ElementFactory.make('fakesink', null);
+      if (sink !== null) {
+        // cadencée comme une vraie sortie : la position avance en temps réel
+        sink.set_property('sync', true);
+        bin.set_property('audio-sink', sink);
+      }
+    }
     const tempo = Gst.ElementFactory.make('scaletempo', null);
     if (tempo !== null) bin.set_property('audio-filter', tempo);
     this.#bin = bin;

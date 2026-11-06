@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { deflateSync } from 'node:zlib';
-import { ConnectionState, type Event, type Media, type Message, type MessageKind, TOKEN_FILE, type Status } from '../src/shared/api.ts';
+import { ConnectionState, type Event, type Media, type Message, type MessageKind, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
 import { type Backend, type Server, startServer } from '../src/daemon/server.ts';
 import { Store } from '../src/daemon/store.ts';
 
@@ -260,6 +260,17 @@ const backend: Backend = {
   },
   // photo : Alice (paysage) et le groupe Famille (autocollant) ; les autres n'en ont pas
   picture: (chatId) => Promise.resolve(chatId === ALICE ? landscape(96, 96) : chatId === GROUP ? sticker(96) : null),
+  sendMedia: (chatId, f) => {
+    const kind = uploadKind(f.mimetype, f.asDocument);
+    const m = add(chatId, true, f.caption, 0, null, null, {
+      kind,
+      media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: null },
+      data: f.data,
+    });
+    emit({ type: 'message', message: m });
+    emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
+    return Promise.resolve();
+  },
   media: (_chatId, id) => {
     const found = media.get(id);
     return found === undefined ? Promise.reject(new Error('média introuvable')) : Promise.resolve(found);

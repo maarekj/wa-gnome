@@ -32,7 +32,8 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
 - `pnpm screenshot [sortie.png] [--state qr]` : lance l'app sur un écran virtuel (Xvfb), branchée sur
   le faux démon, et en fait une capture. **Toujours valider un changement d'interface ainsi**, jamais
   en ouvrant une fenêtre sur l'écran de l'utilisateur ni en utilisant son vrai compte WhatsApp.
-  Interactions : `SCREENSHOT_XDOTOOL="mousemove 150 125 click 1; sleep 1; type bonjour; key Return; sleep 2"`.
+  Interactions : `SCREENSHOT_XDOTOOL="mousemove 150 125 click 1; sleep 1; type bonjour; key Return; sleep 2"`
+  (`sh: commande` pour une commande shell, ex. `xclip` pour remplir le presse-papier).
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `node scripts/install.ts` : installe le démon (systemd), le lanceur `wa-gnome`, le .desktop, le
   service D-Bus et les icônes.
@@ -44,6 +45,8 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
 - gnim n'est pas React : un composant s'exécute une fois, seules les valeurs liées se mettent à jour.
   Pour une liste ordonnée, utiliser `keyedBox` / `keyedListBox` (`src/app/KeyedBox.ts`), pas `<For>`.
 - Tout bouton à icône seule a une infobulle.
+- Tests et captures **muets** : `WA_GNOME_SILENT=1` et aucun serveur son (déjà dans `pnpm test` et
+  `pnpm screenshot`) ; tout script qui lit un média doit faire de même.
 - Baileys est non officiel : ne jamais envoyer de message automatisé depuis un vrai compte en test.
 - Messages de commit en français, courts, au style des commits existants.
 

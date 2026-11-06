@@ -1,14 +1,17 @@
 // Discussion ouverte : messages (bulles, séparateurs de jour) et zone de saisie.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import type Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Media, previewOf, type Message } from '../shared/api.ts';
+import { type Media, previewOf, type Message, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, fmtDay, fmtTime } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
+import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText } from './ChatList.tsx';
 import { keyedBox } from './KeyedBox.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
@@ -127,56 +130,135 @@ function bubble(ctx: BubbleContext) {
   };
 }
 
-function Composer({ store, chatId, toast }: { store: Store; chatId: Accessor<string | null>; toast: (text: string) => void }): JSX.Element {
+/** Composer : `register` reçoit la fonction d'ajout de fichiers (dépôt sur toute la conversation). */
+function Composer({ store, chatId, toast, register }: { store: Store; chatId: Accessor<string | null>; toast: (text: string) => void; register: (add: (files: Gio.File[]) => void) => void }): JSX.Element {
   const [sending, setSending] = createState(false);
+  const [attachments, setAttachments] = createState<readonly Attachment[]>([]);
+  // « document » : fichiers envoyés tels quels (pas de compression des photos par WhatsApp)
+  const [asDocument, setAsDocument] = createState(false);
   let view: Gtk.TextView | null = null;
+
+  const addFiles = (files: Gio.File[], textures: Gdk.Texture[] = []): void => {
+    for (const t of textures) setAttachments([...attachments.peek(), fromTexture(t)]);
+    for (const f of files) {
+      fromFile(f)
+        .then((a) => setAttachments([...attachments.peek(), a]))
+        .catch((error: unknown) => toast(`Fichier ignoré : ${errorMessage(error)}`));
+    }
+  };
+
   const send = (): void => {
     const id = chatId.peek();
     const buffer = view?.buffer;
     if (id === null || buffer === undefined || sending.peek()) return;
     const text = buffer.text.trim();
-    if (text === '') return;
+    const files = attachments.peek();
+    if (text === '' && files.length === 0) return;
     setSending(true);
-    store
-      .send(id, text)
-      .then(() => buffer.set_text('', -1))
+    const run = async (): Promise<void> => {
+      // le texte sert de légende au premier fichier (comme WhatsApp)
+      for (const [i, f] of files.entries()) {
+        // oxlint-disable-next-line no-await-in-loop -- envois dans l'ordre choisi
+        await store.client.sendFile(id, { bytes: f.bytes, mimetype: f.mimetype, name: f.name, caption: i === 0 ? text : '', asDocument: asDocument.peek() });
+        setAttachments(attachments.peek().filter((x) => x.id !== f.id));
+      }
+      if (files.length === 0) await store.send(id, text);
+      buffer.set_text('', -1);
+    };
+    run()
       .catch((error: unknown) => toast(`Envoi impossible : ${errorMessage(error)}`))
       .finally(() => {
         setSending(false);
+        setAsDocument(false);
         view?.grab_focus();
       });
   };
   return (
-    <Gtk.Box spacing={6} marginStart={12} marginEnd={12} marginTop={6} marginBottom={12} cssClasses={['composer']}>
-      <Gtk.ScrolledWindow hexpand propagateNaturalHeight maxContentHeight={160} hscrollbarPolicy={Gtk.PolicyType.NEVER} cssClasses={['composer-entry']}>
-        <Gtk.TextView
-          wrapMode={Gtk.WrapMode.WORD_CHAR}
-          topMargin={8}
-          bottomMargin={8}
-          leftMargin={10}
-          rightMargin={10}
+    <Gtk.Box
+      orientation={Gtk.Orientation.VERTICAL}
+      spacing={6}
+      marginStart={12}
+      marginEnd={12}
+      marginTop={6}
+      marginBottom={12}
+      cssClasses={['composer']}
+      $={() => {
+        register((files) => addFiles(files));
+        // autre discussion : pièces jointes abandonnées
+        onCleanup(
+          chatId.subscribe(() => {
+            setAttachments([]);
+            setAsDocument(false);
+          }),
+        );
+      }}
+    >
+      <Gtk.Box spacing={6} visible={attachments((l) => l.length > 0)}>
+        <Gtk.ScrolledWindow hexpand vscrollbarPolicy={Gtk.PolicyType.NEVER} propagateNaturalHeight>
+          <Gtk.Box
+            spacing={6}
+            $={(self: Gtk.Box) => {
+              onCleanup(keyedBox(self, attachments, (a) => String(a.id), (a) => attachmentChip(a, () => setAttachments(attachments.peek().filter((x) => x.id !== a.id)))));
+            }}
+          />
+        </Gtk.ScrolledWindow>
+        <Gtk.ToggleButton
+          label="Comme fichier"
+          tooltipText="Envoyer les photos et vidéos comme fichiers, sans compression"
+          valign={Gtk.Align.CENTER}
+          active={asDocument}
+          visible={attachments((l) => l.some((a) => uploadKind(a.mimetype) !== 'document'))}
+          cssClasses={['flat', 'caption']}
+          onToggled={(b: Gtk.ToggleButton) => setAsDocument(b.active)}
+        />
+      </Gtk.Box>
+      <Gtk.Box spacing={6}>
+        <Gtk.Button
+          iconName="mail-attachment-symbolic"
+          tooltipText="Joindre des fichiers"
+          valign={Gtk.Align.END}
           sensitive={sending((s) => !s)}
-          tooltipText="Message (Entrée : envoyer, Maj+Entrée : nouvelle ligne)"
-          $={(self: Gtk.TextView) => {
-            view = self;
-            const keys = new Gtk.EventControllerKey();
-            keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
-              if ((keyval !== Gdk.KEY_Return && keyval !== Gdk.KEY_KP_Enter) || (state & Gdk.ModifierType.SHIFT_MASK) !== 0) return false;
-              send();
-              return true;
-            });
-            self.add_controller(keys);
-            // nouvelle discussion : saisie vidée, focus dans la zone
-            onCleanup(
-              chatId.subscribe(() => {
-                self.buffer.set_text('', -1);
-                self.grab_focus();
-              }),
-            );
+          cssClasses={['circular', 'flat']}
+          onClicked={(b: Gtk.Button) => {
+            pickFiles(b)
+              .then((files) => addFiles(files))
+              .catch((error: unknown) => toast(errorMessage(error)));
           }}
         />
-      </Gtk.ScrolledWindow>
-      <Gtk.Button iconName="mail-send-symbolic" tooltipText="Envoyer" valign={Gtk.Align.END} sensitive={sending((s) => !s)} cssClasses={['circular', 'suggested-action']} onClicked={send} />
+        <Gtk.ScrolledWindow hexpand propagateNaturalHeight maxContentHeight={160} hscrollbarPolicy={Gtk.PolicyType.NEVER} cssClasses={['composer-entry']}>
+          <Gtk.TextView
+            wrapMode={Gtk.WrapMode.WORD_CHAR}
+            topMargin={8}
+            bottomMargin={8}
+            leftMargin={10}
+            rightMargin={10}
+            sensitive={sending((s) => !s)}
+            tooltipText="Message (Entrée : envoyer, Maj+Entrée : nouvelle ligne)"
+            $={(self: Gtk.TextView) => {
+              view = self;
+              const keys = new Gtk.EventControllerKey();
+              keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
+                if ((keyval !== Gdk.KEY_Return && keyval !== Gdk.KEY_KP_Enter) || (state & Gdk.ModifierType.SHIFT_MASK) !== 0) return false;
+                send();
+                return true;
+              });
+              self.add_controller(keys);
+              // Ctrl+V : fichiers ou image du presse-papier en pièces jointes, sinon collage du texte
+              self.connect('paste-clipboard', () => {
+                if (pasteAttachments(self, addFiles, toast)) GObject.signal_stop_emission_by_name(self, 'paste-clipboard');
+              });
+              // nouvelle discussion : saisie vidée, focus dans la zone
+              onCleanup(
+                chatId.subscribe(() => {
+                  self.buffer.set_text('', -1);
+                  self.grab_focus();
+                }),
+              );
+            }}
+          />
+        </Gtk.ScrolledWindow>
+        <Gtk.Button iconName="mail-send-symbolic" tooltipText="Envoyer" valign={Gtk.Align.END} sensitive={sending((s) => !s)} cssClasses={['circular', 'suggested-action']} onClicked={send} />
+      </Gtk.Box>
     </Gtk.Box>
   );
 }
@@ -190,6 +272,8 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
   });
   const items = createMemo(() => itemsOf(store.messages(), chat()?.group ?? false));
   const loader = new MediaLoader(store.client);
+  /** ajout de pièces jointes du composer (renseigné à sa création) */
+  let dropFiles: ((files: Gio.File[]) => void) | null = null;
   return (
     <Adw.NavigationPage title={chat((c) => c?.name ?? 'WhatsApp')} tag="conversation">
       <Adw.ToolbarView>
@@ -215,7 +299,16 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
         </Adw.HeaderBar>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Adw.StatusPage $type="named" name="none" iconName="chat-message-new-symbolic" title="WhatsApp pour GNOME" description="Choisissez une discussion" />
-          <Gtk.Box $type="named" name="chat" orientation={Gtk.Orientation.VERTICAL}>
+          <Gtk.Box
+            $type="named"
+            name="chat"
+            orientation={Gtk.Orientation.VERTICAL}
+            cssClasses={['chat-drop']}
+            $={(self: Gtk.Box) => {
+              // fichiers déposés n'importe où dans la conversation : pièces jointes
+              attachDrop(self, (files) => dropFiles?.(files));
+            }}
+          >
             <Gtk.ScrolledWindow
               vexpand
               hscrollbarPolicy={Gtk.PolicyType.NEVER}
@@ -265,7 +358,14 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               </Adw.Clamp>
             </Gtk.ScrolledWindow>
             <Adw.Clamp maximumSize={860} tighteningThreshold={600}>
-              <Composer store={store} chatId={store.current} toast={toast} />
+              <Composer
+                store={store}
+                chatId={store.current}
+                toast={toast}
+                register={(add) => {
+                  dropFiles = add;
+                }}
+              />
             </Adw.Clamp>
           </Gtk.Box>
         </Gtk.Stack>

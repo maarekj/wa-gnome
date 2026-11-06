@@ -77,6 +77,17 @@ export const STYLESHEET = `
 .archived-entry {
   padding: 8px 0;
 }
+.attachment {
+  background: alpha(currentColor, 0.06);
+  border-radius: 10px;
+  padding: 4px 4px 4px 6px;
+}
+.chat-drop.drop-target {
+  outline: 2px dashed var(--accent-color);
+  outline-offset: -6px;
+  border-radius: 12px;
+  background: alpha(var(--accent-bg-color), 0.06);
+}
 .composer-entry {
   background: alpha(currentColor, 0.06);
   border-radius: 18px;

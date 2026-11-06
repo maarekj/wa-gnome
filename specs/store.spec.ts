@@ -1,6 +1,6 @@
 // État de l'application : application des événements du démon, ordre des messages.
 import type { Chat, Message } from '../src/shared/api.ts';
-import { formatPhone, isMuted, previewOf } from '../src/shared/api.ts';
+import { formatPhone, isMuted, previewOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf } from '../src/app/ConversationPage.tsx';
@@ -136,6 +136,15 @@ describe('divers', () => {
     expect(formatPhone('33612345678')).toBe('+33 6 12 34 56 78');
     expect(formatPhone('972541234567')).toBe('+972 54 123 4567');
     expect(formatPhone('4915112345678')).toBe('+4915112345678');
+  });
+
+  it('genre d’envoi d’un fichier', () => {
+    expect(uploadKind('image/jpeg')).toBe('image');
+    expect(uploadKind('image/gif')).toBe('document');
+    expect(uploadKind('video/mp4')).toBe('video');
+    expect(uploadKind('audio/ogg')).toBe('audio');
+    expect(uploadKind('application/pdf')).toBe('document');
+    expect(uploadKind('image/png', true)).toBe('document');
   });
 
   it('recherche sans accents ni casse', () => {

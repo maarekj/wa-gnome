@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, Status, TOKEN_FILE } from './api.ts';
+import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -112,6 +112,26 @@ export class WaClient {
       throw new HttpError(status, parsed.success ? parsed.data.error : `média : HTTP ${status}`);
     }
     return bytes;
+  }
+
+  /** Session des envois de fichiers : pas de délai (un gros fichier peut prendre du temps). */
+  readonly #upload = new Soup.Session({ timeout: 0, idleTimeout: 0 });
+
+  /** Envoie un fichier (photo, vidéo, audio ou document selon son type). */
+  async sendFile(chatId: string, f: { bytes: GLib.Bytes; mimetype: string; name: string; caption: string; asDocument: boolean }): Promise<void> {
+    const msg = this.#message('POST', `/chats/${encodeURIComponent(chatId)}/media`);
+    const h = msg.get_request_headers();
+    h.replace(UPLOAD_NAME, encodeURIComponent(f.name));
+    if (f.caption !== '') h.replace(UPLOAD_CAPTION, encodeURIComponent(f.caption));
+    if (f.asDocument) h.replace(UPLOAD_AS, 'document');
+    msg.set_request_body_from_bytes(f.mimetype, f.bytes);
+    const bytes = await this.#upload.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const status: number = msg.get_status();
+    if (status < 200 || status >= 300) {
+      const data = bytes.get_data();
+      const parsed = z.object({ error: z.string() }).safeParse(data === null ? null : safeJson(decoder.decode(data)));
+      throw new HttpError(status, parsed.success ? parsed.data.error : `envoi : HTTP ${status}`);
+    }
   }
 
   async send(chatId: string, text: string): Promise<void> {
