@@ -164,6 +164,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('chat.cleared'), id: z.string() }),
   /** photo de profil changée ou retirée : à recharger */
   z.object({ type: z.literal('picture'), id: z.string() }),
+  /** historique plus ancien reçu du téléphone (demande `POST /chats/:id/history`) */
+  z.object({ type: z.literal('history'), ids: z.array(z.string()) }),
   /** listes modifiées (liste complète) */
   z.object({ type: z.literal('lists'), lists: z.array(ChatList) }),
   z.object({ type: z.literal('message'), message: Message }),

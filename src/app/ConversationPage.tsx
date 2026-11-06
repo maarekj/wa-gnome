@@ -317,16 +317,37 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                 const adj = self.vadjustment;
                 let stick = true;
                 let upper = adj.upper;
+                /** distance au bas à conserver quand une page plus ancienne est ajoutée en tête */
+                let anchor: number | null = null;
+                /** ouverture de la discussion (pas de chargement automatique pendant le premier placement) */
+                let openedAt = GLib.get_monotonic_time();
                 adj.connect('value-changed', () => {
                   // changement dû à la croissance du contenu (images chargées) : pas un geste de l'utilisateur
                   if (adj.upper !== upper) return;
                   stick = adj.value + adj.pageSize >= adj.upper - 40;
+                  // près du haut : page précédente
+                  const settled = GLib.get_monotonic_time() - openedAt > 1_000_000;
+                  if (settled && adj.upper > adj.pageSize && adj.value < 400 && store.older.peek() === 'idle') void store.loadOlder();
                 });
+                // page ajoutée en tête : la position à l'écran reste la même
+                let firstId = '';
+                onCleanup(
+                  store.messages.subscribe(() => {
+                    const first = store.messages.peek()[0]?.id ?? '';
+                    if (firstId !== '' && first !== firstId && !stick) anchor = adj.upper - adj.value;
+                    firstId = first;
+                  }),
+                );
                 // `changed` : fin d'une reconfiguration (upper et page_size cohérents) ; position
                 // appliquée au tour suivant de la boucle, après l'allocation en cours
                 let pending = 0;
                 adj.connect('changed', () => {
                   upper = adj.upper;
+                  if (anchor !== null && !stick) {
+                    adj.value = adj.upper - anchor;
+                    if (adj.upper - adj.value === anchor) anchor = null;
+                    return;
+                  }
                   if (!stick || pending !== 0) return;
                   pending = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
                     pending = 0;
@@ -338,23 +359,43 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                 onCleanup(
                   store.current.subscribe(() => {
                     stick = true;
+                    anchor = null;
+                    firstId = '';
+                    openedAt = GLib.get_monotonic_time();
                   }),
                 );
               }}
             >
               <Adw.Clamp maximumSize={860} tighteningThreshold={600}>
-                <Gtk.Box
-                  orientation={Gtk.Orientation.VERTICAL}
-                  spacing={4}
-                  marginStart={12}
-                  marginEnd={12}
-                  marginTop={12}
-                  marginBottom={12}
-                  cssClasses={['conversation']}
-                  $={(self: Gtk.Box) => {
-                    onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '' })));
-                  }}
-                />
+                <Gtk.Box orientation={Gtk.Orientation.VERTICAL} marginStart={12} marginEnd={12} marginTop={12} marginBottom={12}>
+                  {/* messages plus anciens : bouton (discussion courte), chargement, ou début de la discussion */}
+                  <Gtk.Stack
+                    visibleChildName={createMemo(() => {
+                      const st = store.older();
+                      if (st === 'end') return 'end';
+                      if (st === 'idle') return store.messages().length === 0 ? 'none' : 'more';
+                      return 'loading';
+                    })}
+                    halign={Gtk.Align.CENTER}
+                    marginBottom={6}
+                  >
+                    <Gtk.Box $type="named" name="none" />
+                    <Gtk.Button $type="named" name="more" label="Messages plus anciens" tooltipText="Charger les messages plus anciens" cssClasses={['flat', 'caption']} onClicked={() => void store.loadOlder()} />
+                    <Gtk.Box $type="named" name="loading" spacing={8}>
+                      <Adw.Spinner />
+                      <Gtk.Label label={store.older((s) => (s === 'phone' ? 'Demande au téléphone…' : 'Chargement…'))} cssClasses={['caption', 'dim-label']} />
+                    </Gtk.Box>
+                    <Gtk.Label $type="named" name="end" label="Début de la discussion" cssClasses={['caption', 'dim-label']} />
+                  </Gtk.Stack>
+                  <Gtk.Box
+                    orientation={Gtk.Orientation.VERTICAL}
+                    spacing={4}
+                    cssClasses={['conversation']}
+                    $={(self: Gtk.Box) => {
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '' })));
+                    }}
+                  />
+                </Gtk.Box>
               </Adw.Clamp>
             </Gtk.ScrolledWindow>
             <Adw.Clamp maximumSize={860} tighteningThreshold={600}>

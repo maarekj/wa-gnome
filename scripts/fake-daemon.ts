@@ -193,6 +193,12 @@ store.setChatLabel(NEWS, '4', true);
 store.setChatLabel(BOB, '4', true);
 store.setFavorites([GROUP]);
 
+/** longue discussion : de quoi remonter dans l'historique local (pagination) */
+const LONG = '33600000005@s.whatsapp.net';
+store.upsertContact(LONG, { name: 'Claire (longue discussion)' });
+for (let i = 150; i >= 1; i -= 1) add(LONG, i % 2 === 0, `Message n° ${151 - i}`, 3 * H + i * 600);
+const historyGiven = new Set<string>();
+
 let server: Server | null = null;
 const emit = (e: Event): void => server?.emit(e);
 let status: Status = { state: ConnectionState.parse(values.state), qr: values.state === 'qr' ? 'https://wa.me/settings/linked_devices#fake-qr-code' : null, me: values.state === 'open' ? { id: '33600000000@s.whatsapp.net', name: 'Moi' } : null, error: null };
@@ -260,6 +266,18 @@ const backend: Backend = {
   },
   // photo : Alice (paysage) et le groupe Famille (autocollant) ; les autres n'en ont pas
   picture: (chatId) => Promise.resolve(chatId === ALICE ? landscape(96, 96) : chatId === GROUP ? sticker(96) : null),
+  // historique : le faux téléphone renvoie 20 messages plus anciens, une seule fois par discussion
+  requestHistory: (chatId) => {
+    if (historyGiven.has(chatId)) return Promise.resolve(false);
+    historyGiven.add(chatId);
+    const oldest = store.messages(chatId, 10_000)[0]?.timestamp ?? now;
+    const ids: string[] = [];
+    setTimeout(() => {
+      for (let i = 20; i >= 1; i -= 1) ids.push(add(chatId, i % 3 === 0, `Message ancien n° ${i}`, now - oldest + i * 3600).id);
+      emit({ type: 'history', ids: [chatId] });
+    }, 800);
+    return Promise.resolve(true);
+  },
   sendMedia: (chatId, f) => {
     const kind = uploadKind(f.mimetype, f.asDocument);
     const m = add(chatId, true, f.caption, 0, null, null, {

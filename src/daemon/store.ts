@@ -388,6 +388,12 @@ export class Store {
     return Number(this.#db.prepare('SELECT count(*) AS n FROM chats WHERE pinned > 0').get()?.['n'] ?? 0);
   }
 
+  /** Plus ancien message (brut) d'une discussion : point de départ d'une demande d'historique. */
+  oldestRaw(chatId: string): string | null {
+    const row = this.#db.prepare('SELECT raw FROM messages WHERE chat_id = ? ORDER BY timestamp ASC LIMIT 1').get(chatId);
+    return typeof row?.['raw'] === 'string' ? row['raw'] : null;
+  }
+
   /** Dernier message (brut) d'une discussion : clé et date pour les modifications d'état WhatsApp. */
   lastRaw(chatId: string): string | null {
     const row = this.#db.prepare('SELECT raw FROM messages WHERE chat_id = ? ORDER BY timestamp DESC LIMIT 1').get(chatId);

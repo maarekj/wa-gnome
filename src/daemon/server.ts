@@ -7,6 +7,7 @@
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
 //   POST /chats/:id/media           envoi d'un fichier (corps brut, voir shared/api.ts)
 //   GET  /chats/:id/picture         photo de profil (JPEG), 404 sans photo
+//   POST /chats/:id/history         messages plus anciens demandés au téléphone (arrivent par l'événement `history`)
 //   POST /chats/:id/read            discussion lue
 //   POST /chats/:id/action          archiver, silencieux, épingler, non lue, effacer, supprimer, quitter
 //   POST /logout                    déconnexion du compte
@@ -33,6 +34,8 @@ export interface Backend {
   logout: () => Promise<void>;
   media: (chatId: string, id: string) => Promise<{ mimetype: string; data: Buffer }>;
   sendMedia: (chatId: string, file: Upload) => Promise<void>;
+  /** demande au téléphone les messages antérieurs au plus ancien connu ; false s'il n'y a rien à demander */
+  requestHistory: (chatId: string) => Promise<boolean>;
 }
 
 /** Fichier à envoyer. */
@@ -153,6 +156,9 @@ export function startServer(opts: { host: string; port: number; token: string; s
         json(res, 200, {});
         return;
       }
+      case 'POST /chats/:id/history':
+        json(res, 200, { requested: await opts.wa().requestHistory(chatId) });
+        return;
       case 'POST /chats/:id/read':
         await opts.wa().markRead(chatId);
         json(res, 200, {});

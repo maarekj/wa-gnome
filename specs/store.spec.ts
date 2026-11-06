@@ -2,7 +2,7 @@
 import type { Chat, Message } from '../src/shared/api.ts';
 import { formatPhone, isMuted, previewOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
-import { mergeMessage, sortChats, Store } from '../src/shared/store.ts';
+import { mergeMessage, prependPage, sortChats, Store } from '../src/shared/store.ts';
 import { itemsOf } from '../src/app/ConversationPage.tsx';
 import { fold, inList, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
@@ -22,6 +22,12 @@ describe('mergeMessage', () => {
   it('remplace un message déjà présent', () => {
     const merged = mergeMessage([msg('a', 1), msg('b', 2)], msg('a', 1, { text: 'modifié' }));
     expect(merged.map((m) => m.text)).toEqual(['modifié', 'b']);
+  });
+});
+
+describe('prependPage', () => {
+  it('ajoute la page en tête sans doublons', () => {
+    expect(prependPage([msg('c', 3), msg('d', 4)], [msg('a', 1), msg('b', 2), msg('c', 3)]).map((m) => m.id)).toEqual(['a', 'b', 'c', 'd']);
   });
 });
 

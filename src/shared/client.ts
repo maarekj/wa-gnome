@@ -142,6 +142,12 @@ export class WaClient {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
   }
 
+  /** Demande au téléphone des messages plus anciens ; false s'il n'y a rien à demander. */
+  async requestHistory(chatId: string): Promise<boolean> {
+    const r = await this.request('POST', `/chats/${encodeURIComponent(chatId)}/history`, z.object({ requested: z.boolean() }));
+    return r.requested;
+  }
+
   async markRead(chatId: string): Promise<void> {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/read`, z.unknown());
   }

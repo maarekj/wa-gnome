@@ -128,7 +128,7 @@ export class WhatsApp {
       this.#learn([mapping]);
     });
 
-    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings }) => {
+    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings, syncType }) => {
       this.#store.transaction(() => {
         // correspondances d'abord : les données suivantes sont rangées directement sous le numéro
         this.#learn(lidPnMappings ?? [], false);
@@ -141,6 +141,11 @@ export class WhatsApp {
         for (const m of messages) this.#saveMessage(m);
       });
       this.#emit({ type: 'chats', chats: this.#store.chats() });
+      // réponse à une demande d'historique : discussions concernées rechargées par l'app
+      if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
+        const ids = [...new Set(messages.map((m) => this.#jid(m.key.remoteJid)))];
+        this.#emit({ type: 'history', ids });
+      }
     });
 
     sock.ev.on('chats.upsert', (chats) => {
@@ -432,6 +437,18 @@ export class WhatsApp {
 
   async send(chatId: string, text: string): Promise<void> {
     this.#sent(await this.#open().sendMessage(chatId, { text }));
+  }
+
+  /**
+   * Messages antérieurs au plus ancien connu, demandés au téléphone (qui doit être en ligne) ;
+   * ils arrivent plus tard par `messaging-history.set` (type ON_DEMAND).
+   */
+  async requestHistory(chatId: string): Promise<boolean> {
+    const raw = this.#store.oldestRaw(chatId);
+    const oldest = raw === null ? null : this.#parseRaw(raw);
+    if (oldest === null) return false;
+    await this.#open().fetchMessageHistory(50, oldest.key, seconds(oldest.messageTimestamp) * 1000);
+    return true;
   }
 
   /** Fichier envoyé : photo, vidéo, audio ou document selon son type (légende sauf pour l'audio). */
