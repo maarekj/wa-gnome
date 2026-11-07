@@ -12,6 +12,7 @@ import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
 import { splitReceipts, stepText } from '../src/app/MessageInfo.ts';
 import { displaySize } from '../src/app/media.ts';
 import { canRevokeAll, copyText } from '../src/app/Selection.ts';
+import { accentCss, parseSettings } from '../src/app/Preferences.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -289,5 +290,19 @@ describe('senderColor', () => {
     expect(senderColor('33600000001@s.whatsapp.net')).toBe(senderColor('33600000001@s.whatsapp.net'));
     const colors = new Set(['1', '2', '3', '4', '5', '6'].map((n) => senderColor(`3360000000${n}@s.whatsapp.net`)));
     expect(colors.size).toBeGreaterThan(3);
+  });
+});
+
+describe('préférences', () => {
+  it('réglages lus, valeurs par défaut si absents ou invalides', () => {
+    expect(parseSettings(null).accent).toBe('system');
+    expect(parseSettings('{"accent":"purple"}').accent).toBe('purple');
+    expect(parseSettings('{"accent":"fuchsia"}').accent).toBe('system');
+    expect(parseSettings('pas du json').accent).toBe('system');
+  });
+  it('CSS de l’accent', () => {
+    expect(accentCss('system')).toBe('');
+    expect(accentCss('whatsapp')).toBe(':root { --accent-bg-color: #00a884; }');
+    expect(accentCss('purple')).toMatch(/^:root \{ --accent-bg-color: rgb\(/u);
   });
 });

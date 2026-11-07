@@ -10,6 +10,7 @@ import { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
+import { initSettings, openPreferences } from './Preferences.ts';
 import { STYLESHEET } from './style.ts';
 
 /** Identifiant D-Bus (surchargeable pour lancer une version de développement à côté). */
@@ -86,6 +87,14 @@ about.connect('activate', () => {
 });
 app.add_action(about);
 
+/** app.preferences : fenêtre des préférences (Ctrl+,) */
+const preferences = new Gio.SimpleAction({ name: 'preferences' });
+preferences.connect('activate', () => {
+  if (mainWindow !== null) openPreferences(mainWindow);
+});
+app.add_action(preferences);
+app.set_accels_for_action('app.preferences', ['<Control>comma']);
+
 const quit = new Gio.SimpleAction({ name: 'quit' });
 quit.connect('activate', () => app.quit());
 app.add_action(quit);
@@ -100,6 +109,8 @@ app.connect('startup', () => {
   const display = Gdk.Display.get_default();
   // oxlint-disable-next-line typescript/no-deprecated -- seule API exposée par GJS pour un style global
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+  // couleur d'accent choisie (sinon celle du système)
+  initSettings();
 });
 
 app.connect('activate', () => {

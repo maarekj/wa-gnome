@@ -116,6 +116,7 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
             primary
             $={(self: Gtk.MenuButton) => {
               const menu = new Gio.Menu();
+              menu.append('Préférences', 'app.preferences');
               menu.append('Déconnecter ce poste…', 'app.logout');
               menu.append('À propos de WhatsApp pour GNOME', 'app.about');
               self.menuModel = menu;

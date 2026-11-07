@@ -75,6 +75,27 @@ export const STYLESHEET = `
   background-color: alpha(var(--accent-bg-color), 0.12);
   border-radius: 8px;
 }
+.accent-swatch {
+  border-radius: 9999px;
+  padding: 0;
+  min-width: 34px;
+  min-height: 34px;
+  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.15);
+}
+.accent-swatch.system {
+  background: linear-gradient(135deg, #3584e4 0%, #3584e4 50%, #2190a4 50%, #2190a4 100%);
+}
+.accent-swatch .check {
+  color: white;
+  opacity: 0;
+}
+.accent-swatch:checked .check {
+  opacity: 1;
+}
+.accent-swatch:checked {
+  outline: 2px solid alpha(currentColor, 0.6);
+  outline-offset: 2px;
+}
 .selection-bar {
   min-height: 46px;
 }
