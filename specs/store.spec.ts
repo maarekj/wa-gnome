@@ -4,7 +4,7 @@ import type { Chat, Message } from '../src/shared/api.ts';
 import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sortChats, Store, typingText } from '../src/shared/store.ts';
-import { itemsOf, myReaction, presenceLine } from '../src/app/ConversationPage.tsx';
+import { itemsOf, myReaction, presenceLine, senderColor } from '../src/app/ConversationPage.tsx';
 import { fold, inList, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
@@ -281,5 +281,13 @@ describe('sélection de messages', () => {
     expect(canRevokeAll([msg('a', now - 10, { fromMe: true }), msg('b', now - 20)], now)).toBeFalse();
     expect(canRevokeAll([msg('a', now - 3 * 86_400, { fromMe: true })], now)).toBeFalse();
     expect(canRevokeAll([], now)).toBeFalse();
+  });
+});
+
+describe('senderColor', () => {
+  it('stable et différente selon le participant', () => {
+    expect(senderColor('33600000001@s.whatsapp.net')).toBe(senderColor('33600000001@s.whatsapp.net'));
+    const colors = new Set(['1', '2', '3', '4', '5', '6'].map((n) => senderColor(`3360000000${n}@s.whatsapp.net`)));
+    expect(colors.size).toBeGreaterThan(3);
   });
 });

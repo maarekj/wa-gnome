@@ -24,7 +24,7 @@ import { AudioView, DocumentView, VideoView } from './MediaViews.ts';
 import { asWidget } from './widgets.ts';
 
 /** Élément de la conversation : séparateur de jour ou message. */
-export type Item = { kind: 'day'; key: string; label: string } | { kind: 'message'; key: string; message: Message; showSender: boolean };
+export type Item = { kind: 'day'; key: string; label: string } | { kind: 'message'; key: string; message: Message; showSender: boolean; group: boolean };
 
 /** Messages groupés par jour ; nom de l'auteur affiché au premier message d'une suite (groupes). */
 export function itemsOf(messages: readonly Message[], group: boolean): Item[] {
@@ -41,10 +41,56 @@ export function itemsOf(messages: readonly Message[], group: boolean): Item[] {
     const known = m.sender !== null || m.senderName !== null;
     const showSender = group && !m.fromMe && known && (previous === null || previous.fromMe || previous.sender !== m.sender);
     // supprimé : clé différente, bulle reconstruite (média et citation retirés)
-    items.push({ kind: 'message', key: m.deleted ? `m:${m.id}:x` : `m:${m.id}`, message: m, showSender });
+    items.push({ kind: 'message', key: m.deleted ? `m:${m.id}:x` : `m:${m.id}`, message: m, showSender, group });
     previous = m;
   }
   return items;
+}
+
+/** Couleurs des noms des participants (lisibles en thème clair et sombre). */
+const SENDER_COLORS = ['#d63d6e', '#1f7aec', '#c75000', '#9141c2', '#0a8f55', '#d13438', '#0f8394', '#a06a00', '#5b5fc7', '#b5338a', '#3d8a1f', '#e0662c'] as const;
+
+/** Couleur du nom d'un participant : stable, choisie d'après son identifiant. */
+export function senderColor(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(h, 31) + (id.codePointAt(i) ?? 0)) >>> 0;
+  return SENDER_COLORS[h % SENDER_COLORS.length] ?? SENDER_COLORS[0];
+}
+
+/** Bulle d'un message (pour la mise en évidence) : premier descendant de classe `bubble` ou `sticker`. */
+function findBubble(w: Gtk.Widget): Gtk.Widget | null {
+  if (w.has_css_class('bubble') || w.has_css_class('sticker')) return w;
+  for (let c = w.get_first_child(); c !== null; c = c.get_next_sibling()) {
+    const found = findBubble(c);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * Message reçu dans un groupe : photo de l'auteur à gauche, au premier message d'une suite
+ * (place gardée pour les suivants, bulles alignées). Le nom `m:<id>` passe à l'enveloppe.
+ */
+function withAuthor(ctx: BubbleContext, w: Gtk.Widget, m: Message, live: Accessor<Item>): Gtk.Widget {
+  const name = m.senderName ?? m.sender?.split('@')[0] ?? '';
+  const avatar = new Adw.Avatar({ size: 28, text: avatarText(name), showInitials: /\p{L}/u.test(name), valign: Gtk.Align.START, marginTop: 2, tooltipText: name });
+  if (m.sender !== null) bindAvatar(avatar, ctx.pictures.texture(m.sender));
+  const first = (): boolean => {
+    const it = live.peek();
+    return it.kind === 'message' && it.showSender;
+  };
+  avatar.opacity = first() ? 1 : 0;
+  onCleanup(
+    live.subscribe(() => {
+      avatar.opacity = first() ? 1 : 0;
+    }),
+  );
+  const row = new Gtk.Box({ name: w.name, spacing: 6, halign: Gtk.Align.START, marginEnd: w.marginEnd });
+  w.name = '';
+  w.marginEnd = 0;
+  row.append(avatar);
+  row.append(w);
+  return row;
 }
 
 /** Contexte du rendu des bulles. */
@@ -313,7 +359,7 @@ function DeletedBubble(ctx: BubbleContext, m: Message, msg: () => Message, live:
           attachBubbleMenu(ctx, self, msg);
         }}
       >
-        <Gtk.Label visible={live((it) => it.kind === 'message' && it.showSender)} label={m.senderName ?? ''} xalign={0} cssClasses={['caption-heading', 'accent']} />
+        <Gtk.Label visible={live((it) => it.kind === 'message' && it.showSender)} useMarkup label={`<span foreground="${senderColor(m.sender ?? '')}">${esc(m.senderName ?? '')}</span>`} xalign={0} cssClasses={['caption-heading']} />
         <Gtk.Box spacing={6}>
           <Gtk.Image iconName="action-unavailable-symbolic" cssClasses={['dim-label']} />
           <Gtk.Label label={m.fromMe ? 'Vous avez supprimé ce message' : DELETED_TEXT} xalign={0} cssClasses={['dim-label', 'deleted-text']} />
@@ -332,12 +378,14 @@ function bubble(ctx: BubbleContext) {
       const it = live.peek();
       return it.kind === 'message' ? it.message : m;
     };
-    if (m.deleted) return selectableRow(ctx, DeletedBubble(ctx, m, msg, live), m.id, msg);
+    // groupe, message reçu : photo de l'auteur à gauche
+    const author = (w: Gtk.Widget): Gtk.Widget => (item.group && !m.fromMe ? withAuthor(ctx, w, m, live) : w);
+    if (m.deleted) return selectableRow(ctx, author(DeletedBubble(ctx, m, msg, live)), m.id, msg);
     const picture = isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
-    return selectableRow(ctx, asWidget(
+    return selectableRow(ctx, author(asWidget(
       <Gtk.Box name={`m:${m.id}`} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
         <Gtk.Box
           orientation={Gtk.Orientation.VERTICAL}
@@ -349,9 +397,11 @@ function bubble(ctx: BubbleContext) {
         >
           <Gtk.Label
             visible={live((it) => it.kind === 'message' && it.showSender)}
-            label={live(() => msg().senderName ?? msg().sender?.split('@')[0] ?? '')}
+            useMarkup
+            // couleur propre à chaque participant (comme WhatsApp)
+            label={live(() => `<span foreground="${senderColor(msg().sender ?? '')}">${esc(msg().senderName ?? msg().sender?.split('@')[0] ?? '')}</span>`)}
             xalign={0}
-            cssClasses={['caption-heading', 'accent']}
+            cssClasses={['caption-heading']}
           />
           {m.forwarded === 0 ? null : ForwardedMark(m.forwarded)}
           {m.quoted === null ? null : QuoteBlock(ctx, m.quoted)}
@@ -390,7 +440,7 @@ function bubble(ctx: BubbleContext) {
         </Gtk.Box>
         {ReactionsRow(ctx, msg, (fn) => live.subscribe(fn), m.fromMe)}
       </Gtk.Box>,
-    ), m.id, msg);
+    )), m.id, msg);
   };
 }
 
@@ -701,8 +751,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     if (!ok) return false;
     const adj = scroller.vadjustment;
     adj.value = Math.max(0, bounds.get_y() + bounds.get_height() / 2 - adj.pageSize / 2);
-    // ligne → message → bulle
-    const bubbleBox = target.get_first_child()?.get_first_child() ?? null;
+    const bubbleBox = findBubble(target);
     bubbleBox?.add_css_class('flash');
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
       bubbleBox?.remove_css_class('flash');
