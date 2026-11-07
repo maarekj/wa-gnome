@@ -356,7 +356,7 @@ const backend: Backend = {
       return Promise.resolve();
     }
     if (a.action === 'delete-for-me') {
-      store.deleteMessage(chatId, messageId);
+      store.deleteForMe(chatId, messageId);
       emit({ type: 'message.delete', chatId, id: messageId });
     } else {
       if (a.action === 'edit') store.applyEdit(chatId, messageId, a.text);

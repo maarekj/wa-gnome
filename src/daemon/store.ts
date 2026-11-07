@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS messages (
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
+-- messages supprimés pour moi (ici ou sur un autre appareil) : ignorés s'ils reviennent par l'historique
+CREATE TABLE IF NOT EXISTS deleted_for_me (
+  chat_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  PRIMARY KEY (chat_id, id)
+);
 CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender);
 -- identifiant anonyme (…@lid) → numéro (…@s.whatsapp.net) : une personne, une discussion
 -- réactions : une par personne et par message (« me » : les miennes)
@@ -548,6 +554,7 @@ export class Store {
 
   /** Message enregistré (remplacé s'il existe) ; la discussion est créée au besoin. */
   upsertMessage(m: Converted, raw: string): void {
+    if (this.#db.prepare('SELECT 1 FROM deleted_for_me WHERE chat_id = ? AND id = ?').get(m.chatId, m.id) !== undefined) return;
     this.#db
       .prepare(
         `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, edited, deleted, status)
@@ -845,6 +852,12 @@ export class Store {
 
   deleteMessage(chatId: string, id: string): void {
     this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id);
+  }
+
+  /** Supprimé pour moi : retiré, et ignoré s'il revient (historique) ; true s'il était présent. */
+  deleteForMe(chatId: string, id: string): boolean {
+    this.#db.prepare('INSERT OR IGNORE INTO deleted_for_me (chat_id, id) VALUES (?, ?)').run(chatId, id);
+    return this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id).changes > 0;
   }
 
   /** Mes identifiants (numéro, lid) : citations de mes propres messages reconnues. */

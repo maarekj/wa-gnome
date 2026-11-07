@@ -233,6 +233,23 @@ export class WhatsApp {
       }
     });
 
+    // supprimé pour moi sur un autre appareil (synchronisation de l'état WhatsApp)
+    sock.ev.on('messages.delete', (d) => {
+      if (!('keys' in d)) {
+        logger.info(`suppression de toute la discussion ${d.jid} : ignorée`);
+        return;
+      }
+      const chats = new Set<string>();
+      for (const key of d.keys) {
+        if (key.id === null || key.id === undefined || key.remoteJid === null || key.remoteJid === undefined) continue;
+        const chatId = this.#jid(key.remoteJid);
+        if (!this.#store.deleteForMe(chatId, key.id)) continue;
+        this.#emit({ type: 'message.delete', chatId, id: key.id });
+        chats.add(chatId);
+      }
+      if (chats.size > 0) this.#emitChats([...chats]);
+    });
+
     // listes (étiquettes) : favoris, listes personnalisées
     sock.ev.on('labels.edit', (l) => {
       this.#store.upsertLabel({ id: l.id, name: l.name, color: l.color, listType: l.listType ?? null, orderIndex: l.orderIndex ?? null, deleted: l.deleted });
@@ -351,7 +368,7 @@ export class WhatsApp {
         break;
       case 'delete-for-me':
         await sock.chatModify({ deleteForMe: { deleteMedia: true, key: target.key, timestamp: seconds(target.messageTimestamp) } }, jid);
-        this.#store.deleteMessage(chatId, id);
+        this.#store.deleteForMe(chatId, id);
         this.#emit({ type: 'message.delete', chatId, id });
         this.#emitChats([chatId]);
         break;

@@ -244,3 +244,18 @@ void describe('transfert', () => {
     assert.equal(store.message(PN, 'f')?.forwarded, 2);
   });
 });
+
+void describe('supprimé pour moi', () => {
+  void it('retiré, puis ignoré s’il revient par l’historique', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage(msg(PN, 'x', 10), '{}');
+    assert.equal(store.deleteForMe(PN, 'x'), true);
+    assert.equal(store.message(PN, 'x'), null);
+    store.upsertMessage(msg(PN, 'x', 10), '{}');
+    assert.equal(store.message(PN, 'x'), null);
+    // inconnu ici (supprimé ailleurs avant d'arriver) : ignoré aussi à son arrivée
+    assert.equal(store.deleteForMe(PN, 'y'), false);
+    store.upsertMessage(msg(PN, 'y', 11), '{}');
+    assert.equal(store.message(PN, 'y'), null);
+  });
+});
