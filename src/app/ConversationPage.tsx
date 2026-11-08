@@ -17,6 +17,7 @@ import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
 import { attachDragSelect } from './DragSelect.ts';
 import { openGallery } from './Gallery.ts';
+import { openChatInfo } from './ChatInfoDialog.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
@@ -822,7 +823,19 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     <Adw.NavigationPage title={chat((c) => c?.name ?? 'WhatsApp')} tag="conversation">
       <Adw.ToolbarView>
         <Adw.HeaderBar $type="top">
-          <Gtk.Box $type="title" spacing={10}>
+          {/* clic sur le nom : fiche du contact ou du groupe */}
+          <Gtk.Button
+            $type="title"
+            cssClasses={['flat', 'chat-title']}
+            sensitive={chat((c) => c !== null)}
+            tooltipText={chat((c) => (c?.group === true ? 'Infos du groupe' : 'Infos du contact'))}
+            onClicked={(b: Gtk.Button) => {
+              const c = chat.peek();
+              if (c === null) return;
+              openChatInfo(b, store, pictures, c.id, c.name, { toast, search: () => setSearching(true), gallery: () => openGallery(b, store, loader, c.id, c.name, toast) });
+            }}
+          >
+          <Gtk.Box spacing={10}>
             <Adw.Avatar
               visible={chat((c) => c !== null)}
               size={32}
@@ -850,6 +863,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               />
             </Gtk.Box>
           </Gtk.Box>
+          </Gtk.Button>
           <Gtk.Button
             $type="end"
             iconName="folder-pictures-symbolic"

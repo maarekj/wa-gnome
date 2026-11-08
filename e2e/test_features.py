@@ -162,3 +162,18 @@ def test_selecteur_emoji(run_app):
     app.key('Down')
     app.key('Return')
     wait_until(lambda: composer.text.startswith('Salut ') and len(composer.text) > len('Salut '), 5, 'émoji inséré')
+
+
+def test_infos_du_groupe_et_du_contact(run_app):
+    _, app = run_app()
+    app.open_chat('Famille')
+    app.point(wait_until(lambda: app.root.findChild(lambda n: n.showing and n.description == 'Infos du groupe', retry=False, requireResult=False), 5, 'bouton du titre'))
+    assert app.text_visible('Groupe · 3 participants')
+    assert app.text_visible('Organisation des repas du dimanche')
+    assert app.text_visible('Créateur du groupe')
+    app.key('Escape')
+    app.open_chat('Alice Martin')
+    app.point(wait_until(lambda: app.root.findChild(lambda n: n.showing and n.description == 'Infos du contact', retry=False, requireResult=False), 5, 'bouton du titre'))
+    assert app.text_visible('En vacances jusqu’à lundi')
+    assert app.text_visible('+33 6 00 00 00 01')
+    assert app.text_visible('2 groupes en commun')

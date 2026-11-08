@@ -22,7 +22,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
+import { ChatAction, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -49,6 +49,8 @@ export interface Backend {
   setOnline: (online: boolean) => Promise<void>;
   /** JID WhatsApp d'un numéro (chiffres), null s'il n'a pas de compte */
   lookup: (digits: string) => Promise<string | null>;
+  /** fiche d'un contact ou d'un groupe */
+  info: (chatId: string) => Promise<ChatInfo>;
   typing: (chatId: string, state: 'composing' | 'recording' | 'paused') => Promise<void>;
 }
 
@@ -166,6 +168,9 @@ export function startServer(opts: { host: string; port: number; token: string; s
         json(res, 200, {});
         return;
       }
+      case 'GET /chats/:id/info':
+        json(res, 200, await opts.wa().info(chatId));
+        return;
       case 'GET /chats/:id/gallery': {
         const tab = url.searchParams.get('tab');
         if (!isGalleryTab(tab)) throw new HttpError(400, 'onglet inconnu');

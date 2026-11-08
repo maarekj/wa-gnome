@@ -237,6 +237,36 @@ export const MessageAction = z.discriminatedUnion('action', [
 export type MessageAction = z.infer<typeof MessageAction>;
 export type Message = z.infer<typeof Message>;
 
+/** Participant d'un groupe (fiche du groupe). */
+export const Participant = z.object({
+  id: z.string(),
+  name: z.string(),
+  admin: z.nullable(z.enum(['admin', 'superadmin'])),
+  me: z.boolean(),
+});
+export type Participant = z.infer<typeof Participant>;
+
+/** Fiche d'un contact ou d'un groupe (`GET /chats/:id/info`). */
+export const ChatInfo = z.object({
+  id: z.string(),
+  name: z.string(),
+  group: z.boolean(),
+  /** numéro (chiffres), contact seulement */
+  phone: z.nullable(z.string()),
+  /** nom public choisi par la personne (« pushName ») */
+  publicName: z.nullable(z.string()),
+  /** « À propos » du contact, et sa date (secondes) */
+  about: z.nullable(z.string()),
+  aboutAt: z.nullable(z.number()),
+  /** description et création du groupe (secondes) */
+  description: z.nullable(z.string()),
+  created: z.nullable(z.number()),
+  participants: z.array(Participant),
+  /** groupes en commun (contact seulement) */
+  commonGroups: z.array(z.object({ id: z.string(), name: z.string(), size: z.number() })),
+});
+export type ChatInfo = z.infer<typeof ChatInfo>;
+
 /** Onglets de la galerie des médias : genres de messages qu'ils regroupent. */
 export const GALLERY_KINDS = {
   visual: ['image', 'video'],

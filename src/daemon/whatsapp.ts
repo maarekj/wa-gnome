@@ -27,7 +27,8 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { type ChatAction, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { type ChatAction, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
 import { type Change, changeOf, editedContent, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
@@ -845,6 +846,70 @@ export class WhatsApp {
     const { jid } = this.#target(chatId);
     await this.#open().presenceSubscribe(jid);
     return this.presenceOf(chatId);
+  }
+
+  /** Fiches déjà demandées (WhatsApp limite les requêtes) : valables 10 minutes. */
+  readonly #infos = new Map<string, { at: number; info: ChatInfo }>();
+
+  /** Fiche d'un contact (numéro, nom public, « À propos ») ou d'un groupe (description, participants). */
+  async info(chatId: string): Promise<ChatInfo> {
+    const cached = this.#infos.get(chatId);
+    if (cached !== undefined && Date.now() - cached.at < 10 * 60_000) return cached.info;
+    const sock = this.#open();
+    const name = this.#store.chat(chatId)?.name ?? this.#store.displayName(chatId);
+    const base: ChatInfo = { id: chatId, name, group: false, phone: null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] };
+    let info: ChatInfo;
+    if (chatId.endsWith('@g.us')) {
+      const g = await sock.groupMetadata(chatId);
+      for (const p of g.participants) this.#saveContact(p);
+      const participants = g.participants
+        .map((p) => {
+          const id = this.#jid(p.phoneNumber ?? p.id);
+          const me = this.#store.isMe(id);
+          return { id, name: me ? 'Vous' : this.#store.displayName(id), admin: p.admin ?? null, me };
+        })
+        // moi d'abord, puis administrateurs, puis par nom
+        .toSorted((a, b) => Number(b.me) - Number(a.me) || Number(b.admin !== null) - Number(a.admin !== null) || a.name.localeCompare(b.name, 'fr'));
+      info = { ...base, name: g.subject || name, group: true, description: g.desc ?? null, created: g.creation ?? null, participants };
+    } else {
+      const phone = chatId.endsWith('@s.whatsapp.net') ? (chatId.split('@')[0] ?? null) : null;
+      let about: string | null = null;
+      let aboutAt: number | null = null;
+      try {
+        const [r] = (await sock.fetchStatus(this.#target(chatId).jid)) ?? [];
+        const st: unknown = r?.['status'];
+        if (typeof st === 'object' && st !== null && 'status' in st && typeof st.status === 'string' && st.status !== '') {
+          about = st.status;
+          aboutAt = 'setAt' in st && st.setAt instanceof Date && st.setAt.getTime() > 0 ? Math.floor(st.setAt.getTime() / 1000) : null;
+        }
+      } catch (error) {
+        // « À propos » masqué par la confidentialité du contact : fiche sans
+        logger.debug(`à propos de ${chatId} : ${errorMessage(error)}`);
+      }
+      info = { ...base, phone, publicName: this.#store.publicNameOf(chatId), about, aboutAt, commonGroups: await this.#commonGroups(sock, chatId) };
+    }
+    this.#infos.set(chatId, { at: Date.now(), info });
+    return info;
+  }
+
+  /** Groupes dont je fais partie, avec leurs participants (une requête, gardée 10 minutes). */
+  #groups: { at: number; list: { id: string; name: string; members: Set<string> }[] } | null = null;
+
+  /** Groupes en commun avec une personne, par nom. */
+  async #commonGroups(sock: WASocket, chatId: string): Promise<ChatInfo['commonGroups']> {
+    if (this.#groups === null || Date.now() - this.#groups.at > 10 * 60_000) {
+      try {
+        const all = Object.values(await sock.groupFetchAllParticipating());
+        this.#groups = { at: Date.now(), list: all.map((g) => ({ id: this.#jid(g.id), name: g.subject, members: new Set(g.participants.map((p) => this.#jid(p.phoneNumber ?? p.id))) })) };
+      } catch (error) {
+        logger.debug(`groupes en commun : ${errorMessage(error)}`);
+        return [];
+      }
+    }
+    return this.#groups.list
+      .filter((g) => g.members.has(chatId))
+      .map((g) => ({ id: g.id, name: this.#store.chat(g.id)?.name ?? g.name, size: g.members.size }))
+      .toSorted((a, b) => a.name.localeCompare(b.name, 'fr'));
   }
 
   /** JID d'un numéro s'il a un compte WhatsApp (vérifié auprès de WhatsApp). */

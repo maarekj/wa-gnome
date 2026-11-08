@@ -19,6 +19,7 @@ import { snippetMarkup } from '../src/shared/format.ts';
 import { byMonth } from '../src/app/Gallery.ts';
 import { rangeSelection, rowAt } from '../src/app/DragSelect.ts';
 import { patternSvg, wallpaperCss } from '../src/app/Wallpaper.ts';
+import { infoSubtitle, roleOf } from '../src/app/ChatInfoDialog.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -399,5 +400,14 @@ describe('fond des conversations', () => {
     expect(wallpaperCss('image', '/tmp/i.png', null)).not.toContain('--sidebar-bg-color');
     expect(wallpaperCss('color:menthe', null, null, true)).toContain('color-mix(in srgb, #1f2b25 95%, white)');
     expect(wallpaperCss('pattern', null, '/tmp/a.svg')).toContain('#f2eee8 97%, black');
+  });
+});
+
+describe('fiche', () => {
+  it('sous-titre et rôle', () => {
+    expect(infoSubtitle({ group: false, phone: '33612345678', participants: [] })).toBe('+33 6 12 34 56 78');
+    expect(infoSubtitle({ group: true, phone: null, participants: [{ id: 'a', name: 'A', admin: null, me: true }] })).toBe('Groupe · 1 participant');
+    expect(roleOf({ admin: 'superadmin' })).toBe('Créateur du groupe');
+    expect(roleOf({ admin: null })).toBe('');
   });
 });

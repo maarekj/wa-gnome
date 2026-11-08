@@ -99,6 +99,9 @@ export const STYLESHEET = `
 .gallery-tile {
   border-radius: 6px;
 }
+.chat-title {
+  padding: 2px 10px;
+}
 .chat-search {
   border-left: 1px solid var(--border-color);
   background: var(--sidebar-bg-color);

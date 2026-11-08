@@ -359,6 +359,15 @@ const backend: Backend = {
   // présence : Alice en ligne, Bob vu il y a 2 h ; les autres sans information
   subscribe: (chatId) => Promise.resolve(fakePresence(chatId, false)),
   setOnline: () => Promise.resolve(),
+  info: (chatId) => {
+    const name = store.chat(chatId)?.name ?? store.displayName(chatId);
+    const base = { id: chatId, name, group: false, phone: null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] };
+    if (chatId === GROUP) {
+      const p = (id: string, admin: 'admin' | 'superadmin' | null, me = false) => ({ id, name: me ? 'Vous' : store.displayName(id), admin, me });
+      return Promise.resolve({ ...base, group: true, description: 'Organisation des repas du dimanche 🍽️', created: now - 400 * 24 * H, participants: [p(ME, null, true), p(ALICE, 'superadmin'), p(BOB, null)] });
+    }
+    return Promise.resolve({ ...base, phone: chatId.split('@')[0] ?? null, publicName: chatId === BOB ? 'Bob' : null, about: chatId === ALICE ? 'En vacances jusqu’à lundi ☀️' : null, aboutAt: chatId === ALICE ? now - 3 * 24 * H : null, commonGroups: chatId === ALICE || chatId === BOB ? [{ id: GROUP, name: 'Famille', size: 3 }, { id: NEWS, name: 'Voisins', size: 42 }] : [] });
+  },
   // faux annuaire : numéros commençant par 0 sans compte
   lookup: (digits) => Promise.resolve(digits.startsWith('0') ? null : `${digits}@s.whatsapp.net`),
   typing: () => Promise.resolve(),

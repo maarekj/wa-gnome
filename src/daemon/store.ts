@@ -746,6 +746,12 @@ export class Store {
     );
   }
 
+  /** Nom public (« pushName ») d'une personne, ou null. */
+  publicNameOf(jid: string): string | null {
+    const row = this.#db.prepare('SELECT notify FROM contacts WHERE id = ?').get(jid);
+    return typeof row?.['notify'] === 'string' && row['notify'] !== '' ? row['notify'] : null;
+  }
+
   /** Contacts du carnet ayant un numéro WhatsApp, par nom. */
   contacts(): { id: string; name: string }[] {
     return this.#db
