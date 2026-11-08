@@ -81,31 +81,44 @@ export function inList(c: Chat, list: WaList): boolean {
 /** Listes proposées en filtres, dans l'ordre de WhatsApp. */
 export const filterLists = (lists: readonly WaList[]): WaList[] => lists.filter((l) => l.kind !== 'other');
 
+/** Vue de la liste : discussions, archivées, ou chaînes (onglet « Actus » du téléphone). */
+export type View = 'main' | 'archived' | 'channels';
+
+/** Chaîne WhatsApp (lecture seule). */
+export const isChannel = (id: string): boolean => id.endsWith('@newsletter');
+
+/** Discussion de la vue (hors recherche). */
+const inView = (c: Chat, view: View): boolean => (view === 'channels' ? isChannel(c.id) : !isChannel(c.id) && c.archived === (view === 'archived'));
+
 /**
- * Discussions affichées : archivées ou non, filtrées par une liste (vue principale) ou par la
+ * Discussions affichées : archivées, chaînes ou principales, filtrées par une liste (vue principale) ou par la
  * recherche (qui porte sur toutes, archivées comprises, comme dans WhatsApp).
  */
-export function visibleChats(all: readonly Chat[], query: string, archived: boolean, filter: Filter = 'all', lists: readonly WaList[] = []): readonly Chat[] {
+export function visibleChats(all: readonly Chat[], query: string, view: View, filter: Filter = 'all', lists: readonly WaList[] = []): readonly Chat[] {
   const q = fold(query.trim());
   if (q !== '') return all.filter((c) => fold(c.name).includes(q));
-  const list = archived || filter === 'all' ? undefined : lists.find((l) => l.id === filter);
-  return all.filter((c) => c.archived === archived && (list === undefined || inList(c, list)));
+  const list = view !== 'main' || filter === 'all' ? undefined : lists.find((l) => l.id === filter);
+  return all.filter((c) => inView(c, view) && (list === undefined || inList(c, list)));
 }
 
 export function ChatList({ store, pictures, toast }: { store: Store; pictures: Pictures; toast: (text: string) => void }): JSX.Element {
   const [query, setQuery] = createState('');
-  const [archived, setArchived] = createState(false);
+  const [view, setView] = createState<View>('main');
+  /** hors de la liste principale (archivées ou chaînes) */
+  const archived = view((v) => v !== 'main');
+  const setArchived = (on: boolean): void => setView(on ? 'archived' : 'main');
   const [filter, setFilter] = createState<Filter>('all');
-  const shown = createMemo(() => visibleChats(store.chats(), query(), archived(), filter(), store.lists()));
-  const archivedCount = createMemo(() => store.chats().filter((c) => c.archived).length);
-  // plus d'archivées : retour à la liste principale
-  onCleanup(
-    archivedCount.subscribe(() => {
-      if (archivedCount.peek() === 0) setArchived(false);
-    }),
-  );
+  const shown = createMemo(() => visibleChats(store.chats(), query(), view(), filter(), store.lists()));
+  const archivedCount = createMemo(() => store.chats().filter((c) => inView(c, 'archived')).length);
+  const channelCount = createMemo(() => store.chats().filter((c) => isChannel(c.id)).length);
+  // plus rien dans la vue : retour à la liste principale
+  const back = (): void => {
+    if ((view.peek() === 'archived' && archivedCount.peek() === 0) || (view.peek() === 'channels' && channelCount.peek() === 0)) setView('main');
+  };
+  onCleanup(archivedCount.subscribe(back));
+  onCleanup(channelCount.subscribe(back));
   return (
-    <Adw.NavigationPage title={archived((a) => (a ? 'Archivées' : 'Discussions'))} tag="chats">
+    <Adw.NavigationPage title={view((v) => (v === 'archived' ? 'Archivées' : v === 'channels' ? 'Chaînes' : 'Discussions'))} tag="chats">
       <Adw.ToolbarView>
         <Adw.HeaderBar $type="top">
           <Gtk.Button $type="start" iconName="go-previous-symbolic" tooltipText="Retour aux discussions" visible={archived} onClicked={() => setArchived(false)} />
@@ -167,7 +180,7 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
           }}
         />
         <Gtk.Stack visibleChildName={shown((l) => (l.length === 0 ? 'empty' : 'list'))}>
-          <Adw.StatusPage $type="named" name="empty" iconName="chat-message-new-symbolic" title={createMemo(() => (query() === '' ? (archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))} cssClasses={['compact']} />
+          <Adw.StatusPage $type="named" name="empty" iconName="chat-message-new-symbolic" title={createMemo(() => (query() === '' ? (view() === 'channels' ? 'Aucune chaîne' : archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))} cssClasses={['compact']} />
           <Gtk.ScrolledWindow $type="named" name="list" hscrollbarPolicy={Gtk.PolicyType.NEVER} vexpand>
             <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
             <Gtk.Button
@@ -182,6 +195,27 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
                 <Gtk.Image iconName="folder-symbolic" />
                 <Gtk.Label label="Archivées" xalign={0} hexpand cssClasses={['heading']} />
                 <Gtk.Label label={archivedCount(String)} cssClasses={['dim-label', 'caption']} />
+              </Gtk.Box>
+            </Gtk.Button>
+            {/* chaînes suivies : à part, comme l'onglet « Actus » du téléphone */}
+            <Gtk.Button
+              visible={createMemo(() => !archived() && query().trim() === '' && channelCount() > 0)}
+              cssClasses={['flat', 'archived-entry']}
+              marginStart={6}
+              marginEnd={6}
+              tooltipText="Chaînes suivies"
+              onClicked={() => setView('channels')}
+            >
+              <Gtk.Box spacing={12} marginStart={14} marginEnd={4}>
+                <Gtk.Image iconName="microphone-sensitivity-high-symbolic" />
+                <Gtk.Label label="Chaînes" xalign={0} hexpand cssClasses={['heading']} />
+                <Gtk.Label
+                  label={createMemo(() => {
+                    const unread = store.chats().filter((c) => isChannel(c.id) && c.unread > 0).length;
+                    return unread > 0 ? `${unread} non lue${unread > 1 ? 's' : ''}` : String(channelCount());
+                  })}
+                  cssClasses={['dim-label', 'caption']}
+                />
               </Gtk.Box>
             </Gtk.Button>
             <Gtk.ListBox

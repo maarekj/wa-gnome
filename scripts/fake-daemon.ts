@@ -215,6 +215,11 @@ const NEWS = '120363000000000002@g.us';
 store.upsertContact(SHOP, { name: 'Boulangerie' });
 add(SHOP, false, 'Votre commande est prête', 20 * 24 * H);
 store.upsertChat({ id: SHOP, archived: true });
+// chaîne suivie (onglet « Actus » du téléphone) : à part, lecture seule
+const CHANNEL = '120363000000000009@newsletter';
+store.upsertChat({ id: CHANNEL, name: 'Actualités du quartier' });
+add(CHANNEL, false, '*Travaux* rue des Lilas jusqu’à vendredi', 5 * H);
+store.upsertChat({ id: CHANNEL, unread: 1 });
 store.upsertChat({ id: NEWS, name: 'Voisins', mutedUntil: -1 });
 add(NEWS, false, 'Ramassage des encombrants jeudi', 5 * H, BOB, 'Bob');
 add(NEWS, false, 'Merci pour l’info', 4 * H, ALICE, 'Alice');

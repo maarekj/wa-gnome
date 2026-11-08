@@ -38,6 +38,7 @@ if (store.needsMediaBackfill) wa.backfillMedia();
 wa.backfillQuoted();
 wa.backfillReactions();
 wa.backfillReceipts();
+wa.moveBroadcasts();
 server = await startServer({
   host: process.env['WA_GNOME_HOST'] ?? '127.0.0.1',
   port: Number(process.env['WA_GNOME_PORT'] ?? DEFAULT_PORT),

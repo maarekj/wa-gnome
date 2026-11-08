@@ -151,6 +151,9 @@ export function forwardScoreIn(value: unknown, depth = 0): number {
   return 0;
 }
 
+/** Statuts (« stories ») : hors périmètre, jamais une discussion. */
+const STATUS = 'status@broadcast';
+
 const MessageRow = z.object({
   id: z.string(),
   chat_id: z.string(),
@@ -197,7 +200,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 10;
+const VERSION = 11;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -249,6 +252,11 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 11) {
+      // statuts : plus de discussion ; diffusions reçues : déplacées au démarrage (identifiants lid connus)
+      this.#db.prepare('DELETE FROM chats WHERE id = ?').run(STATUS);
+      this.setFlag('move-broadcasts', true);
     }
     if (!fresh && version < 10) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
@@ -432,6 +440,8 @@ export class Store {
 
   /** Discussion créée ou mise à jour ; les champs absents (null, undefined) sont conservés. */
   upsertChat(c: ChatPatch): void {
+    // statuts et listes de diffusion d'autres personnes : pas des discussions
+    if (c.id.endsWith('@broadcast')) return;
     this.#db
       .prepare(
         `INSERT INTO chats (id, name, unread, timestamp, archived, muted_until, pinned, marked_unread)
@@ -664,11 +674,34 @@ export class Store {
   chats(): Chat[] {
     // discussions sans message ni date (contacts du carnet synchronisés) : masquées
     // statuts (« stories ») : hors périmètre
-    return this.#chats("WHERE c.timestamp > 0 AND c.id <> 'status@broadcast'", []);
+    return this.#chats('WHERE c.timestamp > 0 AND c.id <> ?', [STATUS]);
   }
 
   chat(id: string): Chat | null {
+    if (id === STATUS) return null;
     return this.#chats('WHERE c.id = ?', [id])[0] ?? null;
+  }
+
+  /** Messages reçus par liste de diffusion encore rangés sous la liste (base antérieure). */
+  broadcastMessages(): { chatId: string; id: string; raw: string; timestamp: number }[] {
+    return this.#db
+      .prepare(`SELECT chat_id, id, raw, timestamp FROM messages WHERE chat_id LIKE '%@broadcast' AND chat_id <> ? AND from_me = 0`)
+      .all(STATUS)
+      .map((r) => ({ chatId: String(r['chat_id']), id: String(r['id']), raw: String(r['raw']), timestamp: Number(r['timestamp']) }));
+  }
+
+  /** Message déplacé dans une autre discussion (avec ses réactions et accusés), créée au besoin. */
+  moveMessage(from: string, id: string, to: string, timestamp: number): void {
+    const db = this.#db;
+    db.prepare('UPDATE OR REPLACE messages SET chat_id = ?, sender = NULL WHERE chat_id = ? AND id = ?').run(to, from, id);
+    db.prepare('UPDATE OR REPLACE reactions SET chat_id = ? WHERE chat_id = ? AND message_id = ?').run(to, from, id);
+    db.prepare('UPDATE OR REPLACE receipts SET chat_id = ? WHERE chat_id = ? AND message_id = ?').run(to, from, id);
+    this.upsertChat({ id: to, timestamp });
+  }
+
+  /** Listes de diffusion reçues devenues vides : retirées. */
+  dropEmptyBroadcasts(): void {
+    this.#db.prepare(`DELETE FROM chats WHERE id LIKE '%@broadcast' AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = chats.id)`).run();
   }
 
   /** Derniers messages d'une discussion avant `before` (secondes), ordre chronologique. */

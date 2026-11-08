@@ -91,6 +91,9 @@ export function quotedOf(content: proto.IMessage): RawQuoted | null {
   }
 }
 
+/** Message reçu par une liste de diffusion (pas un statut, pas une de mes listes). */
+export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean => !fromMe && remoteJid.endsWith('@broadcast') && remoteJid !== 'status@broadcast';
+
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
 export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded'> & { quoted: RawQuoted | null; deleted?: boolean; forwarded?: number };
@@ -204,9 +207,11 @@ export function toMessage(wa: WAMessage): Converted | null {
   const { kind, text } = extract === undefined ? { kind: 'other' as const, text: '' } : extract(content);
   const fromMe = wa.key.fromMe === true;
   const participant = wa.key.participant ?? wa.participant ?? null;
+  // liste de diffusion reçue : dans la discussion avec l'expéditeur (comme sur le téléphone)
+  const broadcast = isReceivedBroadcast(remoteJid, fromMe) && participant !== null;
   return {
     id,
-    chatId: jidNormalizedUser(remoteJid),
+    chatId: jidNormalizedUser(broadcast ? participant : remoteJid),
     fromMe,
     sender: isJidGroup(remoteJid) === true && participant !== null ? jidNormalizedUser(participant) : null,
     senderName: fromMe ? null : (wa.pushName ?? null),

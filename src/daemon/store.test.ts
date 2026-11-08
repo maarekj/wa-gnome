@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import type { Converted } from './convert.ts';
 import { proto } from 'baileys';
-import { forwardedOf, quotedOf } from './convert.ts';
+import { forwardedOf, quotedOf, toMessage } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
 import { forwardScoreIn, Store } from './store.ts';
 
@@ -257,5 +257,28 @@ void describe('supprimé pour moi', () => {
     assert.equal(store.deleteForMe(PN, 'y'), false);
     store.upsertMessage(msg(PN, 'y', 11), '{}');
     assert.equal(store.message(PN, 'y'), null);
+  });
+});
+
+void describe('statuts et diffusions', () => {
+  void it('statuts : jamais une discussion', () => {
+    const store = new Store(':memory:');
+    store.upsertChat({ id: 'status@broadcast', timestamp: 10 });
+    assert.equal(store.chat('status@broadcast'), null);
+    assert.equal(store.chats().length, 0);
+  });
+  void it('diffusion reçue déplacée chez l’expéditeur', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage({ ...msg('123@broadcast', 'b', 10), sender: PN }, '{}');
+    store.moveMessage('123@broadcast', 'b', PN, 10);
+    store.dropEmptyBroadcasts();
+    assert.equal(store.message(PN, 'b')?.sender, null);
+    assert.equal(store.message('123@broadcast', 'b'), null);
+    assert.deepEqual(store.chats().map((c) => c.id), [PN]);
+  });
+  void it('conversion : diffusion reçue rangée chez l’expéditeur', () => {
+    const wa = { key: { remoteJid: '123@broadcast', id: 'x', fromMe: false, participant: PN }, message: { conversation: 'bonjour' }, messageTimestamp: 10 };
+    assert.equal(toMessage(wa)?.chatId, PN);
+    assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
   });
 });

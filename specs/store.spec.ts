@@ -116,9 +116,9 @@ describe('archivées, silencieux, menu', () => {
   const all = [chat('a', 1, 'Alice'), chat('b', 2, 'Boulangerie', { archived: true })];
 
   it('archivées à part, mais trouvées par la recherche', () => {
-    expect(visibleChats(all, '', false).map((c) => c.id)).toEqual(['a']);
-    expect(visibleChats(all, '', true).map((c) => c.id)).toEqual(['b']);
-    expect(visibleChats(all, 'boul', false).map((c) => c.id)).toEqual(['b']);
+    expect(visibleChats(all, '', 'main').map((c) => c.id)).toEqual(['a']);
+    expect(visibleChats(all, '', 'archived').map((c) => c.id)).toEqual(['b']);
+    expect(visibleChats(all, 'boul', 'main').map((c) => c.id)).toEqual(['b']);
   });
 
   it('filtres par liste (vue principale seulement)', () => {
@@ -129,7 +129,7 @@ describe('archivées, silencieux, menu', () => {
       { id: '4', name: 'École', color: 0, kind: 'custom' },
     ] as const;
     const chats = [chat('a', 1, 'A', { unread: 2 }), chat('b', 2, 'B', { favorite: true, labels: ['4'] }), chat('g', 3, 'G', { group: true, markedUnread: true }), chat('z', 4, 'Z', { archived: true, favorite: true })];
-    const ids = (filter: string): string[] => visibleChats(chats, '', false, filter, lists).map((c) => c.id);
+    const ids = (filter: string): string[] => visibleChats(chats, '', 'main', filter, lists).map((c) => c.id);
     expect(ids('all')).toEqual(['a', 'b', 'g']);
     expect(ids('1')).toEqual(['a', 'g']);
     expect(ids('2')).toEqual(['b']);
@@ -304,5 +304,15 @@ describe('préférences', () => {
     expect(accentCss('system')).toBe('');
     expect(accentCss('whatsapp')).toBe(':root { --accent-bg-color: #00a884; }');
     expect(accentCss('purple')).toMatch(/^:root \{ --accent-bg-color: rgb\(/u);
+  });
+});
+
+describe('chaînes', () => {
+  it('à part de la liste principale, archivées comprises', () => {
+    const all = [chat('a@s.whatsapp.net', 3), chat('1@newsletter', 2, 'Hadashot'), chat('2@newsletter', 1, 'Cuisine', { archived: true })];
+    expect(visibleChats(all, '', 'main').map((c) => c.id)).toEqual(['a@s.whatsapp.net']);
+    expect(visibleChats(all, '', 'channels').map((c) => c.id)).toEqual(['1@newsletter', '2@newsletter']);
+    expect(visibleChats(all, '', 'archived').map((c) => c.id)).toEqual([]);
+    expect(visibleChats(all, 'hada', 'main').map((c) => c.id)).toEqual(['1@newsletter']);
   });
 });

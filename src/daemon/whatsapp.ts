@@ -417,6 +417,25 @@ export class WhatsApp {
     this.#store.setReceipt({ chatId: this.#jid(key.remoteJid), messageId: key.id, user: this.#jid(r.userJid), delivered: seconds(r.receiptTimestamp), read: seconds(r.readTimestamp), played: seconds(r.playedTimestamp) });
   }
 
+  /** Messages reçus par liste de diffusion (base antérieure) : rangés chez leur expéditeur. */
+  moveBroadcasts(): void {
+    if (!this.#store.flag('move-broadcasts')) return;
+    const rows = this.#store.broadcastMessages();
+    let moved = 0;
+    this.#store.transaction(() => {
+      for (const row of rows) {
+        const wa = this.#parseRaw(row.raw);
+        const who = wa?.key.participant ?? wa?.participant;
+        if (who === null || who === undefined || who === '') continue;
+        this.#store.moveMessage(row.chatId, row.id, this.#jid(who), row.timestamp);
+        moved += 1;
+      }
+      this.#store.dropEmptyBroadcasts();
+    });
+    this.#store.setFlag('move-broadcasts', false);
+    logger.info(`diffusions : ${moved} message(s) rangé(s) chez leur expéditeur`);
+  }
+
   /** Accusés des messages envoyés déjà enregistrés (base antérieure). */
   backfillReceipts(): void {
     if (!this.#store.flag('backfill-receipts')) return;

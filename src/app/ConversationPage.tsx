@@ -12,7 +12,7 @@ import { errorMessage } from '../shared/errors.ts';
 import { dayKey, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
-import { avatarText } from './ChatList.tsx';
+import { avatarText, isChannel } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { ReactionsRow } from './Reactions.ts';
@@ -925,7 +925,9 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               </Adw.Clamp>
             </Gtk.ScrolledWindow>
             <Adw.Clamp maximumSize={860} tighteningThreshold={600}>
-              <Gtk.Stack visibleChildName={selection((s) => (s.size === 0 ? 'compose' : 'select'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
+              <Gtk.Stack visibleChildName={createMemo(() => (selection().size > 0 ? 'select' : isChannel(store.current() ?? '') ? 'channel' : 'compose'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
+                {/* chaîne : lecture seule */}
+                <Gtk.Label $type="named" name="channel" label="Chaîne : seuls ses administrateurs peuvent publier" marginTop={14} marginBottom={14} cssClasses={['dim-label', 'caption']} />
                 <Gtk.Box $type="named" name="select" spacing={6} marginStart={12} marginEnd={12} marginTop={8} marginBottom={8} cssClasses={['selection-bar']}>
                   <Gtk.Button iconName="window-close-symbolic" tooltipText="Annuler la sélection (Échap)" cssClasses={['circular', 'flat']} onClicked={clearSelection} />
                   <Gtk.Label hexpand xalign={0} label={selection((s) => (s.size === 1 ? '1 message sélectionné' : `${s.size} messages sélectionnés`))} cssClasses={['heading']} />
