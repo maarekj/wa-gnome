@@ -136,3 +136,13 @@ def test_selection_en_glissant(run_app):
     assert app.text_visible('3 messages sélectionnés')
     app.key('Escape')
     app.text_gone('messages sélectionnés', 5)
+
+
+def test_fond_couleur_unie_enregistre(run_app):
+    import json
+
+    fake, app = run_app()
+    app.key('ctrl+comma')
+    app.click('toggle button', 'Menthe')
+    path = fake.dir / 'data' / 'settings.json'
+    wait_until(lambda: path.exists() and json.loads(path.read_text()).get('wallpaper') == 'color:menthe', 5, 'fond enregistré')

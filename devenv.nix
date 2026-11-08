@@ -22,12 +22,14 @@ let
         --replace-fail "new Gio.UnixOutputStream(" "new GioUnix.OutputStream("
     '';
   };
-  # Chargeurs d'images de GTK : ceux de gdk-pixbuf + WebP (autocollants WhatsApp), réunis dans un
+  # Chargeurs d'images de GTK : ceux de gdk-pixbuf + WebP (autocollants WhatsApp) + SVG (motif du
+  # fond des conversations), réunis dans un
   # seul cache (GDK_PIXBUF_MODULE_FILE ; repris par le lanceur installé).
   pixbuf-loaders = pkgs.runCommand "wa-gnome-pixbuf-loaders" { } ''
     mkdir -p $out
     cat ${pkgs.gdk-pixbuf}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache \
-      ${pkgs.webp-pixbuf-loader}/lib/gdk-pixbuf-2.0/2.10.0/webp-loaders.cache > $out/loaders.cache
+      ${pkgs.webp-pixbuf-loader}/lib/gdk-pixbuf-2.0/2.10.0/webp-loaders.cache \
+      ${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache > $out/loaders.cache
   '';
 in
 {

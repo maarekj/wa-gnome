@@ -18,6 +18,7 @@ import { phoneDigits } from '../src/shared/api.ts';
 import { snippetMarkup } from '../src/shared/format.ts';
 import { byMonth } from '../src/app/Gallery.ts';
 import { rangeSelection, rowAt } from '../src/app/DragSelect.ts';
+import { patternSvg, wallpaperCss } from '../src/app/Wallpaper.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -305,7 +306,9 @@ describe('préférences', () => {
     expect(parseSettings('{"accent":"fuchsia"}').accent).toBe('system');
     expect(parseSettings('pas du json').accent).toBe('system');
     expect(parseSettings(null).notify).toBeTrue();
-    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false });
+    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false, wallpaper: 'pattern' });
+    expect(parseSettings('{"wallpaper":"color:menthe"}').wallpaper).toBe('color:menthe');
+    expect(parseSettings('{"wallpaper":"color:fuchsia"}').wallpaper).toBe('pattern');
   });
   it('CSS de l’accent', () => {
     expect(accentCss('system')).toBe('');
@@ -381,5 +384,16 @@ describe('sélection en glissant', () => {
     expect(rowAt(list, 42)).toBe(0);
     expect(rowAt(list, 100)).toBe(2);
     expect(rowAt(list, -5)).toBe(-1);
+  });
+});
+
+describe('fond des conversations', () => {
+  it('motif SVG reproductible ; feuille de style selon le choix', () => {
+    expect(patternSvg('#000')).toBe(patternSvg('#000'));
+    expect(patternSvg('#000')).toContain('<svg');
+    expect(wallpaperCss('none', null, null)).toBe('');
+    expect(wallpaperCss('color:menthe', null, null)).toContain('#dcefe4');
+    expect(wallpaperCss('pattern', null, '/tmp/a.svg')).toContain('file:///tmp/a.svg');
+    expect(wallpaperCss('color:menthe', null, null, true)).toContain('#1f2b25');
   });
 });

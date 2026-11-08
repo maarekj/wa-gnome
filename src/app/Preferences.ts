@@ -1,11 +1,13 @@
 // Préférences de l'application (fichier `settings.json` du dossier de données) et leur fenêtre.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import * as z from 'zod/mini';
 import { dataDir } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
+import { applyWallpaper, isWallpaper, WALLPAPER_COLORS, WALLPAPER_DEFAULT, type Wallpaper } from './Wallpaper.ts';
 
 /** Couleur d'accent : celle du système, le vert de WhatsApp, ou une couleur d'accent de GNOME. */
 export const ACCENTS = [
@@ -24,15 +26,17 @@ export const ACCENTS = [
 export type AccentId = (typeof ACCENTS)[number]['id'];
 
 /** Fichier tel qu'écrit (champs inconnus ou invalides : valeurs par défaut). */
-const SettingsFile = z.object({ accent: z.optional(z.string()), notify: z.optional(z.boolean()), preview: z.optional(z.boolean()) });
+const SettingsFile = z.object({ accent: z.optional(z.string()), notify: z.optional(z.boolean()), preview: z.optional(z.boolean()), wallpaper: z.optional(z.string()) });
 export interface Settings {
   readonly accent: AccentId;
   /** notifications des messages reçus */
   readonly notify: boolean;
   /** auteur et texte dans la notification (sinon « Nouveau message ») */
   readonly preview: boolean;
+  /** fond des conversations (Wallpaper.ts) */
+  readonly wallpaper: Wallpaper;
 }
-const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true };
+const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT };
 const asAccent = (id: string | undefined): AccentId => ACCENTS.find((a) => a.id === id)?.id ?? 'system';
 
 /** Réglages lus (valeurs par défaut si absents ou invalides). */
@@ -40,7 +44,7 @@ export function parseSettings(text: string | null): Settings {
   if (text === null) return DEFAULTS;
   try {
     const raw = SettingsFile.safeParse(JSON.parse(text)).data;
-    return raw === undefined ? DEFAULTS : { accent: asAccent(raw.accent), notify: raw.notify ?? DEFAULTS.notify, preview: raw.preview ?? DEFAULTS.preview };
+    return raw === undefined ? DEFAULTS : { accent: asAccent(raw.accent), notify: raw.notify ?? DEFAULTS.notify, preview: raw.preview ?? DEFAULTS.preview, wallpaper: isWallpaper(raw.wallpaper) ? raw.wallpaper : DEFAULTS.wallpaper };
   } catch {
     return DEFAULTS;
   }
@@ -121,6 +125,101 @@ function switchRow(title: string, subtitle: string, active: boolean, changed: (o
 export function initSettings(): void {
   current = loadSettings();
   applyAccent(current.accent);
+  const image = wallpaperImage();
+  applyWallpaper(current.wallpaper === 'image' && image === null ? WALLPAPER_DEFAULT : current.wallpaper, image);
+}
+
+Gio._promisify(Gtk.FileDialog.prototype, 'open', 'open_finish');
+Gio._promisify(Gio.File.prototype, 'load_bytes_async', 'load_bytes_finish');
+
+/**
+ * Image de fond choisie par l'utilisateur (copiée dans le dossier de données sous un nom nouveau à
+ * chaque choix : la feuille de style recharge bien l'image), la plus récente si elle existe.
+ */
+function wallpaperImage(): string | null {
+  const dir = Gio.File.new_for_path(dataDir());
+  try {
+    const names: string[] = [];
+    const list = dir.enumerate_children('standard::name', Gio.FileQueryInfoFlags.NONE, null);
+    for (let info = list.next_file(null); info !== null; info = list.next_file(null)) if (info.get_name().startsWith('fond-')) names.push(info.get_name());
+    const last = names.toSorted().at(-1);
+    return last === undefined ? null : GLib.build_filenamev([dataDir(), last]);
+  } catch {
+    return null;
+  }
+}
+
+/** Fond choisi : appliqué et enregistré (image absente : motif par défaut). */
+function chooseWallpaper(w: Wallpaper): void {
+  update({ wallpaper: w });
+  const image = wallpaperImage();
+  applyWallpaper(w === 'image' && image === null ? WALLPAPER_DEFAULT : w, image);
+}
+
+/** Image choisie par l'utilisateur, vérifiée, copiée puis appliquée comme fond ; false si annulé ou illisible. */
+async function pickWallpaper(parent: Gtk.Widget, toast: (t: string) => void): Promise<boolean> {
+  const filter = new Gtk.FileFilter({ name: 'Images' });
+  filter.add_mime_type('image/*');
+  const filters = new Gio.ListStore({ itemType: Gtk.FileFilter.$gtype });
+  filters.append(filter);
+  const root = parent.get_root();
+  try {
+    const picked = await new Gtk.FileDialog({ title: 'Image de fond', filters, modal: true }).open(root instanceof Gtk.Window ? root : null, null);
+    if (picked === null) return false;
+    const [bytes] = await picked.load_bytes_async(null);
+    // image illisible : l'ancienne est gardée
+    Gdk.Texture.new_from_bytes(bytes);
+    const previous = wallpaperImage();
+    GLib.mkdir_with_parents(dataDir(), 0o700);
+    GLib.file_set_contents(GLib.build_filenamev([dataDir(), `fond-${Date.now()}`]), bytes.toArray());
+    if (previous !== null) GLib.unlink(previous);
+    chooseWallpaper('image');
+    return true;
+  } catch (error) {
+    if (error instanceof GLib.Error && error.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED)) return false;
+    toast(`Image inutilisable : ${errorMessage(error)}`);
+    return false;
+  }
+}
+
+/** Pastille de fond cochée : fond choisi. */
+const choose = (w: Wallpaper) => (b: Gtk.ToggleButton): void => {
+  if (b.active) chooseWallpaper(w);
+};
+
+/** Choix du fond : motif, aucun, couleurs unies, image (chaque clic sur « image » en choisit une). */
+function wallpaperChooser(toast: (t: string) => void): Gtk.Widget {
+  const box = new Gtk.FlowBox({ selectionMode: Gtk.SelectionMode.NONE, maxChildrenPerLine: 10, minChildrenPerLine: 4, columnSpacing: 6, rowSpacing: 6, marginTop: 10, marginBottom: 10, marginStart: 12, marginEnd: 12, homogeneous: true });
+  const buttons = new Map<Wallpaper, Gtk.ToggleButton>();
+  let first: Gtk.ToggleButton | null = null;
+  const option = (w: Wallpaper, tooltip: string, css: string, icon: string | null): Gtk.ToggleButton => {
+    const b = new Gtk.ToggleButton({ tooltipText: tooltip, cssClasses: ['accent-swatch', 'wallpaper-swatch'], widthRequest: 34, heightRequest: 34, valign: Gtk.Align.CENTER, active: current.wallpaper === w });
+    if (first !== null) b.set_group(first);
+    first ??= b;
+    const style = new Gtk.CssProvider();
+    style.load_from_string(`button { ${css} }`);
+    // oxlint-disable-next-line typescript/no-deprecated -- style propre à ce bouton
+    b.get_style_context().add_provider(style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+    b.set_child(new Gtk.Image({ iconName: icon ?? 'object-select-symbolic', cssClasses: icon === null ? ['check'] : [] }));
+    box.append(b);
+    buttons.set(w, b);
+    return b;
+  };
+  option('pattern', 'Motif (par défaut)', 'background: #f2eee8; color: #8a7f72;', 'starred-symbolic').connect('toggled', choose('pattern'));
+  option('none', 'Aucun fond', 'background: var(--view-bg-color);', 'action-unavailable-symbolic').connect('toggled', choose('none'));
+  for (const c of WALLPAPER_COLORS) option(`color:${c.id}`, c.name, `background: ${c.light};`, null).connect('toggled', choose(`color:${c.id}`));
+  const image = option('image', 'Choisir une image…', 'background: var(--view-bg-color);', 'image-x-generic-symbolic');
+  // « clicked » : aussi quand l'image est déjà le fond (choisir une autre image)
+  image.connect('clicked', () => {
+    const before = current.wallpaper;
+    image.active = true;
+    void (async (): Promise<void> => {
+      if (await pickWallpaper(image, toast)) return;
+      // annulé : retour au fond précédent
+      buttons.get(before)?.set_active(true);
+    })();
+  });
+  return box;
 }
 
 /** Pastille de couleur (bouton à cocher rond). */
@@ -139,7 +238,7 @@ function swatch(a: (typeof ACCENTS)[number], group: Gtk.ToggleButton | null): Gt
 }
 
 /** Fenêtre des préférences. */
-export function openPreferences(parent: Gtk.Widget): void {
+export function openPreferences(parent: Gtk.Widget, toast: (t: string) => void = (t) => console.error(t)): void {
   const page = new Adw.PreferencesPage({ title: 'Général', iconName: 'preferences-system-symbolic' });
   const appearance = new Adw.PreferencesGroup({ title: 'Apparence', description: 'Couleur d’accent de l’application (boutons, sélection, liens)' });
   const row = new Adw.ActionRow({ title: 'Couleur d’accent' });
@@ -161,6 +260,8 @@ export function openPreferences(parent: Gtk.Widget): void {
   row.add_suffix(label);
   appearance.add(row);
   appearance.add(new Adw.PreferencesRow({ child: box, activatable: false }));
+  appearance.add(new Adw.ActionRow({ title: 'Fond des conversations', subtitle: 'Motif, couleur unie ou image' }));
+  appearance.add(new Adw.PreferencesRow({ child: wallpaperChooser(toast), activatable: false }));
   page.add(appearance);
   const notifications = new Adw.PreferencesGroup({ title: 'Notifications', description: 'Le son et l’affichage sur l’écran verrouillé se règlent dans Paramètres › Notifications' });
   const preview = switchRow('Afficher le contenu', 'Auteur et texte du message dans la notification', current.preview, (on) => update({ preview: on }));

@@ -144,7 +144,7 @@ app.set_accels_for_action('app.new-chat', ['<Control>n']);
 /** app.preferences : fenêtre des préférences (Ctrl+,) */
 const preferences = new Gio.SimpleAction({ name: 'preferences' });
 preferences.connect('activate', () => {
-  if (mainWindow !== null) openPreferences(mainWindow);
+  if (mainWindow !== null) openPreferences(mainWindow, (t) => api?.toast(t));
 });
 app.add_action(preferences);
 app.set_accels_for_action('app.preferences', ['<Control>comma']);

@@ -855,7 +855,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
           <Gtk.Box
             hexpand
             orientation={Gtk.Orientation.VERTICAL}
-            cssClasses={['chat-drop']}
+            cssClasses={['chat-drop', 'wallpaper']}
             $={(self: Gtk.Box) => {
               // fichiers déposés n'importe où dans la conversation : pièces jointes
               attachDrop(self, (files) => dropFiles?.(files));
