@@ -736,7 +736,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     const id = store.current();
     // nom et type suivis : la liste des discussions est mise à jour en direct
     const c = id === null ? undefined : store.chats().find((x) => x.id === id);
-    return id === null ? null : { id, name: c?.name ?? id.split('@')[0] ?? id, group: c?.group ?? id.endsWith('@g.us') };
+    return id === null ? null : { id, name: c?.name ?? store.nameHint(id) ?? id.split('@')[0] ?? id, group: c?.group ?? id.endsWith('@g.us') };
   });
   const items = createMemo(() => itemsOf(store.messages(), chat()?.group ?? false));
   const loader = new MediaLoader(store.client);

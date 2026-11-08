@@ -22,7 +22,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
+import { ChatAction, type Event, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -47,6 +47,8 @@ export interface Backend {
   messageAction: (chatId: string, messageId: string, action: MessageAction) => Promise<void>;
   subscribe: (chatId: string) => Promise<Presence>;
   setOnline: (online: boolean) => Promise<void>;
+  /** JID WhatsApp d'un numéro (chiffres), null s'il n'a pas de compte */
+  lookup: (digits: string) => Promise<string | null>;
   typing: (chatId: string, state: 'composing' | 'recording' | 'paused') => Promise<void>;
 }
 
@@ -136,6 +138,15 @@ export function startServer(opts: { host: string; port: number; token: string; s
       case 'GET /chats':
         json(res, 200, opts.store.chats());
         return;
+      case 'GET /contacts':
+        json(res, 200, opts.store.contacts());
+        return;
+      case 'GET /lookup': {
+        const digits = phoneDigits(url.searchParams.get('phone') ?? '');
+        if (digits === null) throw new HttpError(400, 'numéro invalide');
+        json(res, 200, { id: await opts.wa().lookup(digits) });
+        return;
+      }
       case 'GET /chats/:id/messages': {
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 500);
         const before = url.searchParams.get('before');

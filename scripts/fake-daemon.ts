@@ -213,6 +213,9 @@ add(GROUP, false, 'Le chat du voisin', 20 * 60, BOB, 'Bob', { kind: 'video', med
 const SHOP = '33600000004@s.whatsapp.net';
 const NEWS = '120363000000000002@g.us';
 store.upsertContact(SHOP, { name: 'Boulangerie' });
+// contacts du carnet sans discussion (nouvelle discussion)
+store.upsertContact('33600000020@s.whatsapp.net', { name: 'Élodie Bernard' });
+store.upsertContact('33600000021@s.whatsapp.net', { name: 'Marc Dubois' });
 add(SHOP, false, 'Votre commande est prête', 20 * 24 * H);
 store.upsertChat({ id: SHOP, archived: true });
 // chaîne suivie (onglet « Actus » du téléphone) : à part, lecture seule
@@ -346,6 +349,8 @@ const backend: Backend = {
   // présence : Alice en ligne, Bob vu il y a 2 h ; les autres sans information
   subscribe: (chatId) => Promise.resolve(fakePresence(chatId, false)),
   setOnline: () => Promise.resolve(),
+  // faux annuaire : numéros commençant par 0 sans compte
+  lookup: (digits) => Promise.resolve(digits.startsWith('0') ? null : `${digits}@s.whatsapp.net`),
   typing: () => Promise.resolve(),
   messageAction: (chatId, messageId, a) => {
     if (a.action === 'forward') {

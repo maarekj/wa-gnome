@@ -237,6 +237,25 @@ export const MessageAction = z.discriminatedUnion('action', [
 export type MessageAction = z.infer<typeof MessageAction>;
 export type Message = z.infer<typeof Message>;
 
+/** Contact du carnet (nouvelle discussion). */
+export const Contact = z.object({
+  /** JID (`…@s.whatsapp.net`) */
+  id: z.string(),
+  name: z.string(),
+});
+export type Contact = z.infer<typeof Contact>;
+
+/** Numéro vérifié sur WhatsApp (`GET /lookup?phone=`) : JID, ou null s'il n'a pas de compte. */
+export const Lookup = z.object({ id: z.nullable(z.string()) });
+
+/** Chiffres d'un numéro saisi (`+33 6 12-34`), ou null s'il n'en a pas assez pour en être un. */
+export function phoneDigits(text: string): string | null {
+  const t = text.trim();
+  if (!/^\+?[\d\s().-]+$/u.test(t)) return null;
+  const digits = t.replaceAll(/\D/gu, '');
+  return digits.length >= 8 && digits.length <= 15 ? digits : null;
+}
+
 export const SendBody = z.object({
   text: z.string().check(z.minLength(1)),
   /** réponse à ce message (identifiant dans la même discussion) */

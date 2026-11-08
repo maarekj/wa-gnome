@@ -37,6 +37,8 @@ function asPage(o: JSX.Element): Adw.NavigationPage {
 
 export interface WindowApi {
   toast: (text: string) => void;
+  /** photos de profil (fenêtres ouvertes depuis l'application) */
+  pictures: Pictures;
 }
 
 export function MainWindow({ app, store, ready }: { app: Adw.Application; store: Store; ready: (api: WindowApi) => void }): JSX.Element {
@@ -46,7 +48,7 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
   const pictures = new Pictures(store.client);
   store.onPicture = (id) => pictures.invalidate(id);
   const toast = (text: string): void => overlay?.add_toast(new Adw.Toast({ title: text, timeout: 5 }));
-  ready({ toast });
+  ready({ toast, pictures });
 
   return (
     <Adw.ApplicationWindow

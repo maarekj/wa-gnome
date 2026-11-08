@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatList, DEFAULT_PORT, Event, Message, type MessageAction, MessageInfo, Presence, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
+import { Chat, type ChatAction, ChatList, Contact, Lookup, DEFAULT_PORT, Event, Message, type MessageAction, MessageInfo, Presence, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -144,6 +144,16 @@ export class WaClient {
   }
 
   /** Suit la présence d'une discussion ; présence connue. */
+  /** Contacts du carnet (nouvelle discussion). */
+  contacts(): Promise<Contact[]> {
+    return this.request('GET', '/contacts', z.array(Contact));
+  }
+
+  /** JID d'un numéro s'il a un compte WhatsApp, sinon null. */
+  async lookup(phone: string): Promise<string | null> {
+    return (await this.request('GET', `/lookup?phone=${encodeURIComponent(phone)}`, Lookup)).id;
+  }
+
   subscribePresence(chatId: string): Promise<Presence> {
     return this.request('POST', `/chats/${encodeURIComponent(chatId)}/subscribe`, Presence);
   }

@@ -677,6 +677,14 @@ export class Store {
     return this.#chats('WHERE c.timestamp > 0 AND c.id <> ?', [STATUS]);
   }
 
+  /** Contacts du carnet ayant un numéro WhatsApp, par nom. */
+  contacts(): { id: string; name: string }[] {
+    return this.#db
+      .prepare(`SELECT id, name FROM contacts WHERE name IS NOT NULL AND name <> '' AND id LIKE '%@s.whatsapp.net' ORDER BY name COLLATE NOCASE`)
+      .all()
+      .map((r) => ({ id: String(r['id']), name: String(r['name']) }));
+  }
+
   chat(id: string): Chat | null {
     if (id === STATUS) return null;
     return this.#chats('WHERE c.id = ?', [id])[0] ?? null;

@@ -13,6 +13,8 @@ import { splitReceipts, stepText } from '../src/app/MessageInfo.ts';
 import { displaySize } from '../src/app/media.ts';
 import { canRevokeAll, copyText } from '../src/app/Selection.ts';
 import { accentCss, parseSettings } from '../src/app/Preferences.ts';
+import { matchContacts } from '../src/app/NewChat.ts';
+import { phoneDigits } from '../src/shared/api.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -314,5 +316,20 @@ describe('chaînes', () => {
     expect(visibleChats(all, '', 'channels').map((c) => c.id)).toEqual(['1@newsletter', '2@newsletter']);
     expect(visibleChats(all, '', 'archived').map((c) => c.id)).toEqual([]);
     expect(visibleChats(all, 'hada', 'main').map((c) => c.id)).toEqual(['1@newsletter']);
+  });
+});
+
+describe('nouvelle discussion', () => {
+  it('numéro saisi', () => {
+    expect(phoneDigits('+33 6 12 34 56 78')).toBe('33612345678');
+    expect(phoneDigits('(972) 54-655-8985')).toBe('972546558985');
+    expect(phoneDigits('1234')).toBeNull();
+    expect(phoneDigits('Alice')).toBeNull();
+  });
+  it('contacts par nom (sans accents) ou numéro', () => {
+    const contacts = [{ id: '33611111111@s.whatsapp.net', name: 'Élodie' }, { id: '972522222222@s.whatsapp.net', name: 'Bob' }];
+    expect(matchContacts(contacts, 'elo').map((c) => c.name)).toEqual(['Élodie']);
+    expect(matchContacts(contacts, '5222').map((c) => c.name)).toEqual(['Bob']);
+    expect(matchContacts(contacts, '').length).toBe(2);
   });
 });

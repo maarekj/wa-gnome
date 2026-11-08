@@ -210,6 +210,20 @@ export class Store {
   }
 
   /** Ouvre une discussion (null : aucune) et charge ses derniers messages. */
+  /** noms de discussions ouvertes avant d'exister (nouvelle discussion) */
+  readonly #names = new Map<string, string>();
+
+  /** Nom connu d'une discussion pas encore dans la liste (nouvelle discussion), sinon null. */
+  nameHint(id: string): string | null {
+    return this.#names.get(id) ?? null;
+  }
+
+  /** Ouvre une discussion, même sans message (nouvelle discussion avec un contact ou un numéro). */
+  startChat(id: string, name: string): void {
+    this.#names.set(id, name);
+    this.open(id);
+  }
+
   open(id: string | null): void {
     if (id === this.current.peek()) return;
     this.#setCurrent(id);

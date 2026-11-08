@@ -829,6 +829,12 @@ export class WhatsApp {
     return this.presenceOf(chatId);
   }
 
+  /** JID d'un numéro s'il a un compte WhatsApp (vérifié auprès de WhatsApp). */
+  async lookup(digits: string): Promise<string | null> {
+    const [found] = (await this.#open().onWhatsApp(digits)) ?? [];
+    return found?.exists === true ? this.#jid(found.jid) : null;
+  }
+
   /** Ma présence : en ligne pendant que la fenêtre de l'app a le focus (comme WhatsApp Web). */
   async setOnline(online: boolean): Promise<void> {
     this.#online = online;

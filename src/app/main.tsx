@@ -10,6 +10,7 @@ import { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
+import { openNewChat } from './NewChat.ts';
 import { initSettings, openPreferences } from './Preferences.ts';
 import { STYLESHEET } from './style.ts';
 
@@ -86,6 +87,14 @@ about.connect('activate', () => {
   dialog.present(mainWindow);
 });
 app.add_action(about);
+
+/** app.new-chat : nouvelle discussion (Ctrl+N) */
+const newChat = new Gio.SimpleAction({ name: 'new-chat' });
+newChat.connect('activate', () => {
+  if (mainWindow !== null && api !== null) openNewChat(mainWindow, store, api.pictures, (t) => api?.toast(t));
+});
+app.add_action(newChat);
+app.set_accels_for_action('app.new-chat', ['<Control>n']);
 
 /** app.preferences : fenêtre des préférences (Ctrl+,) */
 const preferences = new Gio.SimpleAction({ name: 'preferences' });

@@ -122,6 +122,13 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
       <Adw.ToolbarView>
         <Adw.HeaderBar $type="top">
           <Gtk.Button $type="start" iconName="go-previous-symbolic" tooltipText="Retour aux discussions" visible={archived} onClicked={() => setArchived(false)} />
+          <Gtk.Button
+            $type="start"
+            iconName="chat-message-new-symbolic"
+            tooltipText="Nouvelle discussion (Ctrl+N)"
+            visible={archived((a) => !a)}
+            actionName="app.new-chat"
+          />
           <Gtk.MenuButton
             $type="end"
             iconName="open-menu-symbolic"
