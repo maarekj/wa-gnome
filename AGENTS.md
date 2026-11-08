@@ -25,6 +25,15 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
 - `pnpm check` : typecheck + lint (oxlint type-aware) + `pnpm test`. Doit passer avant chaque commit.
 - `pnpm test` : specs jasmine-gjs (`specs/*.spec.ts`), puis tests GJS sous Xvfb (`tests/*.ts`) ;
   échec sur tout `Gtk-WARNING`/`Gtk-CRITICAL` ou délai dépassé.
+- `pnpm e2e` : tests de bout en bout (`e2e/test_*.py`, pytest + dogtail, ≈ 40 s) sur le faux démon :
+  l'app est pilotée par l'accessibilité (rôle et nom : texte affiché ou infobulle) sur un écran
+  virtuel, bus D-Bus et bus d'accessibilité privés. Un seul : `pnpm e2e -k envoyer`. Le faux démon
+  y est lancé avec `--control <port>` (`GET /calls` : appels reçus de l'app ; `POST /incoming`
+  {chatId, text} : message reçu ; `POST /pair` : appairage terminé) et `--no-replies`.
+  Scénarios : appairage, ouverture, envoi, réception (liste et discussion ouverte), déconnexion,
+  nouvelle discussion, recherche globale et dans la discussion, « Répondre » d'une notification.
+  À lancer avant de fusionner un changement d'interface ; ajouter le scénario de chaque fonctionnalité.
+  Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
 - `pnpm daemon` : lance le démon au premier plan (`WA_GNOME_LOG=debug` pour les journaux Baileys).
 - `pnpm fake-daemon [--state open|qr|connecting] [--port 4798]` : faux démon (même serveur HTTP, vrai
   Store SQLite) avec des discussions de démonstration et des réponses automatiques. Jeton dans

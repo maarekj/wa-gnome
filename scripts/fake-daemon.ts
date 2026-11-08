@@ -1,9 +1,14 @@
 // Faux démon : même API que src/daemon (vrai serveur HTTP, vrai Store SQLite), sans WhatsApp.
 // Discussions de démonstration, réponses automatiques. Pour les captures et les tests de l'app.
 // Usage : node scripts/fake-daemon.ts [--state open|qr|connecting] [--port 4798] [--dir /tmp/…]
+//   [--control 4799] : pilotage des tests de bout en bout (sans jeton, 127.0.0.1 seulement) :
+//   GET /calls (appels reçus de l'app : méthode et arguments), POST /incoming {chatId, text}
+//   (message reçu), POST /pair (appairage terminé : connecté).
+//   [--no-replies] : pas de réponse automatique ni de « écrit… » après un envoi.
 // Le jeton est écrit dans <dir>/token : lancer l'app avec WA_GNOME_DATA_DIR=<dir> WA_GNOME_URL=….
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -18,6 +23,8 @@ const { values } = parseArgs({
     state: { type: 'string', default: 'open' },
     port: { type: 'string', default: '4798' },
     dir: { type: 'string', default: path.join(os.tmpdir(), 'wa-gnome-fake') },
+    control: { type: 'string' },
+    'no-replies': { type: 'boolean', default: false },
   },
 });
 const dir = values.dir;
@@ -275,6 +282,7 @@ const backend: Backend = {
     progress(chatId, m.id);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
+    if (values['no-replies']) return Promise.resolve();
     // le correspondant écrit, puis répond
     setTimeout(() => emit({ type: 'presence', chatId, presence: fakePresence(chatId, true) }), 2000);
     setTimeout(() => emit({ type: 'presence', chatId, presence: fakePresence(chatId, false) }), 5900);
@@ -408,5 +416,62 @@ const backend: Backend = {
   },
 };
 
-server = await startServer({ host: '127.0.0.1', port: Number(values.port), token, store, wa: () => backend });
+// ---------------------------------------------------------------- pilotage des tests (--control)
+
+/** Appels reçus de l'app (tests de bout en bout) ; contenus binaires remplacés par leur taille. */
+const calls: { method: string; args: unknown[] }[] = [];
+const recorded = new Proxy(backend, {
+  get(target, prop, receiver): unknown {
+    const value: unknown = Reflect.get(target, prop, receiver);
+    if (typeof value !== 'function' || typeof prop !== 'string') return value;
+    return (...args: unknown[]): unknown => {
+      const plain: unknown = JSON.parse(JSON.stringify(args, (_k, v: unknown) => (Buffer.isBuffer(v) ? `<${v.length} octets>` : v)));
+      calls.push({ method: prop, args: Array.isArray(plain) ? plain : [] });
+      return Reflect.apply(value, target, args);
+    };
+  },
+});
+
+/** Corps JSON d'une requête de pilotage. */
+async function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+  let text = '';
+  for await (const part of req) text += String(part);
+  const parsed: unknown = text === '' ? {} : JSON.parse(text);
+  return typeof parsed === 'object' && parsed !== null ? Object.fromEntries(Object.entries(parsed)) : {};
+}
+
+/** Réponse d'une requête de pilotage. */
+async function control(req: http.IncomingMessage): Promise<unknown> {
+  if (req.method === 'GET' && req.url === '/calls') return calls;
+  if (req.method === 'POST' && req.url === '/incoming') {
+    const b = await readJson(req);
+    const chatId = String(b['chatId']);
+    const m = add(chatId, false, String(b['text']), 0);
+    store.incrementUnread(chatId);
+    emit({ type: 'message', message: m });
+    emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
+    return m;
+  }
+  if (req.method === 'POST' && req.url === '/pair') {
+    status = { state: 'open', qr: null, me: { id: ME, name: 'Moi' }, error: null };
+    emit({ type: 'status', status });
+    emit({ type: 'chats', chats: store.chats() });
+    return status;
+  }
+  return undefined;
+}
+
+if (values.control !== undefined) {
+  http
+    .createServer((req, res) => {
+      void (async (): Promise<void> => {
+        const data = await control(req);
+        res.writeHead(data === undefined ? 404 : 200, { 'Content-Type': 'application/json' });
+        res.end(data === undefined ? '' : JSON.stringify(data));
+      })();
+    })
+    .listen(Number(values.control), '127.0.0.1');
+}
+
+server = await startServer({ host: '127.0.0.1', port: Number(values.port), token, store, wa: () => recorded });
 console.log(`faux démon : http://127.0.0.1:${values.port} (WA_GNOME_DATA_DIR=${dir})`);

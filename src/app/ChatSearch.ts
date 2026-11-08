@@ -95,8 +95,13 @@ export function ChatSearch(store: Store, open: Accessor<boolean>, close: () => v
   });
   // autre discussion : recherche relancée sur celle-ci
   onCleanup(store.current.subscribe(run));
-  const revealer = new Gtk.Revealer({ child: panel, transitionType: Gtk.RevealerTransitionType.SLIDE_LEFT, revealChild: open.peek() });
+  // caché hors de l'animation : un révélateur replié garde sinon la largeur du panneau
+  const revealer = new Gtk.Revealer({ child: panel, transitionType: Gtk.RevealerTransitionType.SLIDE_LEFT, revealChild: open.peek(), visible: open.peek() });
+  revealer.connect('notify::child-revealed', () => {
+    if (!revealer.childRevealed && !open.peek()) revealer.visible = false;
+  });
   const sync = (): void => {
+    if (open.peek()) revealer.visible = true;
     revealer.revealChild = open.peek();
     if (open.peek()) {
       run();
