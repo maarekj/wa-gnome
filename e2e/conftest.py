@@ -247,6 +247,22 @@ class App:
         xdotool('mousemove', str(e.x + e.width // 2 + dx), str(e.y + e.height // 2 + dy), 'click', button)
         time.sleep(0.2)
 
+    def drag(self, start, end) -> None:
+        """Glisser (bouton gauche, XTest) du centre du nœud `start` au centre de `end`, par petits pas."""
+        dx, dy = _OFFSET or (0, 0)
+
+        def center(node) -> tuple[int, int]:
+            e = node.get_extents(Atspi.CoordType.WINDOW)
+            return e.x + e.width // 2 + dx, e.y + e.height // 2 + dy
+
+        (x0, y0), (x1, y1) = center(start), center(end)
+        xdotool('mousemove', str(x0), str(y0), 'mousedown', '1')
+        for i in range(1, 11):
+            xdotool('mousemove', str(x0 + (x1 - x0) * i // 10), str(y0 + (y1 - y0) * i // 10))
+            time.sleep(0.03)
+        xdotool('mouseup', '1')
+        time.sleep(0.3)
+
     def open_chat(self, name: str) -> None:
         """Ouvre une discussion de la barre latérale (clic sur son nom)."""
         self.point(self.find('label', name))

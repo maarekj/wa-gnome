@@ -123,3 +123,16 @@ def test_galerie_des_medias(run_app):
     # onglet Documents : aucun dans cette discussion
     app.click(None, 'Documents')
     assert app.text_visible('Aucun document')
+
+
+def test_selection_en_glissant(run_app):
+    _, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    start = app.find('label', 'Message n° 148')
+    # « Message n° 150 » : aussi l'aperçu dans la liste ; celui de la conversation est le plus à droite
+    end = max(app.all('label', 'Message n° 150'), key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).x)
+    app.drag(start, end)
+    # trois messages sélectionnés, barre de sélection affichée
+    assert app.text_visible('3 messages sélectionnés')
+    app.key('Escape')
+    app.text_gone('messages sélectionnés', 5)

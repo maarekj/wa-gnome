@@ -15,6 +15,7 @@ import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pas
 import { avatarText, isChannel } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
+import { attachDragSelect } from './DragSelect.ts';
 import { openGallery } from './Gallery.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { ReactionsRow } from './Reactions.ts';
@@ -982,6 +983,8 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
                       conversation = self;
+                      // glisser d'un message à l'autre : sélection (comme Telegram Desktop)
+                      attachDragSelect(self, () => scroller, () => selection.peek(), setSelection);
                       onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />

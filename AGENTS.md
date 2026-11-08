@@ -32,7 +32,7 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   {chatId, text} : message reçu ; `POST /pair` : appairage terminé) et `--no-replies`.
   Scénarios : appairage, ouverture, envoi, réception (liste et discussion ouverte), déconnexion,
   nouvelle discussion, recherche globale et dans la discussion, « Répondre » d’une notification,
-  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias.
+  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias, sélection en glissant.
   À lancer avant de fusionner un changement d'interface ; ajouter le scénario de chaque fonctionnalité.
   Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
 - `pnpm daemon` : lance le démon au premier plan (`WA_GNOME_LOG=debug` pour les journaux Baileys).

@@ -17,6 +17,7 @@ import { matchContacts } from '../src/app/NewChat.ts';
 import { phoneDigits } from '../src/shared/api.ts';
 import { snippetMarkup } from '../src/shared/format.ts';
 import { byMonth } from '../src/app/Gallery.ts';
+import { rangeSelection, rowAt } from '../src/app/DragSelect.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -364,5 +365,21 @@ describe('galerie', () => {
     const groups = byMonth([{ timestamp: t(2026, 11, 5) }, { timestamp: t(2026, 11, 1) }, { timestamp: t(2026, 10, 20) }]);
     expect(groups.map((g) => g.items.length)).toEqual([2, 1]);
     expect(groups[0]?.label).toMatch(/2026$/u);
+  });
+});
+
+describe('sélection en glissant', () => {
+  it('plage dans les deux sens, en plus de la sélection de départ', () => {
+    const ids = ['a', 'b', 'c', 'd'];
+    expect([...rangeSelection(ids, new Set(), 1, 3)]).toEqual(['b', 'c', 'd']);
+    expect([...rangeSelection(ids, new Set(), 2, 0)].toSorted()).toEqual(['a', 'b', 'c']);
+    expect([...rangeSelection(ids, new Set(['d']), 0, 1)].toSorted()).toEqual(['a', 'b', 'd']);
+  });
+  it('ligne sous le pointeur, entre deux lignes : celle du dessus', () => {
+    const list = [{ top: 0, bottom: 40 }, { top: 44, bottom: 80 }, { top: 90, bottom: 120 }];
+    expect(rowAt(list, 10)).toBe(0);
+    expect(rowAt(list, 42)).toBe(0);
+    expect(rowAt(list, 100)).toBe(2);
+    expect(rowAt(list, -5)).toBe(-1);
   });
 });
