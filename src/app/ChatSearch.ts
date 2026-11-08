@@ -87,7 +87,11 @@ export function ChatSearch(store: Store, open: Accessor<boolean>, close: () => v
     });
   };
   entry.connect('search-changed', run);
-  entry.connect('stop-search', close);
+  // Échap : saisie vidée, panneau fermé
+  entry.connect('stop-search', () => {
+    entry.text = '';
+    close();
+  });
   // Entrée : premier résultat
   entry.connect('activate', () => {
     const first = list.get_row_at_index(0);

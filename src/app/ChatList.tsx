@@ -102,6 +102,14 @@ export function inList(c: Chat, list: WaList): boolean {
 /** Listes proposées en filtres, dans l'ordre de WhatsApp. */
 export const filterLists = (lists: readonly WaList[]): WaList[] => lists.filter((l) => l.kind !== 'other');
 
+/** Discussion voisine de `current` dans la liste affichée (`delta` : +1 suivante, -1 précédente). */
+export function neighbourChat(list: readonly Chat[], current: string | null, delta: number): string | null {
+  if (list.length === 0) return null;
+  const i = list.findIndex((c) => c.id === current);
+  if (i < 0) return list[delta > 0 ? 0 : list.length - 1]?.id ?? null;
+  return list[i + delta]?.id ?? null;
+}
+
 /** Vue de la liste : discussions, archivées, ou chaînes (onglet « Actus » du téléphone). */
 export type View = 'main' | 'archived' | 'channels';
 
@@ -159,6 +167,11 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
   const setArchived = (on: boolean): void => setView(on ? 'archived' : 'main');
   const [filter, setFilter] = createState<Filter>('all');
   const shown = createMemo(() => visibleChats(store.chats(), query(), view(), filter(), store.lists()));
+  /** Alt+Haut / Alt+Bas : discussion précédente / suivante de la liste affichée */
+  const step = (delta: number): void => {
+    const id = neighbourChat(shown.peek(), store.current.peek(), delta);
+    if (id !== null) store.open(id);
+  };
   const archivedCount = createMemo(() => store.chats().filter((c) => inView(c, 'archived')).length);
   const channelCount = createMemo(() => store.chats().filter((c) => isChannel(c.id)).length);
   // plus rien dans la vue : retour à la liste principale
@@ -187,6 +200,7 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
             $={(self: Gtk.MenuButton) => {
               const menu = new Gio.Menu();
               menu.append('Préférences', 'app.preferences');
+              menu.append('Raccourcis clavier', 'app.shortcuts');
               menu.append('Déconnecter ce poste…', 'app.logout');
               menu.append('À propos de WhatsApp pour GNOME', 'app.about');
               self.menuModel = menu;
@@ -200,6 +214,36 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
           marginEnd={8}
           marginBottom={6}
           onSearchChanged={(self: Gtk.SearchEntry) => setQuery(self.text)}
+          $={(self: Gtk.SearchEntry) => {
+            // Échap : recherche vidée et quittée (focus rendu à la liste)
+            self.connect('stop-search', () => {
+              self.text = '';
+              self.get_root()?.set_focus(null);
+            });
+            // raccourcis de la fenêtre : Ctrl+K recherche, Alt+Haut / Alt+Bas discussion précédente / suivante
+            const shortcuts = new Gtk.ShortcutController({ scope: Gtk.ShortcutScope.GLOBAL });
+            const add = (accel: string, run: () => void): void => {
+              shortcuts.add_shortcut(
+                new Gtk.Shortcut({
+                  trigger: Gtk.ShortcutTrigger.parse_string(accel),
+                  action: Gtk.CallbackAction.new(() => {
+                    // fenêtre (nouvelle discussion, préférences…) ouverte : raccourci laissé à la fenêtre
+                    const root = self.get_root();
+                    if (root instanceof Adw.ApplicationWindow && root.visibleDialog !== null) return false;
+                    run();
+                    return true;
+                  }),
+                }),
+              );
+            };
+            add('<Control>k', () => {
+              self.grab_focus();
+              self.select_region(0, -1);
+            });
+            add('<Alt>Down', () => step(1));
+            add('<Alt>Up', () => step(-1));
+            self.add_controller(shortcuts);
+          }}
         />
         {/* filtres : Toutes, puis les listes de WhatsApp (non lues, favoris, groupes, personnalisées) */}
         {/* à la ligne quand ils ne tiennent pas en largeur (une barre de défilement masquait les boutons : #23) */}

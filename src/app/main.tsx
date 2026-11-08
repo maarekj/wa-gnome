@@ -11,7 +11,8 @@ import { errorMessage } from '../shared/errors.ts';
 import { Store } from '../shared/store.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { openNewChat } from './NewChat.ts';
-import { initSettings, openPreferences } from './Preferences.ts';
+import { initSettings, openPreferences, settings } from './Preferences.ts';
+import { openShortcuts } from './Shortcuts.ts';
 import { STYLESHEET } from './style.ts';
 
 /** Identifiant D-Bus (surchargeable pour lancer une version de développement à côté). */
@@ -31,12 +32,18 @@ store.onIncoming = (m, chat) => {
     store.markRead(m.chatId);
     return;
   }
-  // mode silencieux : ni notification ni son
-  if (chat !== undefined && isMuted(chat)) return;
+  // mode silencieux ou notifications coupées dans les préférences : rien
+  if ((chat !== undefined && isMuted(chat)) || !settings().notify) return;
   const n = new Gio.Notification();
   const name = chat?.name ?? m.senderName ?? m.chatId.split('@')[0] ?? '';
-  n.set_title(chat?.group === true && m.senderName !== null ? `${m.senderName} · ${name}` : name);
-  n.set_body(previewOf(m));
+  // contenu masqué (préférences) : ni auteur ni texte
+  if (settings().preview) {
+    n.set_title(chat?.group === true && m.senderName !== null ? `${m.senderName} · ${name}` : name);
+    n.set_body(previewOf(m));
+  } else {
+    n.set_title('WhatsApp');
+    n.set_body('Nouveau message');
+  }
   n.set_default_action_and_target('app.open-chat', new GLib.Variant('s', m.chatId));
   // Répondre : discussion ouverte, saisie active ; Marquer comme lu : sans ouvrir l'app
   n.add_button_with_target('Répondre', 'app.reply-chat', new GLib.Variant('s', m.chatId));
@@ -141,6 +148,14 @@ preferences.connect('activate', () => {
 });
 app.add_action(preferences);
 app.set_accels_for_action('app.preferences', ['<Control>comma']);
+
+/** app.shortcuts : fenêtre des raccourcis (Ctrl+?) */
+const shortcuts = new Gio.SimpleAction({ name: 'shortcuts' });
+shortcuts.connect('activate', () => {
+  if (mainWindow !== null) openShortcuts(mainWindow);
+});
+app.add_action(shortcuts);
+app.set_accels_for_action('app.shortcuts', ['<Control>question', '<Control><Shift>question']);
 
 const quit = new Gio.SimpleAction({ name: 'quit' });
 quit.connect('activate', () => app.quit());

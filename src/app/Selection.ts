@@ -108,6 +108,10 @@ export function openForward(parent: Gtk.Widget, store: Store, pictures: Pictures
     return { row, key: fold(c.name) };
   });
   const search = new Gtk.SearchEntry({ placeholderText: 'Rechercher une discussion', marginStart: 12, marginEnd: 12, marginTop: 6 });
+  // Échap (capté par le champ de recherche) : fenêtre fermée
+  search.connect('stop-search', () => {
+    dialog.close();
+  });
   search.connect('search-changed', () => {
     const q = fold(search.text.trim());
     for (const { row, key } of rows) row.visible = q === '' || key.includes(q);

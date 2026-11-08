@@ -31,7 +31,8 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   y est lancé avec `--control <port>` (`GET /calls` : appels reçus de l'app ; `POST /incoming`
   {chatId, text} : message reçu ; `POST /pair` : appairage terminé) et `--no-replies`.
   Scénarios : appairage, ouverture, envoi, réception (liste et discussion ouverte), déconnexion,
-  nouvelle discussion, recherche globale et dans la discussion, « Répondre » d'une notification.
+  nouvelle discussion, recherche globale et dans la discussion, « Répondre » d’une notification,
+  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis.
   À lancer avant de fusionner un changement d'interface ; ajouter le scénario de chaque fonctionnalité.
   Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
 - `pnpm daemon` : lance le démon au premier plan (`WA_GNOME_LOG=debug` pour les journaux Baileys).

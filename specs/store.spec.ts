@@ -5,7 +5,7 @@ import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sortChats, Store, typingText } from '../src/shared/store.ts';
 import { itemsOf, myReaction, presenceLine, senderColor } from '../src/app/ConversationPage.tsx';
-import { fold, inList, visibleChats } from '../src/app/ChatList.tsx';
+import { fold, inList, neighbourChat, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
 import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
@@ -302,6 +302,8 @@ describe('préférences', () => {
     expect(parseSettings('{"accent":"purple"}').accent).toBe('purple');
     expect(parseSettings('{"accent":"fuchsia"}').accent).toBe('system');
     expect(parseSettings('pas du json').accent).toBe('system');
+    expect(parseSettings(null).notify).toBeTrue();
+    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false });
   });
   it('CSS de l’accent', () => {
     expect(accentCss('system')).toBe('');
@@ -338,5 +340,17 @@ describe('nouvelle discussion', () => {
 describe('snippetMarkup', () => {
   it('mots trouvés en gras, texte échappé', () => {
     expect(snippetMarkup('au \u0001café\u0002 <ici>\nfin')).toBe('au <b>café</b> &lt;ici&gt; fin');
+  });
+});
+
+describe('discussion voisine', () => {
+  it('suivante, précédente, bords', () => {
+    const list = [chat('a', 3), chat('b', 2), chat('c', 1)];
+    expect(neighbourChat(list, 'a', 1)).toBe('b');
+    expect(neighbourChat(list, 'b', -1)).toBe('a');
+    expect(neighbourChat(list, 'c', 1)).toBeNull();
+    expect(neighbourChat(list, null, 1)).toBe('a');
+    expect(neighbourChat(list, 'x', -1)).toBe('c');
+    expect(neighbourChat([], null, 1)).toBeNull();
   });
 });

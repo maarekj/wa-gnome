@@ -53,9 +53,10 @@ def test_message_recu_dans_la_discussion_ouverte(run_app):
 
 def test_deconnexion(run_app):
     fake, app = run_app()
-    # menu principal : clic réel sur le bouton, puis 2e entrée au clavier (les entrées d'un menu
-    # surgissant n'apparaissent pas dans l'arbre d'accessibilité)
+    # menu principal : clic réel sur le bouton, puis 3e entrée au clavier (Préférences, Raccourcis
+    # clavier, Déconnecter… ; les entrées d'un menu surgissant ne sont pas dans l'arbre d'accessibilité)
     app.point(app.find(None, 'Menu principal'))
+    app.key('Down')
     app.key('Down')
     app.key('Return')
     app.click('button', 'Déconnecter')

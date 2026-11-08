@@ -82,6 +82,10 @@ export function openNewChat(parent: Gtk.Widget, store: Store, pictures: Pictures
     status.label = list.visible ? '' : search.text.trim() === '' ? 'Aucun contact dans le carnet' : 'Aucun contact trouvé. Saisissez un numéro avec l’indicatif du pays.';
   };
   search.connect('search-changed', render);
+  // Échap (capté par le champ de recherche) : fenêtre fermée
+  search.connect('stop-search', () => {
+    dialog.close();
+  });
   // Entrée : premier résultat (numéro ou contact)
   search.connect('activate', () => {
     const first = list.get_first_child();

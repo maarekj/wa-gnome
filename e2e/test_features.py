@@ -3,6 +3,15 @@
 from conftest import GROUP, Atspi, wait_until
 
 
+def test_echap_ferme_la_fenetre_nouvelle_discussion(run_app):
+    _, app = run_app()
+    app.key('ctrl+n')
+    app.text_visible('Marc Dubois')
+    app.type('ma')
+    app.key('Escape')
+    app.text_gone('Marc Dubois', 5)
+
+
 def test_nouvelle_discussion_avec_un_contact(run_app):
     fake, app = run_app()
     app.key('ctrl+n')
@@ -52,3 +61,50 @@ def test_repondre_depuis_une_notification(run_app):
     # zone de saisie active : la frappe y va directement
     app.type('Moi')
     wait_until(lambda: app.composer().text == 'Moi', 5, 'saisie dans la zone de réponse')
+
+
+def test_raccourcis_discussion_suivante_et_recherche(run_app):
+    _, app = run_app()
+    app.open_chat('Alice Martin')
+    # Alt+Bas : discussion suivante de la liste (Famille), Alt+Haut : retour
+    app.key('alt+Down')
+    assert app.text_visible('Le chat du voisin')
+    wait_until(lambda: len(app.all('label', 'Famille')) >= 2, 5, 'Famille ouverte')
+    app.key('alt+Up')
+    assert app.text_visible('Parfait, à tout à l’heure')
+    # Ctrl+K : recherche de la barre latérale
+    app.key('ctrl+k')
+    app.type('bob')
+    app.text_gone('Famille', 5)
+    # Échap : recherche vidée et quittée, liste complète
+    app.key('Escape')
+    assert app.text_visible('Famille')
+
+
+def test_fenetre_des_raccourcis(run_app):
+    _, app = run_app()
+    app.key('ctrl+question')
+    assert app.text_visible('Discussion suivante')
+    assert app.text_visible('Rechercher dans la discussion')
+
+
+def test_raccourcis_inactifs_sous_une_fenetre(run_app):
+    _, app = run_app()
+    app.open_chat('Alice Martin')
+    app.key('ctrl+n')
+    app.text_visible('Marc Dubois')
+    app.key('alt+Down')
+    app.key('Escape')
+    # toujours sur Alice : Alt+Bas n'a pas changé de discussion derrière la fenêtre
+    assert app.text_visible('Parfait, à tout à l’heure')
+
+
+def test_preferences_de_notification_enregistrees(run_app):
+    import json
+
+    fake, app = run_app()
+    app.key('ctrl+comma')
+    switch = wait_until(lambda: [n for n in app.all('switch', 'Afficher le contenu') + app.all('toggle button', 'Afficher le contenu') if n.actions][:1] or app.root.findChildren(lambda n: n.showing and n.name == 'Afficher le contenu' and 'toggle' in n.actions), 5, 'interrupteur')[0]
+    switch.doActionNamed('toggle' if 'toggle' in switch.actions else 'click')
+    path = fake.dir / 'data' / 'settings.json'
+    wait_until(lambda: path.exists() and json.loads(path.read_text()).get('preview') is False, 5, 'réglage enregistré')

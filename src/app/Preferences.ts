@@ -24,11 +24,15 @@ export const ACCENTS = [
 export type AccentId = (typeof ACCENTS)[number]['id'];
 
 /** Fichier tel qu'écrit (champs inconnus ou invalides : valeurs par défaut). */
-const SettingsFile = z.object({ accent: z.optional(z.string()) });
+const SettingsFile = z.object({ accent: z.optional(z.string()), notify: z.optional(z.boolean()), preview: z.optional(z.boolean()) });
 export interface Settings {
   readonly accent: AccentId;
+  /** notifications des messages reçus */
+  readonly notify: boolean;
+  /** auteur et texte dans la notification (sinon « Nouveau message ») */
+  readonly preview: boolean;
 }
-const DEFAULTS: Settings = { accent: 'system' };
+const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true };
 const asAccent = (id: string | undefined): AccentId => ACCENTS.find((a) => a.id === id)?.id ?? 'system';
 
 /** Réglages lus (valeurs par défaut si absents ou invalides). */
@@ -36,7 +40,7 @@ export function parseSettings(text: string | null): Settings {
   if (text === null) return DEFAULTS;
   try {
     const raw = SettingsFile.safeParse(JSON.parse(text)).data;
-    return raw === undefined ? DEFAULTS : { accent: asAccent(raw.accent) };
+    return raw === undefined ? DEFAULTS : { accent: asAccent(raw.accent), notify: raw.notify ?? DEFAULTS.notify, preview: raw.preview ?? DEFAULTS.preview };
   } catch {
     return DEFAULTS;
   }
@@ -97,6 +101,22 @@ function chooseAccent(id: AccentId): void {
   saveSettings(current);
 }
 
+/** Réglages en cours. */
+export const settings = (): Settings => current;
+
+/** Réglage modifié et enregistré. */
+function update(patch: Partial<Settings>): void {
+  current = { ...current, ...patch };
+  saveSettings(current);
+}
+
+/** Interrupteur d'une ligne de préférences. */
+function switchRow(title: string, subtitle: string, active: boolean, changed: (on: boolean) => void): Adw.SwitchRow {
+  const row = new Adw.SwitchRow({ title, subtitle, active });
+  row.connect('notify::active', () => changed(row.active));
+  return row;
+}
+
 /** Réglages lus et appliqués (au démarrage de l'application). */
 export function initSettings(): void {
   current = loadSettings();
@@ -142,6 +162,17 @@ export function openPreferences(parent: Gtk.Widget): void {
   appearance.add(row);
   appearance.add(new Adw.PreferencesRow({ child: box, activatable: false }));
   page.add(appearance);
+  const notifications = new Adw.PreferencesGroup({ title: 'Notifications', description: 'Le son et l’affichage sur l’écran verrouillé se règlent dans Paramètres › Notifications' });
+  const preview = switchRow('Afficher le contenu', 'Auteur et texte du message dans la notification', current.preview, (on) => update({ preview: on }));
+  preview.sensitive = current.notify;
+  notifications.add(
+    switchRow('Notifications des messages', 'Pour les discussions hors mode silencieux', current.notify, (on) => {
+      update({ notify: on });
+      preview.sensitive = on;
+    }),
+  );
+  notifications.add(preview);
+  page.add(notifications);
   const dialog = new Adw.PreferencesDialog({ title: 'Préférences' });
   dialog.add(page);
   dialog.present(parent);
