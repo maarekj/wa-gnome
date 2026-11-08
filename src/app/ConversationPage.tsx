@@ -715,6 +715,15 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
               self.connect('paste-clipboard', () => {
                 if (pasteAttachments(self, addFiles, toast)) GObject.signal_stop_emission_by_name(self, 'paste-clipboard');
               });
+              // « Répondre » d'une notification : focus dans la zone (même discussion déjà ouverte)
+              onCleanup(
+                store.focusRequests.subscribe(() => {
+                  GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    self.grab_focus();
+                    return GLib.SOURCE_REMOVE;
+                  });
+                }),
+              );
               // nouvelle discussion : saisie vidée, focus dans la zone
               onCleanup(
                 chatId.subscribe(() => {

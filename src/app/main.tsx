@@ -38,6 +38,9 @@ store.onIncoming = (m, chat) => {
   n.set_title(chat?.group === true && m.senderName !== null ? `${m.senderName} · ${name}` : name);
   n.set_body(previewOf(m));
   n.set_default_action_and_target('app.open-chat', new GLib.Variant('s', m.chatId));
+  // Répondre : discussion ouverte, saisie active ; Marquer comme lu : sans ouvrir l'app
+  n.add_button_with_target('Répondre', 'app.reply-chat', new GLib.Variant('s', m.chatId));
+  n.add_button_with_target('Marquer comme lu', 'app.read-chat', new GLib.Variant('s', m.chatId));
   app.send_notification(`chat-${m.chatId}`, n);
   notified.add(m.chatId);
 };
@@ -67,6 +70,28 @@ openChat.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) 
   store.open(id);
 });
 app.add_action(openChat);
+
+/** app.reply-chat(jid) : bouton « Répondre » d'une notification */
+const replyChat = new Gio.SimpleAction({ name: 'reply-chat', parameterType: new GLib.VariantType('s') });
+replyChat.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
+  const id = param?.get_string()[0];
+  if (id === undefined || id === '') return;
+  if (mainWindow === null) app.activate();
+  else mainWindow.present();
+  app.withdraw_notification(`chat-${id}`);
+  store.reply(id);
+});
+app.add_action(replyChat);
+
+/** app.read-chat(jid) : bouton « Marquer comme lu » d'une notification (sans ouvrir la fenêtre) */
+const readChat = new Gio.SimpleAction({ name: 'read-chat', parameterType: new GLib.VariantType('s') });
+readChat.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
+  const id = param?.get_string()[0];
+  if (id === undefined || id === '') return;
+  app.withdraw_notification(`chat-${id}`);
+  store.markRead(id);
+});
+app.add_action(readChat);
 
 /** app.logout : déconnexion du compte (le poste disparaît des appareils connectés) */
 const logout = new Gio.SimpleAction({ name: 'logout' });

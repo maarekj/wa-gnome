@@ -1,7 +1,7 @@
 // État de l'application, alimenté par le flux d'événements du démon.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import { createState, type Accessor } from 'gnim';
+import { createState, type Accessor, type Setter } from 'gnim';
 import type { Chat, ChatAction, ChatList, Event, Message, Presence, Status } from './api.ts';
 import type { Link, WaClient } from './client.ts';
 import { errorMessage } from './errors.ts';
@@ -69,6 +69,9 @@ export class Store {
   readonly setEditing: (m: Message | null) => void;
   /** message auquel on répond (zone de saisie), null sinon */
   readonly replyTo: Accessor<Message | null>;
+  /** demandes de focus dans la zone de saisie (« Répondre » d'une notification) */
+  readonly focusRequests: Accessor<number>;
+  readonly #setFocusRequests: Setter<number>;
   readonly setReplyTo: (m: Message | null) => void;
   /** photo de profil changée */
   onPicture: ((id: string) => void) | null = null;
@@ -100,6 +103,7 @@ export class Store {
     [this.presence, this.#setPresence] = createState<Presence | null>(null);
     [this.typing, this.#setTyping] = createState<ReadonlyMap<string, string>>(new Map());
     [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
+    [this.focusRequests, this.#setFocusRequests] = createState(0);
     [this.editing, this.setEditing] = createState<Message | null>(null);
   }
 
@@ -210,6 +214,12 @@ export class Store {
   }
 
   /** Ouvre une discussion (null : aucune) et charge ses derniers messages. */
+  /** Ouvre la discussion, zone de saisie active (réponse depuis une notification). */
+  reply(id: string): void {
+    this.open(id);
+    this.#setFocusRequests(this.focusRequests.peek() + 1);
+  }
+
   /** noms de discussions ouvertes avant d'exister (nouvelle discussion) */
   readonly #names = new Map<string, string>();
 
