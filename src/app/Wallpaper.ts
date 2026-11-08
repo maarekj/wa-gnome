@@ -209,14 +209,30 @@ function opaque(dark: boolean): string {
 .wallpaper .day-separator, .wallpaper .composer-entry, .wallpaper .sticker > label.caption { background: ${base}; }`;
 }
 
+/** Couleur de fond du motif par défaut (clair / sombre). */
+const PATTERN_BG = { light: '#f2eee8', dark: '#121110' } as const;
+
+/**
+ * Barres latérales (liste des discussions, panneau de recherche) teintées comme le fond, un peu
+ * plus foncées en clair, un peu plus claires en sombre (pour rester distinctes).
+ */
+export function sidebarCss(base: string, dark: boolean): string {
+  const tint = dark ? `color-mix(in srgb, ${base} 95%, white)` : `color-mix(in srgb, ${base} 97%, black)`;
+  return `:root { --sidebar-bg-color: ${tint}; --secondary-sidebar-bg-color: ${tint}; --sidebar-shade-color: alpha(black, ${dark ? 0.25 : 0.06}); }`;
+}
+
 /** Feuille de style du fond choisi (thème clair ou sombre) ; `image` : fichier de l'image de l'utilisateur. */
 export function wallpaperCss(w: Wallpaper, image: string | null, pattern: string | null, dark = false): string {
   if (w === 'none') return '';
   if (w === 'image' && image !== null) return `.wallpaper { background: ${url(image)} center / cover no-repeat; }${opaque(dark)}`;
   const color = WALLPAPER_COLORS.find((c) => `color:${c.id}` === w);
-  if (color !== undefined) return `.wallpaper { background-color: ${dark ? color.dark : color.light}; }${opaque(dark)}`;
+  if (color !== undefined) {
+    const base = dark ? color.dark : color.light;
+    return `.wallpaper { background-color: ${base}; }${opaque(dark)}\n${sidebarCss(base, dark)}`;
+  }
   if (pattern === null) return '';
-  return `.wallpaper { background: ${dark ? '#121110' : '#f2eee8'} ${url(pattern)} repeat; background-size: ${TILE}px ${TILE}px; }${opaque(dark)}`;
+  const base = dark ? PATTERN_BG.dark : PATTERN_BG.light;
+  return `.wallpaper { background: ${base} ${url(pattern)} repeat; background-size: ${TILE}px ${TILE}px; }${opaque(dark)}\n${sidebarCss(base, dark)}`;
 }
 
 let provider: Gtk.CssProvider | null = null;

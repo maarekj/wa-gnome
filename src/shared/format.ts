@@ -22,6 +22,14 @@ export function fmtShortDate(seconds: number, now = GLib.DateTime.new_now_local(
   return d.format('%d/%m/%Y') ?? '';
 }
 
+/** Date et heure : l'heure seule aujourd'hui, sinon date courte (« Hier », jour, date) et heure. */
+export function fmtDateTime(seconds: number, now = GLib.DateTime.new_now_local()): string {
+  const d = GLib.DateTime.new_from_unix_local(seconds);
+  if (d === null || seconds <= 0) return '';
+  const time = d.format('%H:%M') ?? '';
+  return Math.round(dayIndex(now) - dayIndex(d)) <= 0 ? time : `${fmtShortDate(seconds, now)} ${time}`;
+}
+
 /** Libellé du séparateur de jour dans une conversation. */
 export function fmtDay(seconds: number, now = GLib.DateTime.new_now_local()): string {
   const d = GLib.DateTime.new_from_unix_local(seconds);

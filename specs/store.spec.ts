@@ -395,5 +395,9 @@ describe('fond des conversations', () => {
     expect(wallpaperCss('color:menthe', null, null)).toContain('#dcefe4');
     expect(wallpaperCss('pattern', null, '/tmp/a.svg')).toContain('file:///tmp/a.svg');
     expect(wallpaperCss('color:menthe', null, null, true)).toContain('#1f2b25');
+    expect(wallpaperCss('color:menthe', null, null)).toContain('--sidebar-bg-color: color-mix(in srgb, #dcefe4 97%, black)');
+    expect(wallpaperCss('image', '/tmp/i.png', null)).not.toContain('--sidebar-bg-color');
+    expect(wallpaperCss('color:menthe', null, null, true)).toContain('color-mix(in srgb, #1f2b25 95%, white)');
+    expect(wallpaperCss('pattern', null, '/tmp/a.svg')).toContain('#f2eee8 97%, black');
   });
 });

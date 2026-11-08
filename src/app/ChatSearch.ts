@@ -6,7 +6,7 @@ import Pango from 'gi://Pango';
 import { createState, onCleanup, type Accessor } from 'gnim';
 import type { SearchHit } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { fmtShortDate, fmtTime, snippetMarkup } from '../shared/format.ts';
+import { fmtDateTime, snippetMarkup } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { keyedListBox } from './KeyedBox.ts';
 
@@ -22,7 +22,7 @@ function resultRow(hit: SearchHit): Gtk.Widget {
   const who = hit.fromMe ? 'Vous' : (hit.senderName ?? hit.chatName);
   const top = new Gtk.Box({ spacing: 6 });
   top.append(new Gtk.Label({ label: who, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['caption-heading'] }));
-  top.append(new Gtk.Label({ label: `${fmtShortDate(hit.timestamp)} ${fmtTime(hit.timestamp)}`, cssClasses: ['caption', 'dim-label'] }));
+  top.append(new Gtk.Label({ label: fmtDateTime(hit.timestamp), cssClasses: ['caption', 'dim-label'] }));
   box.append(top);
   box.append(new Gtk.Label({ useMarkup: true, label: snippetMarkup(hit.snippet), xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, lines: 3, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['dim-label'] }));
   row.set_child(box);
