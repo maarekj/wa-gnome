@@ -237,7 +237,7 @@ store.setFavorites([GROUP]);
 /** longue discussion : de quoi remonter dans l'historique local (pagination) */
 const LONG = '33600000005@s.whatsapp.net';
 store.upsertContact(LONG, { name: 'Claire (longue discussion)' });
-for (let i = 150; i >= 1; i -= 1) add(LONG, i % 2 === 0, `Message n° ${151 - i}`, 3 * H + i * 600);
+for (let i = 150; i >= 1; i -= 1) add(LONG, i % 2 === 0, i === 140 ? 'On se retrouve au Café de la Gare' : `Message n° ${151 - i}`, 3 * H + i * 600);
 const historyGiven = new Set<string>();
 
 /** Présence simulée d'une discussion ; `typing` : le correspondant (ou Bob dans un groupe) écrit. */

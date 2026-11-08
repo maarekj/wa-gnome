@@ -4,7 +4,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
+import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -51,6 +51,19 @@ CREATE TABLE IF NOT EXISTS messages (
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
+-- recherche plein texte (rowid = celui du message ; tenue à jour par les déclencheurs).
+-- Un VACUUM peut renuméroter les rowid de messages : reconstruire alors l'index (voir migration v12).
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, tokenize = 'unicode61 remove_diacritics 2');
+CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages WHEN new.deleted = 0 AND new.text <> '' BEGIN
+  INSERT INTO messages_fts (rowid, text) VALUES (new.rowid, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+  DELETE FROM messages_fts WHERE rowid = old.rowid;
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF text, deleted ON messages BEGIN
+  DELETE FROM messages_fts WHERE rowid = old.rowid;
+  INSERT INTO messages_fts (rowid, text) SELECT new.rowid, new.text WHERE new.deleted = 0 AND new.text <> '';
+END;
 -- messages supprimés pour moi (ici ou sur un autre appareil) : ignorés s'ils reviennent par l'historique
 CREATE TABLE IF NOT EXISTS deleted_for_me (
   chat_id TEXT NOT NULL,
@@ -200,7 +213,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 11;
+const VERSION = 12;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -245,6 +258,8 @@ export class Store {
 
   constructor(file: string) {
     this.#db = new DatabaseSync(file);
+    // INSERT OR REPLACE : la ligne remplacée passe par le déclencheur de suppression (index de recherche)
+    this.#db.exec('PRAGMA recursive_triggers = ON');
     const version = Number(this.#db.prepare('PRAGMA user_version').get()?.['user_version'] ?? 0);
     const fresh = this.#db.prepare("SELECT name FROM sqlite_master WHERE name = 'messages'").get() === undefined;
     this.#db.exec(SCHEMA);
@@ -252,6 +267,10 @@ export class Store {
     if (!fresh && version < 1) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
       this.needsMediaBackfill = true;
+    }
+    if (!fresh && version < 12) {
+      // index de recherche des messages existants
+      this.#db.exec(`DELETE FROM messages_fts; INSERT INTO messages_fts (rowid, text) SELECT rowid, text FROM messages WHERE deleted = 0 AND text <> ''`);
     }
     if (!fresh && version < 11) {
       // statuts : plus de discussion ; diffusions reçues : déplacées au démarrage (identifiants lid connus)
@@ -675,6 +694,41 @@ export class Store {
     // discussions sans message ni date (contacts du carnet synchronisés) : masquées
     // statuts (« stories ») : hors périmètre
     return this.#chats('WHERE c.timestamp > 0 AND c.id <> ?', [STATUS]);
+  }
+
+  /** Messages contenant tous les mots de `query` (début de mot, sans accents), plus récents d'abord. */
+  search(query: string, limit = 50, inChat: string | null = null): SearchHit[] {
+    const words = query.split(/\s+/u).filter((w) => w !== '');
+    if (words.length === 0) return [];
+    const match = words.map((w) => `"${w.replaceAll('"', '""')}"*`).join(' ');
+    const rows = this.#db
+      .prepare(
+        `SELECT m.chat_id, m.id, m.timestamp, m.from_me, m.sender, snippet(messages_fts, 0, char(1), char(2), '…', 12) AS snip -- HIT_START, HIT_END
+         FROM messages_fts f JOIN messages m ON m.rowid = f.rowid
+         WHERE messages_fts MATCH ? AND m.deleted = 0 AND m.chat_id <> ? AND (? IS NULL OR m.chat_id = ?)
+         ORDER BY m.timestamp DESC LIMIT ?`,
+      )
+      .all(match, STATUS, inChat, inChat, limit);
+    const names = new Map<string, string>();
+    const nameOf = (id: string): string => {
+      let n = names.get(id);
+      if (n === undefined) {
+        n = this.chat(id)?.name ?? this.displayName(id);
+        names.set(id, n);
+      }
+      return n;
+    };
+    return rows.map((r) => {
+      const chatId = String(r['chat_id']);
+      const sender = typeof r['sender'] === 'string' ? r['sender'] : null;
+      return { chatId, chatName: nameOf(chatId), id: String(r['id']), timestamp: Number(r['timestamp']), fromMe: r['from_me'] === 1, senderName: sender === null ? null : this.displayName(sender), snippet: String(r['snip']) };
+    });
+  }
+
+  /** Discussion ouverte sur un message : `before` messages avant `timestamp`, puis tous les suivants (l'app ne charge que les plus anciens ensuite). */
+  messagesFrom(chatId: string, timestamp: number, before = 40): Message[] {
+    const older = this.#messages('m.chat_id = ? AND m.timestamp < ? ORDER BY m.timestamp DESC LIMIT ?', [chatId, timestamp, before]).toReversed();
+    return [...older, ...this.#messages('m.chat_id = ? AND m.timestamp >= ? ORDER BY m.timestamp ASC', [chatId, timestamp])];
   }
 
   /** Contacts du carnet ayant un numéro WhatsApp, par nom. */

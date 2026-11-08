@@ -14,6 +14,7 @@ import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText, isChannel } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
+import { ChatSearch } from './ChatSearch.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
@@ -752,7 +753,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
   /** fenêtre défilante de la conversation (défilement vers un message cité) */
   let scroller: Gtk.ScrolledWindow | null = null;
   /** Message `id` à l'écran (s'il est chargé), brièvement mis en évidence. */
-  const scrollToMessage = (box: Gtk.Box, id: string): boolean => {
+  const scrollToMessage = (box: Gtk.Box, id: string, flash = true): boolean => {
     let target: Gtk.Widget | null = null;
     for (let c = box.get_first_child(); c !== null; c = c.get_next_sibling()) if (c.name === `m:${id}`) target = c;
     if (target === null || scroller === null) return false;
@@ -760,6 +761,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     if (!ok) return false;
     const adj = scroller.vadjustment;
     adj.value = Math.max(0, bounds.get_y() + bounds.get_height() / 2 - adj.pageSize / 2);
+    if (!flash) return true;
     const bubbleBox = findBubble(target);
     bubbleBox?.add_css_class('flash');
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
@@ -768,6 +770,10 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     });
     return true;
   };
+  /** panneau de recherche dans la discussion ouvert */
+  const [searching, setSearching] = createState(false);
+  /** boîte des bulles (défilement vers un message trouvé par la recherche) */
+  let conversation: Gtk.Box | null = null;
   /** ajout de pièces jointes du composer (renseigné à sa création) */
   let dropFiles: ((files: Gio.File[]) => void) | null = null;
   // sélection de messages : vidée au changement de discussion, messages disparus retirés
@@ -822,20 +828,32 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               />
             </Gtk.Box>
           </Gtk.Box>
+          <Gtk.ToggleButton
+            $type="end"
+            iconName="system-search-symbolic"
+            tooltipText="Rechercher dans la discussion (Ctrl+F)"
+            visible={chat((c) => c !== null)}
+            active={searching}
+            onToggled={(b: Gtk.ToggleButton) => setSearching(b.active)}
+          />
         </Adw.HeaderBar>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Adw.StatusPage $type="named" name="none" iconName="chat-message-new-symbolic" title="WhatsApp pour GNOME" description="Choisissez une discussion" />
+          <Gtk.Box $type="named" name="chat">
           <Gtk.Box
-            $type="named"
-            name="chat"
+            hexpand
             orientation={Gtk.Orientation.VERTICAL}
             cssClasses={['chat-drop']}
             $={(self: Gtk.Box) => {
               // fichiers déposés n'importe où dans la conversation : pièces jointes
               attachDrop(self, (files) => dropFiles?.(files));
-              // Échap : fin de la sélection
+              // Échap : fin de la sélection ; Ctrl+F : recherche dans la discussion
               const keys = new Gtk.EventControllerKey({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
-              keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number) => {
+              keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
+                if ((keyval === Gdk.KEY_f || keyval === Gdk.KEY_F) && (state & Gdk.ModifierType.CONTROL_MASK) !== 0) {
+                  setSearching(true);
+                  return true;
+                }
                 if (keyval !== Gdk.KEY_Escape || selection.peek().size === 0) return false;
                 clearSelection();
                 return true;
@@ -891,6 +909,31 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     return GLib.SOURCE_REMOVE;
                   });
                 });
+                // résultat de recherche : plus collé en bas ; message amené à l'écran une fois affiché
+                let seek = 0;
+                onCleanup(
+                  store.scrollTarget.subscribe(() => {
+                    const target = store.scrollTarget.peek();
+                    if (target === null) return;
+                    stick = false;
+                    anchor = null;
+                    // pas de chargement automatique de messages plus anciens pendant le placement
+                    openedAt = GLib.get_monotonic_time() + 2_000_000;
+                    if (seek !== 0) GLib.source_remove(seek);
+                    let tries = 0;
+                    let found = 0;
+                    // replacé quelques fois après l'avoir trouvé (images chargées, mise en page)
+                    seek = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+                      tries += 1;
+                      if (found === 0) anchor = null;
+                      stick = false;
+                      if (conversation !== null && scrollToMessage(conversation, target.id, found === 0)) found += 1;
+                      if (found < 4 && tries < 40) return GLib.SOURCE_CONTINUE;
+                      seek = 0;
+                      return GLib.SOURCE_REMOVE;
+                    });
+                  }),
+                );
                 onCleanup(
                   store.current.subscribe(() => {
                     stick = true;
@@ -927,6 +970,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     spacing={4}
                     cssClasses={['conversation']}
                     $={(self: Gtk.Box) => {
+                      conversation = self;
                       onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
@@ -976,6 +1020,9 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                 </Gtk.Box>
               </Gtk.Stack>
             </Adw.Clamp>
+          </Gtk.Box>
+          {/* recherche dans la discussion : panneau à droite */}
+          {ChatSearch(store, searching, () => setSearching(false))}
           </Gtk.Box>
         </Gtk.Stack>
       </Adw.ToolbarView>

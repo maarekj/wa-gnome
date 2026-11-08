@@ -96,6 +96,10 @@ export const STYLESHEET = `
   outline: 2px solid alpha(currentColor, 0.6);
   outline-offset: 2px;
 }
+.chat-search {
+  border-left: 1px solid var(--border-color);
+  background: var(--sidebar-bg-color);
+}
 .selection-bar {
   min-height: 46px;
 }

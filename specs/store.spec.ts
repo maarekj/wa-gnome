@@ -15,6 +15,7 @@ import { canRevokeAll, copyText } from '../src/app/Selection.ts';
 import { accentCss, parseSettings } from '../src/app/Preferences.ts';
 import { matchContacts } from '../src/app/NewChat.ts';
 import { phoneDigits } from '../src/shared/api.ts';
+import { snippetMarkup } from '../src/shared/format.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -331,5 +332,11 @@ describe('nouvelle discussion', () => {
     expect(matchContacts(contacts, 'elo').map((c) => c.name)).toEqual(['Élodie']);
     expect(matchContacts(contacts, '5222').map((c) => c.name)).toEqual(['Bob']);
     expect(matchContacts(contacts, '').length).toBe(2);
+  });
+});
+
+describe('snippetMarkup', () => {
+  it('mots trouvés en gras, texte échappé', () => {
+    expect(snippetMarkup('au \u0001café\u0002 <ici>\nfin')).toBe('au <b>café</b> &lt;ici&gt; fin');
   });
 });

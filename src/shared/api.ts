@@ -237,6 +237,24 @@ export const MessageAction = z.discriminatedUnion('action', [
 export type MessageAction = z.infer<typeof MessageAction>;
 export type Message = z.infer<typeof Message>;
 
+/** Marqueurs des mots trouvés dans l'extrait d'un résultat de recherche. */
+export const HIT_START = '\u0001';
+export const HIT_END = '\u0002';
+
+/** Message trouvé par la recherche (`GET /search?q=`). */
+export const SearchHit = z.object({
+  chatId: z.string(),
+  chatName: z.string(),
+  id: z.string(),
+  timestamp: z.number(),
+  fromMe: z.boolean(),
+  /** auteur dans un groupe (null : discussion directe ou moi) */
+  senderName: z.nullable(z.string()),
+  /** extrait du texte, mots trouvés entre HIT_START et HIT_END */
+  snippet: z.string(),
+});
+export type SearchHit = z.infer<typeof SearchHit>;
+
 /** Contact du carnet (nouvelle discussion). */
 export const Contact = z.object({
   /** JID (`…@s.whatsapp.net`) */

@@ -297,3 +297,31 @@ void describe('lu sur un autre appareil', () => {
     assert.equal(store.readUpTo(PN, 'b'), false);
   });
 });
+
+void describe('recherche', () => {
+  void it('mots sans accents, début de mot ; suivie des modifications et suppressions', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage({ ...msg(PN, 'a', 10), text: 'Rendez-vous au café à 14 h' }, '{}');
+    store.upsertMessage({ ...msg(PN, 'b', 20), text: 'autre chose' }, '{}');
+    assert.deepEqual(store.search('cafe').map((h) => h.id), ['a']);
+    assert.deepEqual(store.search('rendez caf').map((h) => h.id), ['a']);
+    assert.equal(store.search('cafe')[0]?.snippet.includes('\u0001café\u0002'), true);
+    // rejoué (INSERT OR REPLACE) : pas de doublon
+    store.upsertMessage({ ...msg(PN, 'a', 10), text: 'Rendez-vous au café à 14 h' }, '{}');
+    assert.equal(store.search('cafe').length, 1);
+    store.applyEdit(PN, 'a', 'plutôt le thé');
+    assert.deepEqual(store.search('cafe'), []);
+    assert.deepEqual(store.search('the').map((h) => h.id), ['a']);
+    store.deleteForMe(PN, 'a');
+    assert.deepEqual(store.search('the'), []);
+    assert.deepEqual(store.search('"'), []);
+    store.upsertMessage({ ...msg(GROUP, 'g', 30), text: 'autre café' }, '{}');
+    assert.deepEqual(store.search('autre', 50, GROUP).map((h) => h.id), ['g']);
+  });
+  void it('ouverture sur un message : avant et après', () => {
+    const store = new Store(':memory:');
+    for (let i = 0; i < 30; i++) store.upsertMessage(msg(PN, `m${i}`, i), '{}');
+    const list = store.messagesFrom(PN, 25, 3);
+    assert.deepEqual(list.map((m) => m.id), ['m22', 'm23', 'm24', 'm25', 'm26', 'm27', 'm28', 'm29']);
+  });
+});

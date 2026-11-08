@@ -69,6 +69,9 @@ export class Store {
   readonly setEditing: (m: Message | null) => void;
   /** message auquel on répond (zone de saisie), null sinon */
   readonly replyTo: Accessor<Message | null>;
+  /** message à amener à l'écran (ouverture depuis la recherche) ; `n` change à chaque demande */
+  readonly scrollTarget: Accessor<{ id: string; n: number } | null>;
+  readonly #setScrollTarget: Setter<{ id: string; n: number } | null>;
   /** demandes de focus dans la zone de saisie (« Répondre » d'une notification) */
   readonly focusRequests: Accessor<number>;
   readonly #setFocusRequests: Setter<number>;
@@ -104,6 +107,7 @@ export class Store {
     [this.typing, this.#setTyping] = createState<ReadonlyMap<string, string>>(new Map());
     [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
     [this.focusRequests, this.#setFocusRequests] = createState(0);
+    [this.scrollTarget, this.#setScrollTarget] = createState<{ id: string; n: number } | null>(null);
     [this.editing, this.setEditing] = createState<Message | null>(null);
   }
 
@@ -213,7 +217,28 @@ export class Store {
     }
   }
 
-  /** Ouvre une discussion (null : aucune) et charge ses derniers messages. */
+  /** Ouvre une discussion sur un message (résultat de recherche), mis en évidence. */
+  openAt(chatId: string, id: string, timestamp: number): void {
+    const target = { id, n: (this.scrollTarget.peek()?.n ?? 0) + 1 };
+    if (this.current.peek() === chatId && this.messages.peek().some((m) => m.id === id)) {
+      this.#setScrollTarget(target);
+      return;
+    }
+    // autre discussion : ouverte sans charger les derniers messages (remplacés ci-dessous)
+    this.open(chatId, false);
+    void (async (): Promise<void> => {
+      try {
+        const list = await this.client.messagesFrom(chatId, timestamp);
+        if (this.current.peek() !== chatId) return;
+        // cible annoncée avant les messages : la conversation ne se recolle pas en bas
+        this.#setScrollTarget(target);
+        this.#setMessages(list);
+      } catch (error) {
+        console.error(`messages : ${errorMessage(error)}`);
+      }
+    })();
+  }
+
   /** Ouvre la discussion, zone de saisie active (réponse depuis une notification). */
   reply(id: string): void {
     this.open(id);
@@ -234,7 +259,8 @@ export class Store {
     this.open(id);
   }
 
-  open(id: string | null): void {
+  /** Ouvre une discussion (null : aucune) et charge ses derniers messages (sauf `load` faux). */
+  open(id: string | null, load = true): void {
     if (id === this.current.peek()) return;
     this.#setCurrent(id);
     this.#setMessages([]);
@@ -246,7 +272,7 @@ export class Store {
     this.#setPresence(null);
     if (id === null) return;
     void this.#subscribe(id);
-    void this.#load(id);
+    if (load) void this.#load(id);
     this.markRead(id);
   }
 

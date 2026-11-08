@@ -1,12 +1,14 @@
 // Barre latérale : liste des discussions (épinglées puis la plus récente d'abord), recherche par
-// nom, discussions archivées à part, menu contextuel (ChatMenu.ts).
+// nom et dans les messages, discussions archivées à part, menu contextuel (ChatMenu.ts).
 import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Chat, type ChatList as WaList, isMuted } from '../shared/api.ts';
-import { fmtShortDate } from '../shared/format.ts';
+import { type Chat, type ChatList as WaList, isMuted, type SearchHit } from '../shared/api.ts';
+import { errorMessage } from '../shared/errors.ts';
+import { esc, fmtShortDate, snippetMarkup } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { attachChatMenu } from './ChatMenu.ts';
 import { keyedListBox } from './KeyedBox.ts';
@@ -18,6 +20,25 @@ export const fold = (s: string): string => s.normalize('NFD').replaceAll(/\p{M}/
 
 /** Texte de l'avatar : sans le « ~ » des noms publics (initiales du nom). */
 export const avatarText = (name: string): string => name.replace(/^~ /u, '');
+
+/** Ligne d'un message trouvé : discussion, date, auteur et extrait (mots trouvés en gras). */
+function hitRow(hit: SearchHit): Gtk.Widget {
+  const who = hit.fromMe ? 'Vous : ' : hit.senderName === null ? '' : `${hit.senderName} : `;
+  return asWidget(
+    <Gtk.ListBoxRow name={`${hit.chatId}/${hit.id}`} cssClasses={['chat-row']}>
+      <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={2} marginTop={8} marginBottom={8} marginStart={12} marginEnd={8}>
+        <Gtk.Box spacing={6}>
+          <Gtk.Label label={hit.chatName} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
+          <Gtk.Label label={fmtShortDate(hit.timestamp)} cssClasses={['caption', 'dim-label']} />
+        </Gtk.Box>
+        <Gtk.Label useMarkup label={`${esc(who)}${snippetMarkup(hit.snippet)}`} xalign={0} ellipsize={Pango.EllipsizeMode.END} lines={2} wrap wrapMode={Pango.WrapMode.WORD_CHAR} cssClasses={['dim-label']} />
+      </Gtk.Box>
+    </Gtk.ListBoxRow>,
+  );
+}
+
+/** Recherche dans les messages à partir de ce nombre de caractères. */
+const SEARCH_MIN = 2;
 
 function chatRow(pictures: Pictures, store: Store) {
   return (chat: Chat, live: Accessor<Chat>): Gtk.Widget => ChatRow(chat, live, pictures, store);
@@ -104,6 +125,35 @@ export function visibleChats(all: readonly Chat[], query: string, view: View, fi
 export function ChatList({ store, pictures, toast }: { store: Store; pictures: Pictures; toast: (text: string) => void }): JSX.Element {
   const [query, setQuery] = createState('');
   const [view, setView] = createState<View>('main');
+  // messages trouvés (recherche dans le contenu, après une courte pause de frappe)
+  const [hits, setHits] = createState<readonly SearchHit[]>([]);
+  let searchTimer = 0;
+  let searchGen = 0;
+  onCleanup(
+    query.subscribe(() => {
+      if (searchTimer !== 0) GLib.source_remove(searchTimer);
+      searchTimer = 0;
+      const q = query.peek().trim();
+      const gen = (searchGen += 1);
+      if (q.length < SEARCH_MIN) {
+        setHits([]);
+        return;
+      }
+      searchTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+        searchTimer = 0;
+        void (async (): Promise<void> => {
+          try {
+            const found = await store.client.search(q);
+            if (gen === searchGen) setHits(found);
+          } catch (error) {
+            if (gen === searchGen) setHits([]);
+            console.error(`recherche : ${errorMessage(error)}`);
+          }
+        })();
+        return GLib.SOURCE_REMOVE;
+      });
+    }),
+  );
   /** hors de la liste principale (archivées ou chaînes) */
   const archived = view((v) => v !== 'main');
   const setArchived = (on: boolean): void => setView(on ? 'archived' : 'main');
@@ -186,7 +236,7 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
             onCleanup(store.lists.subscribe(build));
           }}
         />
-        <Gtk.Stack visibleChildName={shown((l) => (l.length === 0 ? 'empty' : 'list'))}>
+        <Gtk.Stack visibleChildName={createMemo(() => (shown().length === 0 && hits().length === 0 ? 'empty' : 'list'))}>
           <Adw.StatusPage $type="named" name="empty" iconName="chat-message-new-symbolic" title={createMemo(() => (query() === '' ? (view() === 'channels' ? 'Aucune chaîne' : archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))} cssClasses={['compact']} />
           <Gtk.ScrolledWindow $type="named" name="list" hscrollbarPolicy={Gtk.PolicyType.NEVER} vexpand>
             <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
@@ -241,6 +291,19 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
                 onCleanup(store.current.subscribe(select));
                 onCleanup(shown.subscribe(select));
                 attachChatMenu(self, store, toast);
+              }}
+            />
+            {/* messages trouvés par la recherche */}
+            <Gtk.Label label="Messages" visible={hits((h) => h.length > 0)} xalign={0} marginStart={18} marginTop={12} marginBottom={4} cssClasses={['heading', 'dim-label']} />
+            <Gtk.ListBox
+              visible={hits((h) => h.length > 0)}
+              cssClasses={['navigation-sidebar']}
+              $={(self: Gtk.ListBox) => {
+                onCleanup(keyedListBox(self, hits, (h) => `${h.chatId}/${h.id}`, hitRow));
+                self.connect('row-activated', (_l: Gtk.ListBox, row: Gtk.ListBoxRow) => {
+                  const hit = hits.peek().find((h) => `${h.chatId}/${h.id}` === row.name);
+                  if (hit !== undefined) store.openAt(hit.chatId, hit.id, hit.timestamp);
+                });
               }}
             />
             </Gtk.Box>

@@ -1,5 +1,6 @@
 // Mise en forme : échappement Pango, dates.
 import GLib from 'gi://GLib';
+import { HIT_END, HIT_START } from './api.ts';
 
 /** Texte échappé pour le balisage Pango (titres d'Adw.ActionRow, etc.). */
 export const esc = (s: string): string => GLib.markup_escape_text(s, -1);
@@ -112,5 +113,18 @@ export function waMarkup(text: string): string {
       // morceaux impairs : dans un bloc de code (s'il est fermé)
       k % 2 === 1 && k < parts.length - 1 ? `${CODE_OPEN}${esc(part.replace(/^\n/u, '').replace(/\n$/u, ''))}</span>` : (k % 2 === 1 ? '```' : '') + part.split('\n').map((l) => line(l)).join('\n'),
     )
+    .join('');
+}
+
+/** Extrait d'un résultat de recherche → balisage Pango, mots trouvés en gras (une seule ligne). */
+export function snippetMarkup(snippet: string): string {
+  return snippet
+    .replaceAll('\n', ' ')
+    .split(HIT_START)
+    .map((part, i) => {
+      if (i === 0) return esc(part);
+      const [hit = '', rest = ''] = part.split(HIT_END);
+      return `<b>${esc(hit)}</b>${esc(rest)}`;
+    })
     .join('');
 }

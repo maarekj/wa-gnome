@@ -138,6 +138,9 @@ export function startServer(opts: { host: string; port: number; token: string; s
       case 'GET /chats':
         json(res, 200, opts.store.chats());
         return;
+      case 'GET /search':
+        json(res, 200, opts.store.search(url.searchParams.get('q') ?? '', Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200)), url.searchParams.get('chat')));
+        return;
       case 'GET /contacts':
         json(res, 200, opts.store.contacts());
         return;
@@ -150,7 +153,10 @@ export function startServer(opts: { host: string; port: number; token: string; s
       case 'GET /chats/:id/messages': {
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 500);
         const before = url.searchParams.get('before');
-        json(res, 200, opts.store.messages(chatId, limit, before === null ? undefined : Number(before)));
+        const from = url.searchParams.get('from');
+        // ouverture sur un message (recherche) : quelques messages avant, puis tous les suivants
+        if (from === null) json(res, 200, opts.store.messages(chatId, limit, before === null ? undefined : Number(before)));
+        else json(res, 200, opts.store.messagesFrom(chatId, Number(from)));
         return;
       }
       case 'POST /chats/:id/messages': {

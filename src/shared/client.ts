@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatList, Contact, Lookup, DEFAULT_PORT, Event, Message, type MessageAction, MessageInfo, Presence, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
+import { Chat, type ChatAction, ChatList, Contact, Lookup, DEFAULT_PORT, Event, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -143,7 +143,17 @@ export class WaClient {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
   }
 
-  /** Suit la présence d'une discussion ; présence connue. */
+  /** Messages contenant les mots de `query` (toutes discussions). */
+  search(query: string, limit = 50, chatId?: string): Promise<SearchHit[]> {
+    const chat = chatId === undefined ? '' : `&chat=${encodeURIComponent(chatId)}`;
+    return this.request('GET', `/search?q=${encodeURIComponent(query)}&limit=${limit}${chat}`, z.array(SearchHit));
+  }
+
+  /** Discussion ouverte sur un message : quelques messages avant `timestamp`, puis tous les suivants. */
+  messagesFrom(chatId: string, timestamp: number): Promise<Message[]> {
+    return this.request('GET', `/chats/${encodeURIComponent(chatId)}/messages?from=${timestamp}`, z.array(Message));
+  }
+
   /** Contacts du carnet (nouvelle discussion). */
   contacts(): Promise<Contact[]> {
     return this.request('GET', '/contacts', z.array(Contact));
@@ -154,6 +164,7 @@ export class WaClient {
     return (await this.request('GET', `/lookup?phone=${encodeURIComponent(phone)}`, Lookup)).id;
   }
 
+  /** Suit la présence d'une discussion ; présence connue. */
   subscribePresence(chatId: string): Promise<Presence> {
     return this.request('POST', `/chats/${encodeURIComponent(chatId)}/subscribe`, Presence);
   }
