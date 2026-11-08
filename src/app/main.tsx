@@ -39,7 +39,20 @@ store.onIncoming = (m, chat) => {
   n.set_body(previewOf(m));
   n.set_default_action_and_target('app.open-chat', new GLib.Variant('s', m.chatId));
   app.send_notification(`chat-${m.chatId}`, n);
+  notified.add(m.chatId);
 };
+
+/** discussions ayant une notification affichée */
+const notified = new Set<string>();
+// discussion lue ailleurs (téléphone, autre fenêtre) : notification retirée
+store.chats.subscribe(() => {
+  if (notified.size === 0) return;
+  for (const c of store.chats.peek()) {
+    if (!notified.has(c.id) || c.unread > 0 || c.markedUnread) continue;
+    app.withdraw_notification(`chat-${c.id}`);
+    notified.delete(c.id);
+  }
+});
 
 // ------------------------------------------------------------------ actions
 

@@ -286,6 +286,11 @@ export class WhatsApp {
           }
         }
         const status = statusOf(update.status);
+        // message reçu lu sur un autre de mes appareils (accusé « read-self ») : discussion lue
+        if ((status === 'read' || status === 'played') && key.fromMe !== true && key.id !== null && key.id !== undefined) {
+          this.#readElsewhere(this.#jid(key.remoteJid), key.id);
+          continue;
+        }
         if (status === null || key.fromMe !== true || key.id === null || key.id === undefined) continue;
         const chatId = this.#jid(key.remoteJid);
         // discussion directe : dates d'accusé du destinataire (les groupes ont message-receipt.update)
@@ -310,7 +315,15 @@ export class WhatsApp {
 
     // accusés par participant (groupes) : dates de distribution, de lecture, d'écoute
     sock.ev.on('message-receipt.update', (updates) => {
-      for (const { key, receipt } of updates) this.#saveReceipt(key, receipt);
+      for (const { key, receipt } of updates) {
+        // groupe lu sur un autre de mes appareils
+        const reader = receipt.userJid;
+        if (key.fromMe !== true && reader !== null && reader !== undefined && this.#store.isMe(this.#jid(reader)) && key.id !== null && key.id !== undefined) {
+          if (receipt.readTimestamp !== null && receipt.readTimestamp !== undefined) this.#readElsewhere(this.#jid(key.remoteJid), key.id);
+          continue;
+        }
+        this.#saveReceipt(key, receipt);
+      }
     });
 
     // groupe renommé
@@ -325,6 +338,11 @@ export class WhatsApp {
       for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject });
       this.#emitChats(groups.map((g) => g.id));
     });
+  }
+
+  /** Discussion lue sur un autre appareil (jusqu'au message `id`) : compteur remis à zéro, app prévenue. */
+  #readElsewhere(chatId: string, id: string): void {
+    if (this.#store.readUpTo(chatId, id)) this.#emitChats([chatId]);
   }
 
   /** Modification ou suppression appliquée ; message visé renvoyé à l'app s'il est connu. */

@@ -282,3 +282,18 @@ void describe('statuts et diffusions', () => {
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
   });
 });
+
+void describe('lu sur un autre appareil', () => {
+  void it('remis à zéro seulement jusqu’au dernier message reçu', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage(msg(PN, 'a', 10), '{}');
+    store.upsertMessage(msg(PN, 'b', 20), '{}');
+    store.incrementUnread(PN);
+    store.incrementUnread(PN);
+    assert.equal(store.readUpTo(PN, 'a'), false);
+    assert.equal(store.chat(PN)?.unread, 2);
+    assert.equal(store.readUpTo(PN, 'b'), true);
+    assert.equal(store.chat(PN)?.unread, 0);
+    assert.equal(store.readUpTo(PN, 'b'), false);
+  });
+});

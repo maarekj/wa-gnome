@@ -909,6 +909,23 @@ export class Store {
 
   #me: Set<string> | null = null;
 
+  /** Un de mes identifiants (numéro ou lid). */
+  isMe(jid: string): boolean {
+    return this.#myIds().has(jid) || this.#myIds().has(this.canonical(jid));
+  }
+
+  /**
+   * Lue sur un autre appareil jusqu'au message `id` : compteur remis à zéro si c'est le dernier
+   * message reçu (ou plus récent) ; true si la discussion a changé.
+   */
+  readUpTo(chatId: string, id: string): boolean {
+    const read = this.#db.prepare('SELECT timestamp FROM messages WHERE chat_id = ? AND id = ?').get(chatId, id);
+    if (read === undefined) return false;
+    const last = this.#db.prepare('SELECT max(timestamp) AS t FROM messages WHERE chat_id = ? AND from_me = 0').get(chatId);
+    if (Number(read['timestamp']) < Number(last?.['t'] ?? 0)) return false;
+    return this.#db.prepare('UPDATE chats SET unread = 0, marked_unread = 0 WHERE id = ? AND (unread > 0 OR marked_unread = 1)').run(chatId).changes > 0;
+  }
+
   #myIds(): Set<string> {
     if (this.#me === null) {
       const parsed = z.array(z.string()).safeParse(JSON.parse(this.meta('me') ?? '[]'));
