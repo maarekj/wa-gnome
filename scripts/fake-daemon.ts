@@ -193,6 +193,8 @@ add(ALICE, false, 'Parfait, à tout à l’heure', 2 * H);
 const photo = { mimetype: 'image/png', width: 960, height: 600, thumbnail: landscape(48, 30).toString('base64'), fileName: null, size: null, seconds: null };
 add(ALICE, false, 'La vue depuis le chalet', 2 * H - 120, null, null, { kind: 'image', media: photo, data: landscape(960, 600) });
 add(ALICE, true, '', 2 * H - 60, null, null, { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });
+// photos plus anciennes (galerie : plusieurs mois)
+for (let i = 1; i <= 7; i += 1) add(ALICE, i % 2 === 0, '', i * 9 * 24 * H, null, null, { kind: 'image', media: { ...photo, width: 480, height: 300, thumbnail: null }, data: landscape(480, 300) });
 add(GROUP, false, 'Qui vient dimanche ?', 3 * H, BOB, 'Bob');
 const moi = add(GROUP, true, 'Moi !', 3 * H - 60);
 store.setReceipt({ chatId: GROUP, messageId: moi.id, user: BOB, delivered: now - 3 * H + 30, read: now - 3 * H + 120 });

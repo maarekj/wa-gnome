@@ -15,6 +15,7 @@ import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pas
 import { avatarText, isChannel } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
+import { openGallery } from './Gallery.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
@@ -828,6 +829,16 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               />
             </Gtk.Box>
           </Gtk.Box>
+          <Gtk.Button
+            $type="end"
+            iconName="folder-pictures-symbolic"
+            tooltipText="Médias, documents et audio de la discussion"
+            visible={chat((c) => c !== null)}
+            onClicked={(b: Gtk.Button) => {
+              const c = chat.peek();
+              if (c !== null) openGallery(b, store, loader, c.id, c.name, toast);
+            }}
+          />
           <Gtk.ToggleButton
             $type="end"
             iconName="system-search-symbolic"

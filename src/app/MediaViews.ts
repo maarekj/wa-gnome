@@ -151,7 +151,7 @@ export function VideoView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
 }
 
 /** Aperçu de lecture : Gtk.Video (lecture immédiate), ouverture externe et enregistrement. */
-function openVideo(parent: Gtk.Widget, ctx: MediaContext, m: MediaMessage, file: Gio.File): void {
+export function openVideo(parent: Gtk.Widget, ctx: MediaContext, m: MediaMessage, file: Gio.File): void {
   const video = new Gtk.Video({ file, autoplay: true, hexpand: true, vexpand: true });
   const header = new Adw.HeaderBar();
   const external = new Gtk.Button({ iconName: 'document-open-symbolic', tooltipText: 'Ouvrir avec l’application par défaut' });

@@ -325,3 +325,28 @@ void describe('recherche', () => {
     assert.deepEqual(list.map((m) => m.id), ['m22', 'm23', 'm24', 'm25', 'm26', 'm27', 'm28', 'm29']);
   });
 });
+
+void describe('galerie', () => {
+  void it('médias par genre, plus récents d’abord, par pages ; supprimés exclus', () => {
+    const store = new Store(':memory:');
+    const media = { mimetype: 'image/jpeg', width: 10, height: 10, thumbnail: null, fileName: null, size: 1, seconds: null };
+    store.upsertMessage({ ...msg(PN, 'i1', 10), kind: 'image', media }, '{}');
+    store.upsertMessage({ ...msg(PN, 'v1', 20), kind: 'video', media }, '{}');
+    store.upsertMessage({ ...msg(PN, 'd1', 30), kind: 'document', media }, '{}');
+    store.upsertMessage({ ...msg(PN, 'i2', 40), kind: 'image', media }, '{}');
+    store.upsertMessage(msg(PN, 't', 50), '{}');
+    assert.deepEqual(store.mediaMessages(PN, ['image', 'video'], 10).map((m) => m.id), ['i2', 'v1', 'i1']);
+    assert.deepEqual(store.mediaMessages(PN, ['image', 'video'], 2, { timestamp: 40, id: 'i2' }).map((m) => m.id), ['v1', 'i1']);
+    // album : même seconde coupée entre deux pages, rien de sauté
+    store.upsertMessage({ ...msg(PN, 'a1', 60), kind: 'image', media }, '{}');
+    store.upsertMessage({ ...msg(PN, 'a2', 60), kind: 'image', media }, '{}');
+    store.upsertMessage({ ...msg(PN, 'a3', 60), kind: 'image', media }, '{}');
+    const first = store.mediaMessages(PN, ['image'], 2);
+    assert.deepEqual(first.map((m) => m.id), ['a3', 'a2']);
+    const last = first.at(-1);
+    assert.deepEqual(store.mediaMessages(PN, ['image'], 10, last === undefined ? undefined : { timestamp: last.timestamp, id: last.id }).map((m) => m.id), ['a1', 'i2', 'i1']);
+    assert.deepEqual(store.mediaMessages(PN, ['document'], 10).map((m) => m.id), ['d1']);
+    store.applyRevoke(PN, 'i2');
+    assert.deepEqual(store.mediaMessages(PN, ['image'], 10).map((m) => m.id), ['a3', 'a2', 'a1', 'i1']);
+  });
+});

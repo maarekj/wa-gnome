@@ -96,6 +96,9 @@ export const STYLESHEET = `
   outline: 2px solid alpha(currentColor, 0.6);
   outline-offset: 2px;
 }
+.gallery-tile {
+  border-radius: 6px;
+}
 .chat-search {
   border-left: 1px solid var(--border-color);
   background: var(--sidebar-bg-color);

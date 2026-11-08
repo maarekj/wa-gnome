@@ -237,6 +237,15 @@ export const MessageAction = z.discriminatedUnion('action', [
 export type MessageAction = z.infer<typeof MessageAction>;
 export type Message = z.infer<typeof Message>;
 
+/** Onglets de la galerie des médias : genres de messages qu'ils regroupent. */
+export const GALLERY_KINDS = {
+  visual: ['image', 'video'],
+  document: ['document'],
+  audio: ['audio'],
+} as const satisfies Record<string, readonly MessageKind[]>;
+export type GalleryTab = keyof typeof GALLERY_KINDS;
+export const isGalleryTab = (s: string | null): s is GalleryTab => s !== null && Object.hasOwn(GALLERY_KINDS, s);
+
 /** Marqueurs des mots trouvés dans l'extrait d'un résultat de recherche. */
 export const HIT_START = '\u0001';
 export const HIT_END = '\u0002';

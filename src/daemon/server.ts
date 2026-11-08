@@ -22,7 +22,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type Event, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
+import { ChatAction, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -164,6 +164,16 @@ export function startServer(opts: { host: string; port: number; token: string; s
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
         await opts.wa().send(chatId, body.data.text, body.data.replyTo);
         json(res, 200, {});
+        return;
+      }
+      case 'GET /chats/:id/gallery': {
+        const tab = url.searchParams.get('tab');
+        if (!isGalleryTab(tab)) throw new HttpError(400, 'onglet inconnu');
+        const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? 60) || 60, 300));
+        const before = url.searchParams.get('before');
+        const beforeId = url.searchParams.get('beforeId') ?? '';
+        if (before !== null && !Number.isSafeInteger(Number(before))) throw new HttpError(400, 'curseur invalide');
+        json(res, 200, opts.store.mediaMessages(chatId, GALLERY_KINDS[tab], limit, before === null ? undefined : { timestamp: Number(before), id: beforeId }));
         return;
       }
       case 'GET /chats/:id/messages/:mid/media': {

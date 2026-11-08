@@ -731,6 +731,21 @@ export class Store {
     return [...older, ...this.#messages('m.chat_id = ? AND m.timestamp >= ? ORDER BY m.timestamp ASC', [chatId, timestamp])];
   }
 
+  /**
+   * Messages avec média d'une discussion (galerie), plus récents d'abord, par pages : après le
+   * curseur (horodatage et identifiant du dernier message de la page précédente).
+   */
+  mediaMessages(chatId: string, kinds: readonly string[], limit: number, after?: { timestamp: number; id: string }): Message[] {
+    if (kinds.length === 0) return [];
+    const marks = kinds.map(() => '?').join(', ');
+    const ts = after?.timestamp ?? Number.MAX_SAFE_INTEGER;
+    // même seconde (album) : départagés par l'identifiant, rien n'est sauté entre deux pages
+    return this.#messages(
+      `m.chat_id = ? AND m.deleted = 0 AND m.media IS NOT NULL AND m.kind IN (${marks}) AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?)) ORDER BY m.timestamp DESC, m.id DESC LIMIT ?`,
+      [chatId, ...kinds, ts, ts, after?.id ?? '', limit],
+    );
+  }
+
   /** Contacts du carnet ayant un numéro WhatsApp, par nom. */
   contacts(): { id: string; name: string }[] {
     return this.#db

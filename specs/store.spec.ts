@@ -16,6 +16,7 @@ import { accentCss, parseSettings } from '../src/app/Preferences.ts';
 import { matchContacts } from '../src/app/NewChat.ts';
 import { phoneDigits } from '../src/shared/api.ts';
 import { snippetMarkup } from '../src/shared/format.ts';
+import { byMonth } from '../src/app/Gallery.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -352,5 +353,16 @@ describe('discussion voisine', () => {
     expect(neighbourChat(list, null, 1)).toBe('a');
     expect(neighbourChat(list, 'x', -1)).toBe('c');
     expect(neighbourChat([], null, 1)).toBeNull();
+  });
+});
+
+const localTime = (y: number, mo: number, d: number): number => GLib.DateTime.new_local(y, mo, d, 12, 0, 0)?.to_unix() ?? 0;
+
+describe('galerie', () => {
+  it('groupée par mois, dans l’ordre reçu', () => {
+    const t = localTime;
+    const groups = byMonth([{ timestamp: t(2026, 11, 5) }, { timestamp: t(2026, 11, 1) }, { timestamp: t(2026, 10, 20) }]);
+    expect(groups.map((g) => g.items.length)).toEqual([2, 1]);
+    expect(groups[0]?.label).toMatch(/2026$/u);
   });
 });

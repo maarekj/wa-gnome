@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatList, Contact, Lookup, DEFAULT_PORT, Event, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
+import { Chat, type ChatAction, ChatList, Contact, Lookup, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -141,6 +141,12 @@ export class WaClient {
 
   async chatAction(chatId: string, action: ChatAction): Promise<void> {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
+  }
+
+  /** Galerie d'une discussion : messages avec média de l'onglet, plus récents d'abord, avant `before`. */
+  gallery(chatId: string, tab: GalleryTab, limit = 60, after?: { timestamp: number; id: string }): Promise<Message[]> {
+    const page = after === undefined ? '' : `&before=${after.timestamp}&beforeId=${encodeURIComponent(after.id)}`;
+    return this.request('GET', `/chats/${encodeURIComponent(chatId)}/gallery?tab=${tab}&limit=${limit}${page}`, z.array(Message));
   }
 
   /** Messages contenant les mots de `query` (toutes discussions). */

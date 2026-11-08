@@ -108,3 +108,18 @@ def test_preferences_de_notification_enregistrees(run_app):
     switch.doActionNamed('toggle' if 'toggle' in switch.actions else 'click')
     path = fake.dir / 'data' / 'settings.json'
     wait_until(lambda: path.exists() and json.loads(path.read_text()).get('preview') is False, 5, 'réglage enregistré')
+
+
+def test_galerie_des_medias(run_app):
+    _, app = run_app()
+    app.open_chat('Alice Martin')
+    app.click('button', 'Médias, documents et audio de la discussion')
+    assert app.text_visible('Photos et vidéos')
+    # vignettes groupées par mois ; clic : visionneuse parmi les photos de la galerie
+    tiles = wait_until(lambda: [n for n in app.root.findChildren(lambda n: n.showing and n.description == 'Ouvrir la photo') or app.all(None, 'Ouvrir la photo')], 10, 'vignettes')
+    app.point(tiles[0])
+    assert app.text_visible(' / 9')
+    app.key('Escape')
+    # onglet Documents : aucun dans cette discussion
+    app.click(None, 'Documents')
+    assert app.text_visible('Aucun document')
