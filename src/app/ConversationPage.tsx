@@ -674,6 +674,26 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
         />
       </Gtk.Box>
       <Gtk.Box spacing={6}>
+        {/* émojis : insérés à la position du curseur */}
+        <Gtk.MenuButton
+          iconName="face-smile-symbolic"
+          tooltipText="Émojis"
+          valign={Gtk.Align.END}
+          sensitive={sending((s) => !s)}
+          cssClasses={['circular', 'flat']}
+          direction={Gtk.ArrowType.UP}
+          $={(self: Gtk.MenuButton) => {
+            const chooser = new Gtk.EmojiChooser();
+            chooser.connect('emoji-picked', (_c: Gtk.EmojiChooser, text: string) => {
+              if (view === null) return;
+              // texte sélectionné : remplacé par l'émoji (comme une frappe)
+              view.buffer.delete_selection(true, true);
+              view.buffer.insert_at_cursor(text, -1);
+              view.grab_focus();
+            });
+            self.popover = chooser;
+          }}
+        />
         <Gtk.Button
           iconName="mail-attachment-symbolic"
           tooltipText="Joindre des fichiers"

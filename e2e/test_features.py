@@ -146,3 +146,19 @@ def test_fond_couleur_unie_enregistre(run_app):
     app.click('toggle button', 'Menthe')
     path = fake.dir / 'data' / 'settings.json'
     wait_until(lambda: path.exists() and json.loads(path.read_text()).get('wallpaper') == 'color:menthe', 5, 'fond enregistré')
+
+
+def test_selecteur_emoji(run_app):
+    _, app = run_app()
+    app.open_chat('Alice Martin')
+    composer = app.composer()
+    composer.text = 'Salut '
+    # curseur en fin de texte
+    app.point(composer)
+    app.key('ctrl+End')
+    app.point(app.find(None, 'Émojis'))
+    # premier émoji de la grille au clavier (la fenêtre surgissante a ses propres coordonnées)
+    app.text_visible('Émoticônes et personnes')
+    app.key('Down')
+    app.key('Return')
+    wait_until(lambda: composer.text.startswith('Salut ') and len(composer.text) > len('Salut '), 5, 'émoji inséré')
