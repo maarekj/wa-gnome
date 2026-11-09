@@ -10,6 +10,7 @@ import { ChatList } from './ChatList.tsx';
 import { ConversationPage } from './ConversationPage.tsx';
 import type { Accounts } from './Accounts.ts';
 import { accountSwitcher } from './AccountSwitcher.ts';
+import { CallBanner } from './CallBanner.ts';
 import type { Pictures } from './pictures.ts';
 import { qrCode } from './QrCode.ts';
 
@@ -42,6 +43,8 @@ export interface WindowApi {
   toast: (text: string) => void;
   /** photos de profil du compte affiché (fenêtres ouvertes depuis l'application) */
   readonly pictures: Pictures;
+  /** appels qui sonnent, en surimpression */
+  readonly calls: CallBanner;
 }
 
 /** Bouton du sélecteur de compte, en tête d'une barre d'en-tête. */
@@ -52,8 +55,10 @@ function switcherIn(bar: Adw.HeaderBar, accounts: Accounts, toast: (t: string) =
 export function MainWindow({ app, accounts, ready }: { app: Adw.Application; accounts: Accounts; ready: (api: WindowApi) => void }): JSX.Element {
   let overlay: Adw.ToastOverlay | null = null;
   const toast = (text: string): void => overlay?.add_toast(new Adw.Toast({ title: text, timeout: 5 }));
+  const calls = new CallBanner();
   ready({
     toast,
+    calls,
     get pictures() {
       return accounts.pictures(accounts.active.peek());
     },
@@ -77,10 +82,13 @@ export function MainWindow({ app, accounts, ready }: { app: Adw.Application; acc
           overlay = self;
         }}
       >
-        <Adw.Bin
-          $={(self: Adw.Bin) => {
-            show(self);
-            onCleanup(accounts.active.subscribe(() => show(self)));
+        <Gtk.Overlay
+          $={(self: Gtk.Overlay) => {
+            const bin = new Adw.Bin();
+            self.child = bin;
+            self.add_overlay(calls.widget);
+            show(bin);
+            onCleanup(accounts.active.subscribe(() => show(bin)));
             onCleanup(() => disposeView?.());
           }}
         />

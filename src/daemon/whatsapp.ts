@@ -21,6 +21,7 @@ import {
   type Contact,
   type PresenceData,
   type SignalKeyStore,
+  type WACallEvent,
   type WAMessage,
   type AnyMessageContent,
   type WAMessageKey,
@@ -28,7 +29,7 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { type ChatAction, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { callText, type CallOutcome, type ChatAction, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
 import { type Change, changeOf, editedContent, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
@@ -63,6 +64,22 @@ const statusCode = (e: unknown): number | undefined => {
   return typeof output.statusCode === 'number' ? output.statusCode : undefined;
 };
 
+/** Durée maximale d'une sonnerie (WhatsApp : environ 45 s). */
+const RING_MAX_MS = 90_000;
+
+/** Appel en cours de sonnerie ; `outcome` : issue connue (logged : ligne déjà créée par Baileys). */
+interface RingingCall {
+  id: string;
+  chatId: string;
+  /** appelant (identifiant d'origine, pour le refus) */
+  from: string;
+  video: boolean;
+  group: boolean;
+  /** secondes */
+  at: number;
+  outcome: CallOutcome | 'logged' | null;
+}
+
 export class WhatsApp {
   readonly #store: Store;
   readonly #authDir: string;
@@ -77,6 +94,8 @@ export class WhatsApp {
   #online = false;
   #status: Status = { state: 'starting', qr: null, me: null, error: null };
   #stopped = false;
+  /** appels qui sonnent */
+  readonly #calls = new Map<string, RingingCall>();
   /** reconnexion programmée (annulée par stop) */
   #restartTimer: NodeJS.Timeout | null = null;
 
@@ -246,6 +265,11 @@ export class WhatsApp {
         this.#emit({ type: 'message', message: m });
         this.#emitChats([m.chatId]);
       }
+    });
+
+    // appels reçus : sonnerie et fin (on ne peut ni décrocher ni appeler)
+    sock.ev.on('call', (events) => {
+      for (const c of events) this.#onCall(c);
     });
 
     // supprimé pour moi sur un autre appareil (synchronisation de l'état WhatsApp)
@@ -1021,6 +1045,72 @@ export class WhatsApp {
     if (marked) {
       const { jid, lastMessages } = this.#target(chatId);
       await sock.chatModify({ markRead: true, lastMessages }, jid);
+    }
+  }
+
+  // ------------------------------------------------------------------ appels
+
+  #onCall(c: WACallEvent): void {
+    // appel ancien reçu en différé (appareil hors ligne) : ligne « manqué » de Baileys (discussion
+    // directe ; appel de groupe en différé : pas de ligne)
+    if (c.offline) return;
+    if (c.status === 'offer') {
+      // appelant en lid avec son numéro : correspondance apprise (lignes d'appel de Baileys au même endroit)
+      if (c.callerPn !== undefined && c.chatId.endsWith('@lid')) this.#learn([{ lid: c.chatId, pn: c.callerPn }]);
+      const chatId = this.#jid(c.groupJid ?? c.callerPn ?? c.chatId);
+      const call: RingingCall = { id: c.id, chatId, from: c.from, video: c.isVideo === true, group: c.isGroup === true, at: Math.floor(c.date.getTime() / 1000), outcome: null };
+      this.#calls.set(c.id, call);
+      this.#emitCall(call, 'ringing');
+      // fin jamais reçue (connexion coupée) : notification retirée après la durée d'une sonnerie
+      setTimeout(() => {
+        if (this.#stopped || this.#calls.get(c.id) !== call) return;
+        this.#calls.delete(c.id);
+        this.#emitCall(call, 'ended');
+      }, RING_MAX_MS);
+      return;
+    }
+    const call = this.#calls.get(c.id);
+    if (call === undefined) return;
+    // pris sur un autre appareil, refusé ailleurs, ou terminé
+    if (c.status === 'accept') call.outcome = 'answered';
+    else if (c.status === 'reject' && call.outcome === null) call.outcome = 'rejected';
+    // timeout : ligne « manqué » créée par Baileys (même identifiant) ; groupe : la nôtre, dans le groupe
+    else if (c.status === 'timeout') call.outcome ??= call.group ? 'missed' : 'logged';
+    else if (c.status !== 'terminate') return;
+    this.#calls.delete(c.id);
+    this.#emitCall(call, 'ended');
+    // raccroché avant la fin de la sonnerie : manqué (pas de ligne de Baileys dans ce cas)
+    const outcome = call.outcome ?? 'missed';
+    if (outcome !== 'logged') this.#logCall(call, outcome);
+  }
+
+  #emitCall(call: RingingCall, state: 'ringing' | 'ended'): void {
+    this.#emit({ type: 'call', call: { id: call.id, chatId: call.chatId, video: call.video, group: call.group, state } });
+  }
+
+  /** Ligne d'appel dans la discussion (identifiant de l'appel : pas de doublon avec Baileys). */
+  #logCall(call: RingingCall, outcome: CallOutcome): void {
+    this.#store.upsertMessage({ id: call.id, chatId: call.chatId, fromMe: false, sender: call.group ? this.#jid(call.from) : null, senderName: null, timestamp: call.at, kind: 'call', text: callText(call.video, outcome), media: null, quoted: null, status: null }, '{}');
+    if (outcome === 'missed') this.#store.incrementUnread(call.chatId);
+    const m = this.#store.message(call.chatId, call.id);
+    if (m !== null) this.#emit({ type: 'message', message: m });
+    this.#emitChats([call.chatId]);
+  }
+
+  /** Refuse un appel qui sonne ; `message` envoyé à l'appelant. */
+  async rejectCall(callId: string, message?: string): Promise<void> {
+    const call = this.#calls.get(callId);
+    if (call === undefined) throw new Error('appel terminé');
+    await this.#open().rejectCall(callId, call.from);
+    // refusé ici : terminé tout de suite (le serveur ne renvoie pas forcément de fin à ce poste)
+    this.#calls.delete(callId);
+    this.#emitCall(call, 'ended');
+    this.#logCall(call, 'rejected');
+    if (message === undefined) return;
+    try {
+      await this.send(call.chatId, message);
+    } catch (error) {
+      throw new Error(`appel refusé, mais message non envoyé : ${errorText(error)}`, { cause: error });
     }
   }
 

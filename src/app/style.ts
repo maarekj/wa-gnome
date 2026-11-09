@@ -228,6 +228,23 @@ export const STYLESHEET = `
   border-radius: 999px;
   padding: 2px 10px;
 }
+/* appel qui sonne, en surimpression */
+.call-banner {
+  padding: 12px 14px;
+  box-shadow: 0 6px 24px alpha(black, 0.25);
+}
+.call-banner .ringing {
+  color: var(--success-color);
+}
+/* ligne d'un appel ; manqué : en rouge, comme sur le téléphone */
+.call-line {
+  background: alpha(currentColor, 0.06);
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+.call-line.missed {
+  color: var(--error-color);
+}
 .unread-badge {
   background: var(--accent-bg-color);
   color: var(--accent-fg-color);

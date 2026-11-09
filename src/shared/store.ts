@@ -2,7 +2,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { createState, type Accessor, type Setter } from 'gnim';
-import type { Chat, ChatAction, ChatList, Event, Message, Presence, Status } from './api.ts';
+import type { Call, Chat, ChatAction, ChatList, Event, Message, Presence, Status } from './api.ts';
 import type { Link, WaClient } from './client.ts';
 import { errorMessage } from './errors.ts';
 
@@ -83,6 +83,8 @@ export class Store {
   onPicture: ((id: string) => void) | null = null;
   /** nouveau message reçu (notifications) */
   onIncoming: ((m: Message, chat: Chat | undefined) => void) | null = null;
+  /** appel reçu qui sonne ou se termine (notification) */
+  onCall: ((call: Call, chat: Chat | undefined) => void) | null = null;
 
   readonly #setLink: (l: Link) => void;
   readonly #setStatus: (s: Status) => void;
@@ -215,6 +217,9 @@ export class Store {
       case 'message':
         if (e.message.chatId === this.current.peek()) this.#setMessages(mergeMessage(this.messages.peek(), e.message));
         if (!e.message.fromMe) this.onIncoming?.(e.message, this.#byId.get(e.message.chatId));
+        break;
+      case 'call':
+        this.onCall?.(e.call, this.#byId.get(e.call.chatId));
         break;
       default:
         e satisfies never;

@@ -245,6 +245,11 @@ export class WaClient {
     await this.request('DELETE', '', z.unknown());
   }
 
+  /** Refuse un appel qui sonne ; `message` envoyé à l'appelant. */
+  async rejectCall(callId: string, message?: string): Promise<void> {
+    await this.request('POST', `/calls/${encodeURIComponent(callId)}/reject`, z.unknown(), message === undefined ? {} : { message });
+  }
+
   async logout(): Promise<void> {
     await this.request('POST', '/logout', z.unknown());
   }

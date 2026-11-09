@@ -107,7 +107,8 @@ export const ChatAction = z.discriminatedUnion('action', [
 ]);
 export type ChatAction = z.infer<typeof ChatAction>;
 
-export const MessageKind = z.enum(['text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contact', 'reaction', 'other']);
+/** `call` : ligne d'appel (manqué, refusé…), texte déjà rédigé (callText) */
+export const MessageKind = z.enum(['text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contact', 'reaction', 'call', 'other']);
 export type MessageKind = z.infer<typeof MessageKind>;
 
 /** Média joint à un message (contenu téléchargé à la demande : `GET …/messages/:mid/media`). */
@@ -388,6 +389,41 @@ export const PresenceBody = z.object({ online: z.boolean() });
 /** Ma saisie dans une discussion (`POST /chats/:id/typing`). */
 export const TypingBody = z.object({ state: z.enum(['composing', 'recording', 'paused']) });
 
+/** Issue d'un appel reçu, pour sa ligne dans la discussion. */
+export type CallOutcome = 'missed' | 'rejected' | 'answered' | 'outgoing';
+
+/** Texte de la ligne d'un appel (« Appel vocal manqué », « Appel vidéo refusé »…). */
+export function callText(video: boolean, outcome: CallOutcome): string {
+  const kind = video ? 'Appel vidéo' : 'Appel vocal';
+  switch (outcome) {
+    case 'missed':
+      return `${kind} manqué`;
+    case 'rejected':
+      return `${kind} refusé`;
+    case 'outgoing':
+      return `${kind} sortant`;
+    case 'answered':
+      return kind;
+    default:
+      return outcome satisfies never;
+  }
+}
+
+/** Ligne d'un appel manqué (en rouge, notifiée). */
+export const isMissedCall = (m: Pick<Message, 'kind' | 'text'>): boolean => m.kind === 'call' && m.text.endsWith(' manqué');
+/** Ligne d'un appel vidéo. */
+export const isVideoCall = (m: Pick<Message, 'kind' | 'text'>): boolean => m.kind === 'call' && m.text.startsWith('Appel vidéo');
+
+/**
+ * Appel reçu (on ne peut ni décrocher ni appeler : audio et vidéo de WhatsApp non pris en charge).
+ * `ringing` : sonne (notification) ; `ended` : terminé, refusé ou pris sur un autre appareil.
+ */
+export const Call = z.object({ id: z.string(), chatId: z.string(), video: z.boolean(), group: z.boolean(), state: z.enum(['ringing', 'ended']) });
+export type Call = z.infer<typeof Call>;
+
+/** Refus d'un appel (`POST /calls/:id/reject`), avec un message envoyé à l'appelant. */
+export const RejectBody = z.object({ message: z.optional(z.string()) });
+
 /** Événements du flux `GET /events` (une ligne `data:` JSON par événement). */
 export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('status'), status: Status }),
@@ -408,6 +444,8 @@ export const Event = z.discriminatedUnion('type', [
   /** listes modifiées (liste complète) */
   z.object({ type: z.literal('lists'), lists: z.array(ChatList) }),
   z.object({ type: z.literal('message'), message: Message }),
+  /** appel reçu : sonne, ou terminé */
+  z.object({ type: z.literal('call'), call: Call }),
 ]);
 export type Event = z.infer<typeof Event>;
 
@@ -447,8 +485,10 @@ export function previewOf(m: Pick<Message, 'kind' | 'text'>): string {
     location: 'Position',
     contact: 'Contact',
     reaction: 'Réaction',
+    call: 'Appel',
     other: 'Message',
   };
+  if (m.kind === 'call') return m.text === '' ? label.call : m.text;
   if (m.text !== '') return m.kind === 'text' ? m.text : `${label[m.kind]} · ${m.text}`;
   return label[m.kind];
 }

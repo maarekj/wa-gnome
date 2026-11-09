@@ -1,6 +1,6 @@
 // Conversion des messages Baileys (protobuf) vers le format de l'API.
 import { getContentType, isJidGroup, jidNormalizedUser, normalizeMessageContent, proto, type WAMessage } from 'baileys';
-import { type Media, type Message, type MessageKind, type Quoted, statusOf } from '../shared/api.ts';
+import { callText, type Media, type Message, type MessageKind, type Quoted, statusOf } from '../shared/api.ts';
 
 /** Horodatage protobuf (number ou Long) en secondes. */
 export const seconds = (ts: number | { toNumber: () => number } | null | undefined): number => {
@@ -9,7 +9,8 @@ export const seconds = (ts: number | { toNumber: () => number } | null | undefin
 };
 
 /** Messages techniques (clés de chiffrement, accusés…) : jamais affichés. */
-const HIDDEN = new Set(['reactionMessage', 'protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'keepInChatMessage']);
+// call : appel de groupe annoncé par Baileys (rangé chez l'appelant) ; ligne écrite par le démon
+const HIDDEN = new Set(['call', 'reactionMessage', 'protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'keepInChatMessage']);
 
 type Extract = (c: proto.IMessage) => { kind: MessageKind; text: string };
 
@@ -27,6 +28,15 @@ const EXTRACT: Partial<Record<keyof proto.IMessage, Extract>> = {
   liveLocationMessage: (c) => ({ kind: 'location', text: c.liveLocationMessage?.caption ?? '' }),
   contactMessage: (c) => ({ kind: 'contact', text: c.contactMessage?.displayName ?? '' }),
   reactionMessage: (c) => ({ kind: 'reaction', text: c.reactionMessage?.text ?? '' }),
+  // journal d'appel (historique d'un autre appareil)
+  callLogMesssage: (c) => {
+    const log = c.callLogMesssage;
+    const O = proto.Message.CallLogMessage.CallOutcome;
+    const outcome = log?.callOutcome;
+    const missed = outcome === O.MISSED || outcome === O.SILENCED_BY_DND || outcome === O.SILENCED_UNKNOWN_CALLER;
+    // FAILED et autres : simple appel (pas d'issue sûre)
+    return { kind: 'call', text: callText(log?.isVideo === true, missed ? 'missed' : outcome === O.REJECTED ? 'rejected' : 'answered') };
+  },
 };
 
 /** Champs communs des messages média (image, vidéo, audio, document, autocollant). */
@@ -93,6 +103,15 @@ export function quotedOf(content: proto.IMessage): RawQuoted | null {
     return { id, sender, kind, text };
   }
 }
+
+const Stub = proto.WebMessageInfo.StubType;
+/** Appels manqués (messages techniques) : vidéo ou non. */
+const CALL_STUBS = new Map<number, boolean>([
+  [Stub.CALL_MISSED_VOICE, false],
+  [Stub.CALL_MISSED_VIDEO, true],
+]);
+/** Appels de groupe manqués de Baileys : rangés chez l'appelant ; ligne écrite par le démon dans le groupe. */
+const GROUP_CALL_STUBS = new Set<number>([Stub.CALL_MISSED_GROUP_VOICE, Stub.CALL_MISSED_GROUP_VIDEO]);
 
 /** Message reçu par une liste de diffusion (pas un statut, pas une de mes listes). */
 export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean => !fromMe && remoteJid.endsWith('@broadcast') && remoteJid !== 'status@broadcast';
@@ -183,6 +202,12 @@ export function toMessage(wa: WAMessage): Converted | null {
   if (remoteJid === null || remoteJid === undefined || id === null || id === undefined) return null;
   // statuts (« stories ») : hors périmètre
   if (remoteJid === 'status@broadcast') return null;
+  // appel manqué (message technique créé par Baileys) : ligne d'appel
+  if (GROUP_CALL_STUBS.has(wa.messageStubType ?? -1)) return null;
+  const missed = CALL_STUBS.get(wa.messageStubType ?? -1);
+  if (missed !== undefined) {
+    return { id, chatId: jidNormalizedUser(remoteJid), fromMe: false, sender: null, senderName: wa.pushName ?? null, timestamp: seconds(wa.messageTimestamp), kind: 'call', text: callText(missed, 'missed'), media: null, quoted: null, status: null };
+  }
   // supprimé pour tous (historique) : gardé comme « Ce message a été supprimé »
   if (wa.messageStubType === proto.WebMessageInfo.StubType.REVOKE) {
     const fromMe = wa.key.fromMe === true;
@@ -203,12 +228,15 @@ export function toMessage(wa: WAMessage): Converted | null {
     };
   }
   const content = normalizeMessageContent(wa.message);
-  const type = getContentType(content);
+  // journal d'appel : champ mal orthographié par WhatsApp, ignoré par getContentType
+  const type = content?.callLogMesssage === null || content?.callLogMesssage === undefined ? getContentType(content) : 'callLogMesssage';
   if (content === undefined || type === undefined || HIDDEN.has(type)) return null;
 
   const extract = EXTRACT[type];
-  const { kind, text } = extract === undefined ? { kind: 'other' as const, text: '' } : extract(content);
   const fromMe = wa.key.fromMe === true;
+  const extracted = extract === undefined ? { kind: 'other' as const, text: '' } : extract(content);
+  // appel que j'ai passé (journal du téléphone) : ni manqué ni refusé de mon côté
+  const { kind, text } = fromMe && extracted.kind === 'call' ? { kind: 'call' as const, text: callText(content.callLogMesssage?.isVideo === true, 'outgoing') } : extracted;
   const participant = wa.key.participant ?? wa.participant ?? null;
   // liste de diffusion reçue : dans la discussion avec l'expéditeur (comme sur le téléphone)
   const broadcast = isReceivedBroadcast(remoteJid, fromMe) && participant !== null;

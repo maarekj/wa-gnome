@@ -281,6 +281,16 @@ void describe('statuts et diffusions', () => {
     assert.equal(toMessage(wa)?.chatId, PN);
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
   });
+  void it('conversion : appels manqués et journal d’appels', () => {
+    const stub = { key: { remoteJid: PN, id: 'c1', fromMe: false }, messageStubType: proto.WebMessageInfo.StubType.CALL_MISSED_VIDEO, messageTimestamp: 10 };
+    assert.deepEqual([toMessage(stub)?.kind, toMessage(stub)?.text], ['call', 'Appel vidéo manqué']);
+    const log = { key: { remoteJid: PN, id: 'c2', fromMe: false }, message: { callLogMesssage: { isVideo: false, callOutcome: proto.Message.CallLogMessage.CallOutcome.REJECTED } }, messageTimestamp: 10 };
+    assert.equal(toMessage(log)?.text, 'Appel vocal refusé');
+    const store = new Store(':memory:');
+    const m = toMessage(stub);
+    if (m !== null) store.upsertMessage(m, '{}');
+    assert.equal(store.message(PN, 'c1')?.kind, 'call');
+  });
 });
 
 void describe('lu sur un autre appareil', () => {

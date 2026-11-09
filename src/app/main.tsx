@@ -5,7 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createRoot } from 'gnim';
-import { DEFAULT_ACCOUNT, isMuted, previewOf } from '../shared/api.ts';
+import { DEFAULT_ACCOUNT, isMissedCall, isMuted, previewOf } from '../shared/api.ts';
 import { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Store } from '../shared/store.ts';
@@ -49,6 +49,8 @@ function watch(store: Store): void {
   /** discussions ayant une notification affichée */
   const shown = new Set<string>();
   store.onIncoming = (m, chat) => {
+    // ligne d'appel : notification seulement pour un appel manqué (la sonnerie a déjà la sienne)
+    if (m.kind === 'call' && !isMissedCall(m)) return;
     // discussion affichée dans une fenêtre active : déjà vue
     if (mainWindow?.isActive === true && active() === store && store.current.peek() === m.chatId) {
       store.markRead(m.chatId);
@@ -77,6 +79,47 @@ function watch(store: Store): void {
     app.send_notification(notificationId(store, m.chatId), n);
     shown.add(m.chatId);
   };
+  // appel qui sonne : notification (décrocher se fait sur le téléphone) ; retirée à la fin
+  store.onCall = (call, chat) => {
+    const id = `call-${target(store, call.id)}`;
+    if (call.state === 'ended') {
+      app.withdraw_notification(id);
+      api?.calls.end(id);
+      return;
+    }
+    const name = chat?.name ?? call.chatId.split('@')[0] ?? '';
+    const several = accounts.list.peek().length > 1;
+    // fenêtre ouverte : appel en surimpression (même si les notifications sont coupées)
+    if (api !== null) {
+      const avatar = new Adw.Avatar({ size: 48, text: name, showInitials: true });
+      // photo connue tout de suite (hors portée gnim : pas d'abonnement à libérer)
+      avatar.set_custom_image(accounts.pictures(store).texture(call.chatId).peek());
+      const t = new GLib.Variant('s', target(store, call.id));
+      api.calls.ring({
+        key: id,
+        call,
+        name,
+        account: several ? accountName(store) : null,
+        picture: avatar,
+        open: () => {
+          bring(store, call.chatId);
+          store.open(call.chatId);
+        },
+        reject: (withMessage) => rejectCall(t, withMessage),
+      });
+    }
+    // fenêtre active : la surimpression suffit
+    if (!settings().notify || mainWindow?.isActive === true) return;
+    const n = new Gio.Notification();
+    n.set_title(`${name} vous appelle${several ? ` (${accountName(store)})` : ''}`);
+    n.set_body(`${call.video ? 'Appel vidéo' : 'Appel vocal'} WhatsApp${call.group ? ' de groupe' : ''} · décrochez sur votre téléphone`);
+    n.set_priority(Gio.NotificationPriority.URGENT);
+    n.set_default_action_and_target('app.open-chat', new GLib.Variant('s', target(store, call.chatId)));
+    const t = new GLib.Variant('s', target(store, call.id));
+    n.add_button_with_target('Refuser', 'app.reject-call', t);
+    n.add_button_with_target('Refuser avec un message', 'app.reject-call-message', t);
+    app.send_notification(id, n);
+  };
   // discussion lue ailleurs (téléphone, autre fenêtre) : notification retirée
   const off = store.chats.subscribe(() => {
     if (shown.size === 0) return;
@@ -89,6 +132,7 @@ function watch(store: Store): void {
   unwatch.set(store, () => {
     off();
     store.onIncoming = null;
+    store.onCall = null;
     for (const id of shown) app.withdraw_notification(notificationId(store, id));
   });
 }
@@ -144,6 +188,25 @@ readChat.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) 
   t.store.markRead(t.chatId);
 });
 app.add_action(readChat);
+
+/** app.reject-call / app.reject-call-message : boutons d'une notification d'appel. Refuse l'appel d'une notification (cible : compte/identifiant de l'appel). */
+function rejectCall(param: GLib.Variant | null, withMessage: boolean): void {
+  const t = parseTarget(param);
+  if (t === null) return;
+  app.withdraw_notification(`call-${target(t.store, t.chatId)}`);
+  api?.calls.end(`call-${target(t.store, t.chatId)}`);
+  t.store.client.rejectCall(t.chatId, withMessage ? settings().rejectMessage : undefined).catch((error: unknown) => {
+    console.error(`refus de l'appel : ${errorMessage(error)}`);
+    api?.toast(`Refus impossible : ${errorMessage(error)}`);
+  });
+}
+for (const [name, withMessage] of [['reject-call', false], ['reject-call-message', true]] as const) {
+  const action = new Gio.SimpleAction({ name, parameterType: new GLib.VariantType('s') });
+  action.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
+    rejectCall(param, withMessage);
+  });
+  app.add_action(action);
+}
 
 /** app.logout : déconnexion du compte (le poste disparaît des appareils connectés) */
 const logout = new Gio.SimpleAction({ name: 'logout' });

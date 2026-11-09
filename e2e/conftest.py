@@ -109,6 +109,14 @@ class Fake:
         """Message reçu dans une discussion (`account` : d'un compte ajouté)."""
         self._request('POST', '/incoming', {'chatId': chat_id, 'text': text, **({} if account is None else {'account': account})})
 
+    def call(self, chat_id: str, video: bool = False) -> str:
+        """Appel qui sonne ; son identifiant."""
+        return self._request('POST', '/call', {'chatId': chat_id, 'video': video})['id']
+
+    def end_call(self, call_id: str) -> None:
+        """Appel raccroché par l'appelant avant réponse (manqué)."""
+        self._request('POST', '/call/end', {'id': call_id})
+
     def pair(self) -> None:
         """Appairage terminé (QR scanné) : connecté."""
         self._request('POST', '/pair', {})

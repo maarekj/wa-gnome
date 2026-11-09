@@ -5,6 +5,7 @@
 //   GET /calls (appels reçus de l'app : méthode et arguments), POST /incoming {chatId, text}
 //   (message reçu, {account} : d'un autre compte), POST /pair (appairage terminé : connecté ;
 //   {account} : compte ajouté, appairé sous le nom « Travail » avec une discussion).
+//   POST /call {chatId, video?} : appel qui sonne (renvoie son id) ; POST /call/end {id} : raccroché (manqué).
 //   [--no-replies] : pas de réponse automatique ni de « écrit… » après un envoi.
 // Le jeton est écrit dans <dir>/token : lancer l'app avec WA_GNOME_DATA_DIR=<dir> WA_GNOME_URL=….
 import { spawnSync } from 'node:child_process';
@@ -14,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { deflateSync } from 'node:zlib';
-import { ConnectionState, DEFAULT_ACCOUNT, type Event, type Media, type Message, type MessageKind, type Presence, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
+import { callText, type CallOutcome, ConnectionState, DEFAULT_ACCOUNT, type Event, type Media, type Message, type MessageKind, type Presence, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
 import { type Account, type Backend, type Server, startServer } from '../src/daemon/server.ts';
 import type { Converted } from '../src/daemon/convert.ts';
 import { Store } from '../src/daemon/store.ts';
@@ -279,7 +280,28 @@ let server: Server | null = null;
 const emit = (e: Event): void => server?.emit(DEFAULT_ACCOUNT, e);
 let status: Status = { state: ConnectionState.parse(values.state), qr: values.state === 'qr' ? 'https://wa.me/settings/linked_devices#fake-qr-code' : null, me: values.state === 'open' ? { id: '33600000000@s.whatsapp.net', name: 'Moi' } : null, error: null };
 
+/** Appels simulés qui sonnent. */
+const ringing = new Map<string, { chatId: string; video: boolean }>();
+/** Fin d'un appel simulé : notification retirée, ligne dans la discussion. */
+const endCall = (id: string, outcome: CallOutcome): void => {
+  const c = ringing.get(id);
+  if (c === undefined) return;
+  ringing.delete(id);
+  emit({ type: 'call', call: { id, chatId: c.chatId, video: c.video, group: false, state: 'ended' } });
+  store.upsertMessage({ id, chatId: c.chatId, fromMe: false, sender: null, senderName: null, timestamp: Math.floor(Date.now() / 1000), kind: 'call', text: callText(c.video, outcome), media: null, quoted: null, status: null }, '{}');
+  if (outcome === 'missed') store.incrementUnread(c.chatId);
+  const m = store.message(c.chatId, id);
+  if (m !== null) emit({ type: 'message', message: m });
+  emit({ type: 'chats', chats: [store.chat(c.chatId)].filter((x) => x !== null) });
+};
+
 const backend: Backend = {
+  rejectCall: async (callId, message) => {
+    const c = ringing.get(callId);
+    if (c === undefined) throw new Error('appel terminé');
+    endCall(callId, 'rejected');
+    if (message !== undefined) await backend.send(c.chatId, message);
+  },
   get status() {
     return status;
   },
@@ -485,6 +507,7 @@ function extraAccount(id: string): Account & { pair: () => void; incoming: (chat
     lookup: (digits) => Promise.resolve(`${digits}@s.whatsapp.net`),
     info: (chatId) => Promise.resolve({ id: chatId, name: db.displayName(chatId), group: false, phone: chatId.split('@')[0] ?? null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] }),
     typing: resolved,
+    rejectCall: resolved,
   };
   return {
     store: db,
@@ -548,6 +571,19 @@ async function control(req: http.IncomingMessage): Promise<unknown> {
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
     return m;
+  }
+  if (req.method === 'POST' && req.url === '/call') {
+    const b = await readJson(req);
+    seq += 1;
+    const id = `call${seq}`;
+    const c = { chatId: String(b['chatId']), video: b['video'] === true };
+    ringing.set(id, c);
+    emit({ type: 'call', call: { id, ...c, group: false, state: 'ringing' } });
+    return { id };
+  }
+  if (req.method === 'POST' && req.url === '/call/end') {
+    endCall(String((await readJson(req))['id']), 'missed');
+    return {};
   }
   if (req.method === 'POST' && req.url === '/pair') {
     const b = await readJson(req);

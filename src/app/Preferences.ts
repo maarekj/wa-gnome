@@ -40,6 +40,7 @@ const SettingsFile = z.object({
   voiceLanguages: z.optional(z.array(z.string())),
   chatVoiceLanguages: z.optional(z.record(z.string(), z.string())),
   account: z.optional(z.string()),
+  rejectMessage: z.optional(z.string()),
 });
 
 /** Outil de traduction : CLI installée par l'utilisateur (ses identifiants). */
@@ -91,8 +92,10 @@ export interface Settings {
   readonly chatVoiceLanguages: Readonly<Record<string, string>>;
   /** compte affiché au dernier lancement */
   readonly account: string;
+  /** message envoyé par « Refuser avec un message » (notification d'appel) */
+  readonly rejectMessage: string;
 }
-const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT };
+const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT, rejectMessage: 'Je ne peux pas répondre, je te rappelle' };
 const asAccent = (id: string | undefined): AccentId => ACCENTS.find((a) => a.id === id)?.id ?? 'system';
 
 /** Texte sans espaces autour, ou null s'il est absent ou vide. */
@@ -119,6 +122,7 @@ export function parseSettings(text: string | null): Settings {
       voiceLanguages: raw.voiceLanguages ?? DEFAULTS.voiceLanguages,
       chatVoiceLanguages: raw.chatVoiceLanguages ?? {},
       account: nonEmpty(raw.account) ?? DEFAULT_ACCOUNT,
+      rejectMessage: nonEmpty(raw.rejectMessage) ?? DEFAULTS.rejectMessage,
     };
   } catch {
     return DEFAULTS;
@@ -492,6 +496,9 @@ export function openPreferences(parent: Gtk.Widget): void {
     }),
   );
   notifications.add(preview);
+  const reject = new Adw.EntryRow({ title: 'Message de refus d’un appel', text: current.rejectMessage });
+  reject.connect('changed', () => update({ rejectMessage: nonEmpty(reject.text) ?? DEFAULTS.rejectMessage }));
+  notifications.add(reject);
   page.add(notifications);
   page.add(translationGroup());
   page.add(transcriptionGroup(toast));

@@ -32,10 +32,10 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   virtuel, bus D-Bus et bus d'accessibilité privés. Un seul : `pnpm e2e -k envoyer`. Le faux démon
   y est lancé avec `--control <port>` (`GET /calls` : appels reçus de l'app ; `POST /incoming`
   {chatId, text, account?} : message reçu ; `POST /pair` : appairage terminé, du dernier compte ajouté
-  s'il y en a un) et `--no-replies`.
+  s'il y en a un ; `POST /call` {chatId, video?} : appel qui sonne, `POST /call/end` {id} : manqué) et `--no-replies`.
   Scénarios : appairage, ouverture, envoi, réception (liste et discussion ouverte), déconnexion,
   nouvelle discussion, recherche globale et dans la discussion, « Répondre » d’une notification,
-  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias, sélection en glissant, sélecteur d’émojis, fiche du groupe et du contact, liens cliquables (`WA_GNOME_TEST_LINKS` : `LIEN url` journalisé), message vocal (son de test à la place du micro), brouillon par discussion, émojis seuls en grand, forme d’onde des vocaux, traduction et transcription (`WA_GNOME_TEST_TRANSLATE` : simulées, aucun outil lancé), plusieurs comptes (ajout, sélecteur, notification d’un autre compte, retrait).
+  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias, sélection en glissant, sélecteur d’émojis, fiche du groupe et du contact, liens cliquables (`WA_GNOME_TEST_LINKS` : `LIEN url` journalisé), message vocal (son de test à la place du micro), brouillon par discussion, émojis seuls en grand, forme d’onde des vocaux, traduction et transcription (`WA_GNOME_TEST_TRANSLATE` : simulées, aucun outil lancé), plusieurs comptes (ajout, sélecteur, notification d’un autre compte, retrait), appels (refus avec message, appel manqué).
   À lancer avant de fusionner un changement d'interface ; ajouter le scénario de chaque fonctionnalité.
   Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
 - `pnpm daemon` : lance le démon au premier plan (`WA_GNOME_LOG=debug` pour les journaux Baileys).
@@ -46,7 +46,8 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   le faux démon, et en fait une capture. **Toujours valider un changement d'interface ainsi**, jamais
   en ouvrant une fenêtre sur l'écran de l'utilisateur ni en utilisant son vrai compte WhatsApp.
   Interactions : `SCREENSHOT_XDOTOOL="mousemove 150 125 click 1; sleep 1; type bonjour; key Return; sleep 2"`
-  (`sh: commande` pour une commande shell, ex. `xclip` pour remplir le presse-papier).
+  (`sh: commande` pour une commande shell, ex. `xclip` pour remplir le presse-papier ; faux démon
+  pilotable par `curl localhost:$WA_GNOME_CONTROL/…`).
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `node scripts/install.ts` : installe le démon (systemd), le lanceur `wa-gnome`, le .desktop, le
   service D-Bus et les icônes.

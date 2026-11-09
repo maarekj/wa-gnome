@@ -7,7 +7,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { DELETED_TEXT, editability, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
+import { DELETED_TEXT, editability, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, emojiOnly, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
@@ -499,6 +499,16 @@ function DeletedBubble(ctx: BubbleContext, m: Message, msg: () => Message, live:
   );
 }
 
+/** Ligne d'un appel (manqué, refusé…), centrée comme un séparateur de jour. */
+function CallLine(m: Message): Gtk.Widget {
+  const missed = isMissedCall(m);
+  const box = new Gtk.Box({ name: `m:${m.id}`, spacing: 6, halign: Gtk.Align.CENTER, marginTop: 4, marginBottom: 4, cssClasses: ['call-line', ...(missed ? ['missed'] : [])] });
+  box.append(new Gtk.Image({ iconName: isVideoCall(m) ? 'camera-video-symbolic' : 'call-start-symbolic' }));
+  const who = m.senderName === null ? '' : ` · ${m.senderName}`;
+  box.append(new Gtk.Label({ label: `${m.text}${who} · ${fmtTime(m.timestamp)}`, cssClasses: ['caption'] }));
+  return box;
+}
+
 function bubble(ctx: BubbleContext) {
   return (item: Item, live: Accessor<Item>): Gtk.Widget => {
     if (item.kind === 'day') return asWidget(<Gtk.Label label={item.label} halign={Gtk.Align.CENTER} marginTop={12} marginBottom={4} cssClasses={['day-separator', 'caption']} />);
@@ -510,6 +520,7 @@ function bubble(ctx: BubbleContext) {
     // groupe, message reçu : photo de l'auteur à gauche
     const author = (w: Gtk.Widget): Gtk.Widget => (item.group && !m.fromMe ? withAuthor(ctx, w, m, live) : w);
     if (m.deleted) return selectableRow(ctx, author(DeletedBubble(ctx, m, msg, live)), m.id, msg);
+    if (m.kind === 'call') return CallLine(m);
     const picture = isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
@@ -1061,7 +1072,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
   const translateAll = (parent: Gtk.Widget, list: readonly Message[], mode: 'translate' | 'transcribe', lang?: string | null): void => {
     // langue choisie à la main : retenue pour les vocaux suivants de la discussion
     if (lang !== undefined) for (const id of new Set(list.map((m) => m.chatId))) setChatVoiceLanguage(id, lang);
-    const todo = list.filter((m) => !m.deleted && (m.kind === 'audio' ? m.media !== null : m.text.trim() !== ''));
+    const todo = list.filter((m) => !m.deleted && m.kind !== 'call' && (m.kind === 'audio' ? m.media !== null : m.text.trim() !== ''));
     if (todo.length === 0) {
       toast('Rien à traduire dans ces messages');
       return;

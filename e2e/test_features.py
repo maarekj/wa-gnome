@@ -312,3 +312,26 @@ def test_plusieurs_comptes(run_app):
     app.click('button', 'Retirer')
     assert fake.wait_call('removeAccount')['args'] == ['compte1']
     assert app.text_visible('Alice Martin')
+
+
+def test_appels_refus_avec_message_et_appel_manque(run_app):
+    fake, app = run_app()
+    app.open_chat('Alice Martin')
+    # appel vocal : « Refuser avec un message » de la notification
+    call = fake.call(conftest.ALICE)
+    app.action('reject-call-message', f"'{call}'")
+    assert fake.wait_call('rejectCall')['args'] == [call, 'Je ne peux pas répondre, je te rappelle']
+    assert app.text_visible('Appel vocal refusé')
+    assert app.text_visible('Je ne peux pas répondre, je te rappelle')
+    # appel vidéo : surimpression dans la fenêtre, retirée quand l'appelant raccroche (manqué)
+    video = fake.call(conftest.ALICE, video=True)
+    assert app.text_visible('Alice Martin vous appelle')
+    fake.end_call(video)
+    assert app.text_visible('Appel vidéo manqué')
+    app.text_gone('Alice Martin vous appelle')
+    # « Refuser » de la surimpression
+    call = fake.call(conftest.ALICE)
+    app.click('button', 'Refuser')
+    wait_until(lambda: len(fake.calls('rejectCall')) == 2, 5, 'second refus')
+    assert fake.calls('rejectCall')[-1]['args'][0] == call
+    app.text_gone('Alice Martin vous appelle')

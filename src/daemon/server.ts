@@ -17,6 +17,7 @@
 //   POST /chats/:id/typing          ma saisie { state }
 //   POST /presence                  ma présence { online }
 //   POST /logout                    déconnexion du compte
+//   POST /calls/:id/reject          refuse un appel qui sonne { message? : envoyé à l'appelant }
 //   GET  /events                    flux SSE des événements (voir shared/api.ts)
 //   GET  /accounts                  comptes et leur état ; POST /accounts : nouveau compte (appairage)
 //   DELETE /accounts/:acc           déconnecte et retire un compte (sauf le compte par défaut)
@@ -25,7 +26,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
+import { type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -55,6 +56,8 @@ export interface Backend {
   /** fiche d'un contact ou d'un groupe */
   info: (chatId: string) => Promise<ChatInfo>;
   typing: (chatId: string, state: 'composing' | 'recording' | 'paused') => Promise<void>;
+  /** refuse un appel qui sonne ; `message` envoyé à l'appelant */
+  rejectCall: (callId: string, message?: string) => Promise<void>;
 }
 
 /** Fichier à envoyer. */
@@ -174,7 +177,7 @@ export function startServer(opts: { host: string; port: number; token: string; a
     const store = account.store;
     const wa = account.wa;
     // segments variables : /chats/:id/messages/:mid
-    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => (parts[0] === 'chats' && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
+    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => ((parts[0] === 'chats' || parts[0] === 'calls') && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
     const chatId = parts[1] ?? '';
     const messageId = parts[3] ?? '';
     switch (route) {
@@ -296,6 +299,14 @@ export function startServer(opts: { host: string; port: number; token: string; a
         const body = PresenceBody.safeParse(await readBody(req));
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
         await wa.setOnline(body.data.online);
+        json(res, 200, {});
+        return;
+      }
+      case 'POST /calls/:id/reject': {
+        const body = RejectBody.safeParse(await readBody(req));
+        if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
+        const text = body.data.message?.trim() ?? '';
+        await wa.rejectCall(chatId, text === '' ? undefined : text);
         json(res, 200, {});
         return;
       }

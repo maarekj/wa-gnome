@@ -4,7 +4,8 @@
 // Variables : SCREENSHOT_DELAY (s, défaut 4), SCREENSHOT_SIZE (défaut 1100x720),
 // SCREENSHOT_XDOTOOL : commandes xdotool jouées avant la capture, séparées par « ; »
 // (ex. « mousemove 200 150 click 1; sleep 1; type bonjour; key Return; sleep 2 » ;
-// « sh: commande » exécute une commande shell, ex. xclip pour remplir le presse-papier).
+// « sh: commande » exécute une commande shell, ex. xclip pour remplir le presse-papier, ou
+// curl -XPOST localhost:$WA_GNOME_CONTROL/call pour piloter le faux démon).
 import { execFileSync, spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,16 +18,19 @@ const out = path.resolve(positionals[0] ?? path.join(root, 'dist', 'screenshot.p
 const delay = process.env['SCREENSHOT_DELAY'] ?? '4';
 const [w = '1100', h = '720'] = (process.env['SCREENSHOT_SIZE'] ?? '1100x720').split('x');
 const port = '4797';
+/** pilotage du faux démon (« sh: curl localhost:4796/incoming… ») : variable WA_GNOME_CONTROL */
+const control = '4796';
 const dir = path.join(os.tmpdir(), 'wa-gnome-screenshot');
 
 await buildApp();
-const fake = spawn(process.execPath, [path.join(root, 'scripts', 'fake-daemon.ts'), '--state', values.state, '--port', port, '--dir', dir], { stdio: 'inherit' });
+const fake = spawn(process.execPath, [path.join(root, 'scripts', 'fake-daemon.ts'), '--state', values.state, '--port', port, '--dir', dir, '--control', control], { stdio: 'inherit' });
 await new Promise((resolve) => {
   setTimeout(resolve, 800);
 });
 const quote = (s: string): string => `'${s.replaceAll("'", String.raw`'\''`)}'`;
 const script = [
   // bus D-Bus privé (pas de contact avec une instance déjà ouverte), sans accessibilité ni portails
+  `export WA_GNOME_CONTROL=${control}`,
   `export GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none GDK_DEBUG=no-portals GIO_USE_VFS=local`,
   // son coupé : aucune lecture sur les haut-parleurs de l'utilisateur
   `export WA_GNOME_SILENT=1 PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=wa-gnome-none`,
