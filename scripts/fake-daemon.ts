@@ -408,7 +408,7 @@ const backend: Backend = {
     const kind = uploadKind(f.mimetype, f.asDocument);
     const m = add(chatId, true, f.caption, 0, null, null, {
       kind,
-      media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: null },
+      media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: f.voice?.seconds ?? null },
       data: f.data,
     }, f.replyTo);
     progress(chatId, m.id);

@@ -14,7 +14,7 @@ import { displaySize } from '../src/app/media.ts';
 import { canRevokeAll, copyText } from '../src/app/Selection.ts';
 import { accentCss, parseSettings } from '../src/app/Preferences.ts';
 import { matchContacts } from '../src/app/NewChat.ts';
-import { phoneDigits } from '../src/shared/api.ts';
+import { phoneDigits, waveform } from '../src/shared/api.ts';
 import { snippetMarkup } from '../src/shared/format.ts';
 import { byMonth } from '../src/app/Gallery.ts';
 import { rangeSelection, rowAt } from '../src/app/DragSelect.ts';
@@ -409,5 +409,15 @@ describe('fiche', () => {
     expect(infoSubtitle({ group: true, phone: null, participants: [{ id: 'a', name: 'A', admin: null, me: true }] })).toBe('Groupe · 1 participant');
     expect(roleOf({ admin: 'superadmin' })).toBe('Créateur du groupe');
     expect(roleOf({ admin: null })).toBe('');
+  });
+});
+
+describe('vocal', () => {
+  it('forme d’onde : 64 valeurs de 0 à 100', () => {
+    const w = waveform([-60, -50, -25, 0, 3]);
+    expect(w.length).toBe(64);
+    expect(Math.max(...w)).toBe(100);
+    expect(Math.min(...w)).toBe(0);
+    expect(waveform([]).every((v) => v === 0)).toBeTrue();
   });
 });

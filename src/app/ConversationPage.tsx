@@ -15,6 +15,7 @@ import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pas
 import { avatarText, isChannel } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
+import { fmtRecording, Recorder } from './Recorder.ts';
 import { attachDragSelect } from './DragSelect.ts';
 import { openGallery } from './Gallery.ts';
 import { openChatInfo } from './ChatInfoDialog.ts';
@@ -508,6 +509,76 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
   };
   /** texte placé dans la saisie au début d'une modification (retiré si elle est abandonnée) */
   let editedText: string | null = null;
+  /** zone de saisie vide (bouton micro à la place d'Envoyer) */
+  const [empty, setEmpty] = createState(true);
+
+  // ---------------------------------------------------------------- message vocal
+  const [recording, setRecording] = createState<{ seconds: number; level: number } | null>(null);
+  let recorder: Recorder | null = null;
+  /** « enregistre un audio… » annoncé au correspondant (toutes les 8 s) */
+  let recordingAnnounced = 0;
+  const startRecording = (): void => {
+    const id = chatId.peek();
+    if (id === null || recorder !== null) return;
+    try {
+      const r = new Recorder();
+      r.onLevel = (db, seconds) => {
+        // relevés reçus après l'envoi ou l'abandon (fin du flux) : ignorés
+        if (recorder !== r) return;
+        setRecording({ seconds, level: Math.max(0, Math.min(1, (db + 50) / 50)) });
+        const now = GLib.get_monotonic_time();
+        if (now - recordingAnnounced > 8_000_000) {
+          recordingAnnounced = now;
+          void store.client.typing(id, 'recording').catch((error: unknown) => console.error(`saisie : ${errorMessage(error)}`));
+        }
+      };
+      r.onError = (message) => {
+        if (recorder !== r) return;
+        toast(`Enregistrement impossible : ${message}`);
+        recorder = null;
+        setRecording(null);
+      };
+      r.start();
+      recorder = r;
+      setRecording({ seconds: 0, level: 0 });
+    } catch (error) {
+      toast(`Enregistrement impossible : ${errorMessage(error)}`);
+    }
+  };
+  const endRecording = (id: string | null): void => {
+    recorder = null;
+    recordingAnnounced = 0;
+    setRecording(null);
+    if (id !== null) void store.client.typing(id, 'paused').catch((error: unknown) => console.error(`saisie : ${errorMessage(error)}`));
+  };
+  const cancelRecording = (): void => {
+    recorder?.cancel();
+    endRecording(chatId.peek());
+  };
+  const sendRecording = (): void => {
+    const r = recorder;
+    const id = chatId.peek();
+    if (r === null || id === null) return;
+    endRecording(id);
+    setSending(true);
+    void (async (): Promise<void> => {
+      try {
+        const rec = await r.stop();
+        if (rec === null) return;
+        const replyTo = store.replyTo.peek()?.id;
+        await store.client.sendFile(id, { bytes: rec.bytes, mimetype: 'audio/ogg; codecs=opus', name: 'vocal.ogg', caption: '', asDocument: false, voice: { seconds: rec.seconds, waveform: rec.waveform }, ...(replyTo === undefined ? {} : { replyTo }) });
+        store.setReplyTo(null);
+      } catch (error) {
+        toast(`Envoi du vocal impossible : ${errorMessage(error)}`);
+      } finally {
+        setSending(false);
+      }
+    })();
+  };
+  // autre discussion : enregistrement abandonné
+  onCleanup(chatId.subscribe(() => {
+    if (recorder !== null) cancelRecording();
+  }));
 
   const addFiles = (files: Gio.File[], textures: Gdk.Texture[] = []): void => {
     for (const t of textures) setAttachments([...attachments.peek(), fromTexture(t)]);
@@ -676,7 +747,15 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
           onToggled={(b: Gtk.ToggleButton) => setAsDocument(b.active)}
         />
       </Gtk.Box>
-      <Gtk.Box spacing={6}>
+      {/* enregistrement d'un vocal : durée, niveau, annuler, envoyer */}
+      <Gtk.Box spacing={10} visible={recording((r) => r !== null)} cssClasses={['recording-bar']}>
+        <Gtk.Button iconName="user-trash-symbolic" tooltipText="Annuler le vocal" valign={Gtk.Align.CENTER} cssClasses={['circular', 'flat']} onClicked={cancelRecording} />
+        <Gtk.Image iconName="media-record-symbolic" cssClasses={['recording-dot']} />
+        <Gtk.Label label={recording((r) => fmtRecording(r?.seconds ?? 0))} cssClasses={['numeric']} widthChars={5} xalign={0} />
+        <Gtk.LevelBar hexpand valign={Gtk.Align.CENTER} heightRequest={6} value={recording((r) => r?.level ?? 0)} cssClasses={['recording-level']} />
+        <Gtk.Button iconName="mail-send-symbolic" tooltipText="Envoyer le vocal" valign={Gtk.Align.CENTER} cssClasses={['circular', 'suggested-action']} onClicked={sendRecording} />
+      </Gtk.Box>
+      <Gtk.Box spacing={6} visible={recording((r) => r === null)}>
         {/* émojis : insérés à la position du curseur */}
         <Gtk.MenuButton
           iconName="face-smile-symbolic"
@@ -737,6 +816,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
               });
               self.add_controller(keys);
               self.buffer.connect('changed', typed);
+              self.buffer.connect('changed', () => setEmpty(self.buffer.text.trim() === ''));
               // Ctrl+V : fichiers ou image du presse-papier en pièces jointes, sinon collage du texte
               self.connect('paste-clipboard', () => {
                 if (pasteAttachments(self, addFiles, toast)) GObject.signal_stop_emission_by_name(self, 'paste-clipboard');
@@ -760,7 +840,11 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
             }}
           />
         </Gtk.ScrolledWindow>
-        <Gtk.Button iconName="mail-send-symbolic" tooltipText="Envoyer" valign={Gtk.Align.END} sensitive={sending((s) => !s)} cssClasses={['circular', 'suggested-action']} onClicked={send} />
+        {/* zone vide sans pièce jointe : micro (message vocal) ; sinon Envoyer */}
+        <Gtk.Stack valign={Gtk.Align.END} visibleChildName={createMemo(() => (empty() && attachments().length === 0 && store.editing() === null ? 'mic' : 'send'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
+          <Gtk.Button $type="named" name="send" iconName="mail-send-symbolic" tooltipText="Envoyer" sensitive={sending((s) => !s)} cssClasses={['circular', 'suggested-action']} onClicked={send} />
+          <Gtk.Button $type="named" name="mic" iconName="audio-input-microphone-symbolic" tooltipText="Enregistrer un message vocal" sensitive={sending((s) => !s)} cssClasses={['circular', 'suggested-action']} onClicked={startRecording} />
+        </Gtk.Stack>
       </Gtk.Box>
     </Gtk.Box>
   );

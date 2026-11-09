@@ -332,6 +332,21 @@ export const UPLOAD_CAPTION = 'X-WA-Caption';
 export const UPLOAD_AS = 'X-WA-Send-As';
 /** réponse à ce message (identifiant) */
 export const UPLOAD_REPLY = 'X-WA-Reply-To';
+/** message vocal : durée (secondes) et forme d'onde (64 valeurs de 0 à 100, base64) */
+export const UPLOAD_VOICE_SECONDS = 'X-WA-Voice-Seconds';
+export const UPLOAD_VOICE_WAVEFORM = 'X-WA-Voice-Waveform';
+
+/** Forme d'onde d'un vocal (WhatsApp : 64 valeurs de 0 à 100) à partir de niveaux en dB (≤ 0). */
+export function waveform(levelsDb: readonly number[], size = 64): number[] {
+  if (levelsDb.length === 0) return Array.from({ length: size }, () => 0);
+  const norm = levelsDb.map((db) => Math.round(Math.max(0, Math.min(1, (db + 50) / 50)) * 100));
+  return Array.from({ length: size }, (_, i) => {
+    const from = Math.floor((i * norm.length) / size);
+    const to = Math.max(from + 1, Math.floor(((i + 1) * norm.length) / size));
+    const part = norm.slice(from, to);
+    return Math.max(...part);
+  });
+}
 
 /** Genre d'envoi selon le type MIME (comme WhatsApp : image, vidéo, audio, sinon document). */
 export function uploadKind(mimetype: string, asDocument = false): 'image' | 'video' | 'audio' | 'document' {

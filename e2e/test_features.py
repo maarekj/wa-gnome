@@ -195,3 +195,26 @@ def test_lien_cliquable(run_app):
     dx, dy = conftest._OFFSET or (0, 0)
     subprocess.run(['xdotool', 'mousemove', str(int(e.x + e.width * middle) + dx), str(e.y + 10 + dy), 'click', '1'], check=True, timeout=5)
     assert app.logged('LIEN https://exemple.fr/match_du_samedi').endswith('match_du_samedi')
+
+
+def test_message_vocal(run_app):
+    fake, app = run_app()
+    app.open_chat('Alice Martin')
+    # zone de saisie vide : micro ; enregistrement (son de test, pas de micro réel)
+    app.click('button', 'Enregistrer un message vocal')
+    assert app.text_visible('0:02', 10)
+    app.click('button', 'Envoyer le vocal')
+    call = fake.wait_call('sendMedia')
+    upload = call['args'][1]
+    assert upload['mimetype'].startswith('audio/ogg')
+    assert upload['voice']['seconds'] >= 2
+
+
+def test_message_vocal_annule(run_app):
+    fake, app = run_app()
+    app.open_chat('Alice Martin')
+    app.click('button', 'Enregistrer un message vocal')
+    app.text_visible('0:01', 10)
+    app.click('button', 'Annuler le vocal')
+    app.find('button', 'Enregistrer un message vocal')
+    assert fake.calls('sendMedia') == []

@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from './api.ts';
+import { Chat, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -118,13 +118,18 @@ export class WaClient {
   readonly #upload = new Soup.Session({ timeout: 0, idleTimeout: 0 });
 
   /** Envoie un fichier (photo, vidéo, audio ou document selon son type). */
-  async sendFile(chatId: string, f: { bytes: GLib.Bytes; mimetype: string; name: string; caption: string; asDocument: boolean; replyTo?: string }): Promise<void> {
+  async sendFile(chatId: string, f: { bytes: GLib.Bytes; mimetype: string; name: string; caption: string; asDocument: boolean; replyTo?: string; voice?: { seconds: number; waveform: readonly number[] } }): Promise<void> {
     const msg = this.#message('POST', `/chats/${encodeURIComponent(chatId)}/media`);
     const h = msg.get_request_headers();
     h.replace(UPLOAD_NAME, encodeURIComponent(f.name));
     if (f.caption !== '') h.replace(UPLOAD_CAPTION, encodeURIComponent(f.caption));
     if (f.asDocument) h.replace(UPLOAD_AS, 'document');
     if (f.replyTo !== undefined) h.replace(UPLOAD_REPLY, encodeURIComponent(f.replyTo));
+    if (f.voice !== undefined) {
+      h.replace(UPLOAD_AS, 'voice');
+      h.replace(UPLOAD_VOICE_SECONDS, String(f.voice.seconds));
+      h.replace(UPLOAD_VOICE_WAVEFORM, GLib.base64_encode(Uint8Array.from(f.voice.waveform)));
+    }
     msg.set_request_body_from_bytes(f.mimetype, f.bytes);
     const bytes = await this.#upload.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
     const status: number = msg.get_status();

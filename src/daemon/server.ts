@@ -22,7 +22,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { ChatAction, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY } from '../shared/api.ts';
+import { ChatAction, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -63,6 +63,8 @@ export interface Upload {
   asDocument: boolean;
   /** réponse à ce message */
   replyTo?: string;
+  /** message vocal (note vocale) : durée et forme d'onde */
+  voice?: { seconds: number; waveform: Uint8Array };
 }
 
 export interface Server {
@@ -198,7 +200,9 @@ export function startServer(opts: { host: string; port: number; token: string; s
         const data = await readRaw(req, MAX_UPLOAD);
         if (data.length === 0) throw new HttpError(400, 'fichier vide');
         const mimetype = (req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]?.trim() ?? 'application/octet-stream';
-        await opts.wa().sendMedia(chatId, { data, mimetype, fileName: header(req, UPLOAD_NAME) || 'fichier', caption: header(req, UPLOAD_CAPTION), asDocument: header(req, UPLOAD_AS) === 'document', replyTo: header(req, UPLOAD_REPLY) });
+        const seconds = Number(header(req, UPLOAD_VOICE_SECONDS));
+        const voice = header(req, UPLOAD_AS) === 'voice' && Number.isFinite(seconds) ? { voice: { seconds: Math.round(seconds), waveform: new Uint8Array(Buffer.from(header(req, UPLOAD_VOICE_WAVEFORM), 'base64')) } } : {};
+        await opts.wa().sendMedia(chatId, { data, mimetype, fileName: header(req, UPLOAD_NAME) || 'fichier', caption: header(req, UPLOAD_CAPTION), asDocument: header(req, UPLOAD_AS) === 'document', replyTo: header(req, UPLOAD_REPLY), ...voice });
         json(res, 200, {});
         return;
       }

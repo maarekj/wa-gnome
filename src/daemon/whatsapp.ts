@@ -22,6 +22,7 @@ import {
   type PresenceData,
   type SignalKeyStore,
   type WAMessage,
+  type AnyMessageContent,
   type WAMessageKey,
   type WASocket,
 } from 'baileys';
@@ -33,6 +34,14 @@ import type { Upload } from './server.ts';
 import { type Change, changeOf, editedContent, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
+
+/** Audio : note vocale (micro, durée et forme d'onde fournies) ou fichier audio. */
+function voiceContent(f: Upload): AnyMessageContent {
+  if (f.voice === undefined) return { audio: f.data, mimetype: f.mimetype };
+  // forme d'onde : prise en compte par Baileys mais absente de ses types
+  const content = { audio: f.data, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: f.voice.seconds, waveform: f.voice.waveform };
+  return content;
+}
 
 const logger = pino({ level: process.env['WA_GNOME_LOG'] ?? 'warn' });
 
@@ -774,7 +783,7 @@ export class WhatsApp {
         : kind === 'video'
           ? { video: f.data, mimetype: f.mimetype, ...caption }
           : kind === 'audio'
-            ? { audio: f.data, mimetype: f.mimetype }
+            ? voiceContent(f)
             : { document: f.data, mimetype: f.mimetype, fileName: f.fileName, ...caption };
     this.#sent(await this.#open().sendMessage(chatId, content, this.#quoteOptions(chatId, f.replyTo)));
   }

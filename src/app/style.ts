@@ -99,6 +99,13 @@ export const STYLESHEET = `
 .gallery-tile {
   border-radius: 6px;
 }
+.recording-bar {
+  min-height: 46px;
+  padding: 4px 0;
+}
+.recording-dot {
+  color: var(--destructive-color);
+}
 .chat-title {
   padding: 2px 10px;
 }
