@@ -218,3 +218,23 @@ def test_message_vocal_annule(run_app):
     app.click('button', 'Annuler le vocal')
     app.find('button', 'Enregistrer un message vocal')
     assert fake.calls('sendMedia') == []
+
+
+def test_brouillon_garde_par_discussion(run_app):
+    fake, app = run_app()
+    app.open_chat('Alice Martin')
+    composer = app.composer()
+    composer.text = 'Message pas encore envoyé'
+    app.open_chat('Famille')
+    # brouillon dans la liste, zone vide dans l'autre discussion
+    assert app.text_visible('Brouillon :')
+    wait_until(lambda: app.composer().text == '', 5, 'zone vide')
+    app.open_chat('Alice Martin')
+    wait_until(lambda: app.composer().text == 'Message pas encore envoyé', 5, 'brouillon retrouvé')
+    assert fake.calls('send') == []
+    # rouvrir une discussion avec un brouillon n'annonce pas « écrit… » au contact
+    before = len([c for c in fake.calls('typing') if c['args'][1] == 'composing'])
+    app.open_chat('Famille')
+    app.open_chat('Alice Martin')
+    wait_until(lambda: app.composer().text == 'Message pas encore envoyé', 5, 'brouillon retrouvé')
+    assert len([c for c in fake.calls('typing') if c['args'][1] == 'composing']) == before

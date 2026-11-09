@@ -489,6 +489,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
     composing = 0;
   };
   const typed = (): void => {
+    if (restoring) return;
     const id = chatId.peek();
     if (id === null || store.editing.peek() !== null || view?.buffer.text.trim() === '') {
       stopTyping();
@@ -509,6 +510,21 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
   };
   /** texte placé dans la saisie au début d'une modification (retiré si elle est abandonnée) */
   let editedText: string | null = null;
+  /** texte posé par l'app (brouillon, modification) : ni « écrit… » ni brouillon enregistré */
+  let restoring = false;
+  const setText = (text: string): void => {
+    if (view === null) return;
+    restoring = true;
+    view.buffer.set_text(text, -1);
+    view.buffer.place_cursor(view.buffer.get_end_iter());
+    restoring = false;
+  };
+  /** Fin d'une modification : le brouillon de la discussion revient dans la saisie. */
+  const endEditing = (): void => {
+    store.setEditing(null);
+    const id = chatId.peek();
+    setText(id === null ? '' : (store.drafts.peek().get(id) ?? ''));
+  };
   /** zone de saisie vide (bouton micro à la place d'Envoyer) */
   const [empty, setEmpty] = createState(true);
 
@@ -600,16 +616,15 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
     if (editing !== null) {
       if (files.length > 0) toast('Pièces jointes ignorées pendant une modification');
       if (text === '' || text === editing.text) {
-        store.setEditing(null);
-        buffer.set_text('', -1);
+        endEditing();
         return;
       }
       setSending(true);
       const edit = async (): Promise<void> => {
         try {
           await store.client.messageAction(editing.chatId, editing.id, { action: 'edit', text });
-          store.setEditing(null);
-          buffer.set_text('', -1);
+          if (chatId.peek() === editing.chatId) endEditing();
+          else store.setEditing(null);
         } catch (error) {
           toast(`Modification impossible : ${errorMessage(error)}`);
         } finally {
@@ -633,7 +648,9 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
         setAttachments(attachments.peek().filter((x) => x.id !== f.id));
       }
       if (files.length === 0) await store.send(id, text, replyTo);
-      buffer.set_text('', -1);
+      // envoyé : brouillon vidé (autre discussion affichée entre-temps : la saisie n'est pas touchée)
+      store.setDraft(id, '');
+      if (chatId.peek() === id) buffer.set_text('', -1);
       store.setReplyTo(null);
     };
     run()
@@ -660,10 +677,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
           store.replyTo.subscribe(() => {
             if (store.replyTo.peek() === null) return;
             // répondre pendant une modification : la modification est abandonnée
-            if (store.editing.peek() !== null) {
-              store.setEditing(null);
-              view?.buffer.set_text('', -1);
-            }
+            if (store.editing.peek() !== null) endEditing();
             view?.grab_focus();
           }),
         );
@@ -674,14 +688,13 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
             if (view === null) return;
             // modification terminée sans envoi (autre discussion, message supprimé) : texte retiré
             if (m === null) {
-              if (editedText !== null && view.buffer.text === editedText) view.buffer.set_text('', -1);
+              if (editedText !== null && view.buffer.text === editedText) setText('');
               editedText = null;
               return;
             }
             editedText = m.text;
             store.setReplyTo(null);
-            view.buffer.set_text(m.text, -1);
-            view.buffer.place_cursor(view.buffer.get_end_iter());
+            setText(m.text);
             view.grab_focus();
           }),
         );
@@ -708,10 +721,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
           tooltipText="Annuler la modification (Échap)"
           valign={Gtk.Align.CENTER}
           cssClasses={['flat', 'circular']}
-          onClicked={() => {
-            store.setEditing(null);
-            view?.buffer.set_text('', -1);
-          }}
+          onClicked={endEditing}
         />
       </Gtk.Box>
       {/* réponse en cours : message cité, annulable (croix, Échap) */}
@@ -802,8 +812,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
               const keys = new Gtk.EventControllerKey();
               keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
                 if (keyval === Gdk.KEY_Escape && store.editing.peek() !== null) {
-                  store.setEditing(null);
-                  self.buffer.set_text('', -1);
+                  endEditing();
                   return true;
                 }
                 if (keyval === Gdk.KEY_Escape && store.replyTo.peek() !== null) {
@@ -817,6 +826,11 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
               self.add_controller(keys);
               self.buffer.connect('changed', typed);
               self.buffer.connect('changed', () => setEmpty(self.buffer.text.trim() === ''));
+              // brouillon de la discussion affichée (pas pendant la modification d'un message)
+              let shown = chatId.peek();
+              self.buffer.connect('changed', () => {
+                if (!restoring && shown !== null && store.editing.peek() === null) store.setDraft(shown, self.buffer.text);
+              });
               // Ctrl+V : fichiers ou image du presse-papier en pièces jointes, sinon collage du texte
               self.connect('paste-clipboard', () => {
                 if (pasteAttachments(self, addFiles, toast)) GObject.signal_stop_emission_by_name(self, 'paste-clipboard');
@@ -830,10 +844,12 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
                   });
                 }),
               );
-              // nouvelle discussion : saisie vidée, focus dans la zone
+              // autre discussion : son brouillon (ou rien), focus dans la zone
               onCleanup(
                 chatId.subscribe(() => {
-                  self.buffer.set_text('', -1);
+                  shown = chatId.peek();
+                  // brouillon remis sans annoncer « écrit… » au contact
+                  setText(shown === null ? '' : (store.drafts.peek().get(shown) ?? ''));
                   self.grab_focus();
                 }),
               );

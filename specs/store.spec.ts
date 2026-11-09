@@ -5,7 +5,7 @@ import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sortChats, Store, typingText } from '../src/shared/store.ts';
 import { itemsOf, myReaction, presenceLine, senderColor } from '../src/app/ConversationPage.tsx';
-import { fold, inList, neighbourChat, visibleChats } from '../src/app/ChatList.tsx';
+import { fold, inList, neighbourChat, previewMarkup, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
 import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
@@ -419,5 +419,20 @@ describe('vocal', () => {
     expect(Math.max(...w)).toBe(100);
     expect(Math.min(...w)).toBe(0);
     expect(waveform([]).every((v) => v === 0)).toBeTrue();
+  });
+});
+
+describe('brouillon', () => {
+  it('aperçu : écrit…, brouillon, sinon dernier message', () => {
+    expect(previewMarkup({ preview: 'Salut' }, 'en train d’écrire…', 'à demain')).toBe('en train d’écrire…');
+    expect(previewMarkup({ preview: 'Salut' }, undefined, 'à <demain>')).toContain('à &lt;demain&gt;');
+    expect(previewMarkup({ preview: 'Salut\nça va' })).toBe('Salut ça va');
+  });
+  it('gardé par discussion, retiré quand vide', () => {
+    const store = new Store(new WaClient());
+    store.setDraft('a', 'bonjour');
+    expect(store.drafts.peek().get('a')).toBe('bonjour');
+    store.setDraft('a', '  ');
+    expect(store.drafts.peek().has('a')).toBeFalse();
   });
 });

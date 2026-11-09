@@ -55,12 +55,15 @@ function ChatRow(chat: Chat, live: Accessor<Chat>, pictures: Pictures, store: St
             <Gtk.Label label={live((c) => fmtShortDate(c.timestamp))} cssClasses={live((c) => (c.unread > 0 && !isMuted(c) ? ['caption', 'accent'] : ['caption', 'dim-label']))} />
           </Gtk.Box>
           <Gtk.Box spacing={6}>
+            {/* écrit… ; sinon brouillon (discussion non affichée) ; sinon dernier message */}
             <Gtk.Label
-              label={createMemo(() => store.typing().get(live().id) ?? live().preview.replaceAll('\n', ' '))}
+              useMarkup
+              label={createMemo(() => previewMarkup(live(), store.typing().get(live().id), store.current() === live().id ? undefined : store.drafts().get(live().id)))}
               xalign={0}
               hexpand
               ellipsize={Pango.EllipsizeMode.END}
-              cssClasses={createMemo(() => (store.typing().has(live().id) ? ['accent'] : ['dim-label']))}
+              // brouillon : couleurs dans le balisage (pas d'atténuation de tout le libellé)
+              cssClasses={createMemo(() => (store.typing().has(live().id) ? ['accent'] : store.current() !== live().id && store.drafts().has(live().id) ? [] : ['dim-label']))}
             />
             <Gtk.Image iconName="notifications-disabled-symbolic" visible={live((c) => isMuted(c))} tooltipText="Mode silencieux" cssClasses={['dim-label']} />
             <Gtk.Image iconName="view-pin-symbolic" visible={live((c) => c.pinned > 0)} tooltipText="Épinglée" cssClasses={['dim-label']} />
@@ -101,6 +104,13 @@ export function inList(c: Chat, list: WaList): boolean {
 
 /** Listes proposées en filtres, dans l'ordre de WhatsApp. */
 export const filterLists = (lists: readonly WaList[]): WaList[] => lists.filter((l) => l.kind !== 'other');
+
+/** Aperçu d'une discussion dans la liste : « écrit… », « Brouillon : … » ou dernier message (balisage). */
+export function previewMarkup(c: Pick<Chat, 'preview'>, typing?: string, draft?: string): string {
+  if (typing !== undefined) return esc(typing);
+  if (draft !== undefined && draft.trim() !== '') return `<span foreground="#1fa855" weight="bold">Brouillon :</span> <span alpha="60%">${esc(draft.replaceAll('\n', ' '))}</span>`;
+  return esc(c.preview.replaceAll('\n', ' '));
+}
 
 /** Discussion voisine de `current` dans la liste affichée (`delta` : +1 suivante, -1 précédente). */
 export function neighbourChat(list: readonly Chat[], current: string | null, delta: number): string | null {

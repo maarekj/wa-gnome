@@ -61,6 +61,9 @@ export class Store {
   readonly #setPresence: (p: Presence | null) => void;
   /** personnes en train d'écrire, par discussion (aperçu de la liste) */
   readonly typing: Accessor<ReadonlyMap<string, string>>;
+  /** brouillons (message saisi, pas encore envoyé) par discussion, en mémoire */
+  readonly drafts: Accessor<ReadonlyMap<string, string>>;
+  readonly #setDrafts: Setter<ReadonlyMap<string, string>>;
   readonly #setTyping: (t: ReadonlyMap<string, string>) => void;
   /** chargement des messages plus anciens de la discussion ouverte */
   readonly older: Accessor<OlderState>;
@@ -105,6 +108,7 @@ export class Store {
     [this.older, this.#setOlder] = createState<OlderState>('idle');
     [this.presence, this.#setPresence] = createState<Presence | null>(null);
     [this.typing, this.#setTyping] = createState<ReadonlyMap<string, string>>(new Map());
+    [this.drafts, this.#setDrafts] = createState<ReadonlyMap<string, string>>(new Map());
     [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
     [this.focusRequests, this.#setFocusRequests] = createState(0);
     [this.scrollTarget, this.#setScrollTarget] = createState<{ id: string; n: number } | null>(null);
@@ -215,6 +219,16 @@ export class Store {
       default:
         e satisfies never;
     }
+  }
+
+  /** Brouillon d'une discussion (vide : retiré). */
+  setDraft(chatId: string, text: string): void {
+    const current = this.drafts.peek();
+    if ((current.get(chatId) ?? '') === text) return;
+    const next = new Map(current);
+    if (text.trim() === '') next.delete(chatId);
+    else next.set(chatId, text);
+    this.#setDrafts(next);
   }
 
   /** Ouvre une discussion sur un message (résultat de recherche), mis en évidence. */
