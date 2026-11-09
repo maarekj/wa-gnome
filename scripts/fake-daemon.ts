@@ -190,6 +190,8 @@ store.upsertChat({ id: GROUP, name: 'Famille' });
 add(ALICE, false, 'Salut ! Tu es dispo ce soir ?', 30 * H);
 add(ALICE, true, 'Oui, vers 20h ça te va ?', 29 * H);
 add(ALICE, false, 'Parfait, à tout à l’heure', 2 * H);
+add(ALICE, true, '👍', 2 * H - 30);
+add(ALICE, false, '😂❤️', 2 * H - 20);
 const photo = { mimetype: 'image/png', width: 960, height: 600, thumbnail: landscape(48, 30).toString('base64'), fileName: null, size: null, seconds: null };
 add(ALICE, false, 'La vue depuis le chalet', 2 * H - 120, null, null, { kind: 'image', media: photo, data: landscape(960, 600) });
 add(ALICE, true, '', 2 * H - 60, null, null, { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });

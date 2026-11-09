@@ -238,3 +238,12 @@ def test_brouillon_garde_par_discussion(run_app):
     app.open_chat('Alice Martin')
     wait_until(lambda: app.composer().text == 'Message pas encore envoyé', 5, 'brouillon retrouvé')
     assert len([c for c in fake.calls('typing') if c['args'][1] == 'composing']) == before
+
+
+def test_emojis_seuls_en_grand(run_app):
+    _, app = run_app()
+    app.open_chat('Alice Martin')
+    # 👍 seul : texte agrandi (hauteur du libellé bien plus grande qu'une ligne normale)
+    big = app.find('label', '👍')
+    normal = app.find('label', 'Parfait, à tout à l’heure')
+    assert big.get_extents(Atspi.CoordType.WINDOW).height > 2 * normal.get_extents(Atspi.CoordType.WINDOW).height

@@ -184,3 +184,21 @@ export function snippetMarkup(snippet: string): string {
     })
     .join('');
 }
+
+/** Émoji (pictogramme, avec variantes, couleurs de peau, séquences et drapeaux). */
+// premier élément affiché en émoji : présentation émoji par défaut, ou forcée par U+FE0F
+// (« © », « ™ », « ↔ » seuls restent du texte)
+const EMOJI = /^(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F)\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*)/u;
+
+/** Nombre d'émojis si le texte n'est fait que d'émojis (espaces permis), 0 sinon. */
+export function emojiOnly(text: string): number {
+  let rest = text.replaceAll(/\s/gu, '');
+  let n = 0;
+  while (rest !== '') {
+    const m = EMOJI.exec(rest);
+    if (m === null) return 0;
+    rest = rest.slice(m[0].length);
+    n += 1;
+  }
+  return n;
+}

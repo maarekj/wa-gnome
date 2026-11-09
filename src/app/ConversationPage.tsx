@@ -9,7 +9,7 @@ import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
 import { DELETED_TEXT, editability, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { dayKey, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
+import { dayKey, emojiOnly, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText, isChannel } from './ChatList.tsx';
@@ -50,6 +50,13 @@ export function itemsOf(messages: readonly Message[], group: boolean): Item[] {
     previous = m;
   }
   return items;
+}
+
+/** Classe d'un message fait de 1 à 3 émojis seulement (affichés en grand, comme WhatsApp). */
+export function bigEmoji(m: Pick<Message, 'kind' | 'text'>): string[] {
+  if (m.kind !== 'text') return [];
+  const n = emojiOnly(m.text);
+  return n === 0 || n > 3 ? [] : [n === 1 ? 'emoji-1' : 'emoji-3'];
 }
 
 /** Couleurs des noms des participants (lisibles en thème clair et sombre). */
@@ -389,6 +396,9 @@ function bubble(ctx: BubbleContext) {
     const picture = isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
+    // émojis seuls (sans citation ni « Transféré ») : en grand, sans fond de bulle, comme WhatsApp
+    const plain = picture === null && m.quoted === null && m.forwarded === 0;
+    const emojiClasses = (): string[] => (plain ? bigEmoji(msg()) : []);
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
     return selectableRow(ctx, author(asWidget(
       <Gtk.Box name={`m:${m.id}`} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
@@ -398,6 +408,13 @@ function bubble(ctx: BubbleContext) {
           cssClasses={classes}
           $={(self: Gtk.Box) => {
             attachBubbleMenu(ctx, self, msg);
+            // suivi des modifications (texte devenu ou n'étant plus un émoji seul)
+            const sync = (): void => {
+              if (emojiClasses().length > 0) self.add_css_class('emoji-only');
+              else self.remove_css_class('emoji-only');
+            };
+            sync();
+            onCleanup(live.subscribe(sync));
           }}
         >
           <Gtk.Label
@@ -416,7 +433,7 @@ function bubble(ctx: BubbleContext) {
             // mise en forme WhatsApp (gras, italique, code, citations, listes)
             useMarkup
             label={live(() => (msg().kind === 'text' || picture !== null ? waMarkup(msg().text) : esc(previewOf(msg()))))}
-            cssClasses={live(() => (msg().kind === 'text' || picture !== null ? ['body'] : ['body', 'dim-label']))}
+            cssClasses={live(() => (msg().kind === 'text' || picture !== null ? ['body', ...emojiClasses()] : ['body', 'dim-label']))}
             wrap
             wrapMode={Pango.WrapMode.WORD_CHAR}
             xalign={0}

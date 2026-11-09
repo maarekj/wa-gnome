@@ -1,5 +1,5 @@
 // Mise en forme WhatsApp → balisage Pango.
-import { linkAt, waMarkup } from '../src/shared/format.ts';
+import { emojiOnly, linkAt, waMarkup } from '../src/shared/format.ts';
 
 describe('waMarkup', () => {
   it('gras, italique, barré, code', () => {
@@ -45,5 +45,20 @@ describe('liens', () => {
     expect(waMarkup('_voir https://a.fr/x_/y fin_')).toBe('<i>voir <a href="https://a.fr/x_/y" title="https://a.fr/x_/y">https://a.fr/x_/y</a> fin</i>');
     expect(linkAt('moi@exemple.fr-', 0)?.text).toBe('moi@exemple.fr');
     expect(waMarkup('https://a.fr/?a=1&b=<2>')).toContain('href="https://a.fr/?a=1&amp;b="');
+  });
+});
+
+describe('émojis seuls', () => {
+  it('compte les émojis, 0 dès qu’il y a du texte', () => {
+    expect(emojiOnly('😂')).toBe(1);
+    expect(emojiOnly('👍🏽 ❤️')).toBe(2);
+    expect(emojiOnly('👨‍👩‍👧')).toBe(1);
+    expect(emojiOnly('🇫🇷🇮🇱')).toBe(2);
+    expect(emojiOnly('ok 👍')).toBe(0);
+    expect(emojiOnly('12')).toBe(0);
+    expect(emojiOnly('')).toBe(0);
+    expect(emojiOnly('©')).toBe(0);
+    expect(emojiOnly('™')).toBe(0);
+    expect(emojiOnly('❤️')).toBe(1);
   });
 });

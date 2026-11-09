@@ -206,7 +206,8 @@ function opaque(dark: boolean): string {
   return `
 .wallpaper .bubble.incoming { background: ${base}; box-shadow: 0 1px 1px alpha(black, 0.08); }
 .wallpaper .bubble.outgoing { background: color-mix(in srgb, var(--accent-bg-color) ${dark ? 35 : 22}%, ${base}); box-shadow: 0 1px 1px alpha(black, 0.08); }
-.wallpaper .day-separator, .wallpaper .composer-entry, .wallpaper .sticker > label.caption { background: ${base}; }`;
+.wallpaper .day-separator, .wallpaper .composer-entry, .wallpaper .sticker > label.caption { background: ${base}; }
+.wallpaper .bubble.emoji-only { background: none; box-shadow: none; }`;
 }
 
 /** Couleur de fond du motif par défaut (clair / sombre). */

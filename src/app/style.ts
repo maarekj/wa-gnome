@@ -106,6 +106,23 @@ export const STYLESHEET = `
 .recording-dot {
   color: var(--destructive-color);
 }
+.bubble.emoji-only {
+  background: none;
+  box-shadow: none;
+}
+.bubble.emoji-only > box:last-child {
+  background: alpha(var(--view-bg-color), 0.85);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.body.emoji-1 {
+  font-size: 48px;
+  line-height: 1.1;
+}
+.body.emoji-3 {
+  font-size: 34px;
+  line-height: 1.1;
+}
 .chat-title {
   padding: 2px 10px;
 }

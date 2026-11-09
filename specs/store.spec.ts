@@ -4,7 +4,7 @@ import type { Chat, Message } from '../src/shared/api.ts';
 import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sortChats, Store, typingText } from '../src/shared/store.ts';
-import { itemsOf, myReaction, presenceLine, senderColor } from '../src/app/ConversationPage.tsx';
+import { bigEmoji, itemsOf, myReaction, presenceLine, senderColor } from '../src/app/ConversationPage.tsx';
 import { fold, inList, neighbourChat, previewMarkup, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
@@ -434,5 +434,14 @@ describe('brouillon', () => {
     expect(store.drafts.peek().get('a')).toBe('bonjour');
     store.setDraft('a', '  ');
     expect(store.drafts.peek().has('a')).toBeFalse();
+  });
+});
+
+describe('émojis en grand', () => {
+  it('1 émoji, 2-3 émojis, au-delà ou avec texte : normal', () => {
+    expect(bigEmoji({ kind: 'text', text: '😂' })).toEqual(['emoji-1']);
+    expect(bigEmoji({ kind: 'text', text: '😂😂😂' })).toEqual(['emoji-3']);
+    expect(bigEmoji({ kind: 'text', text: '😂😂😂😂' })).toEqual([]);
+    expect(bigEmoji({ kind: 'image', text: '😂' })).toEqual([]);
   });
 });
