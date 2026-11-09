@@ -10,6 +10,7 @@ import { errorMessage } from '../shared/errors.ts';
 import { displaySize, extensionOf, fmtDuration, fmtSize, type MediaLoader, openExternal, save, suggestedName, thumbnailTexture } from './media.ts';
 import { AudioPlayer, nextSpeed, type PlayerState, type Speed, speedLabel } from './AudioPlayer.ts';
 import { MediaFrame } from './MediaFrame.ts';
+import { waveformView } from './Waveform.ts';
 
 export interface MediaContext {
   readonly loader: MediaLoader;
@@ -67,7 +68,11 @@ export function AudioView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
   const time = new Gtk.Label({ label: fmtDuration(m.media.seconds ?? 0), widthChars: 5, xalign: 1, cssClasses: ['caption', 'dim-label', 'numeric'] });
   const speed = new Gtk.Button({ label: speedLabel(1), tooltipText: 'Vitesse de lecture', valign: Gtk.Align.CENTER, cssClasses: ['flat', 'pill', 'speed', 'caption-heading'] });
   box.append(play);
-  box.append(scale);
+  // vocal avec forme d'onde : barres à la place de la barre de progression (comme WhatsApp)
+  const wave = m.media.waveform === null || m.media.waveform === undefined || m.media.waveform.length === 0 ? null : waveformView(m.media.waveform, (fraction) => {
+    if (player !== null) scale.set_value(fraction * scale.adjustment.upper);
+  });
+  box.append(wave?.widget ?? scale);
   box.append(time);
   box.append(speed);
 
@@ -80,6 +85,7 @@ export function AudioView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
     syncing = true;
     scale.set_value(st.position);
     syncing = false;
+    wave?.setProgress(scale.adjustment.upper > 0 ? st.position / scale.adjustment.upper : 0);
     time.label = fmtDuration(st.playing || st.position > 0 ? st.position : st.duration || (m.media.seconds ?? 0));
     play.iconName = st.playing ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
     play.tooltipText = st.playing ? 'Pause' : 'Lire';
@@ -107,6 +113,8 @@ export function AudioView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
       }
       if (current !== 1) player.setSpeed(current);
       scale.sensitive = true;
+      // forme d'onde : déplacement possible une fois la lecture lancée (comme la barre)
+      if (wave !== null) wave.widget.sensitive = true;
       player.play();
     });
   });
@@ -115,6 +123,7 @@ export function AudioView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
     player?.dispose();
     player = null;
     scale.sensitive = false;
+    if (wave !== null) wave.widget.sensitive = false;
   });
   return box;
 }

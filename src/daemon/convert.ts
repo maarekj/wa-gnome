@@ -39,6 +39,8 @@ interface MediaContent {
   fileName?: string | null;
   fileLength?: number | { toNumber: () => number } | null;
   seconds?: number | null;
+  /** vocaux : 64 octets de 0 à 100 */
+  waveform?: Uint8Array | null;
 }
 
 const MEDIA_TYPES = ['imageMessage', 'videoMessage', 'ptvMessage', 'audioMessage', 'documentMessage', 'stickerMessage'] as const;
@@ -64,6 +66,7 @@ export function mediaOf(content: proto.IMessage): Media | null {
     fileName: c.fileName ?? null,
     size: c.fileLength === null || c.fileLength === undefined ? null : seconds(c.fileLength),
     seconds: c.seconds ?? null,
+    ...(c.waveform === null || c.waveform === undefined || c.waveform.length === 0 ? {} : { waveform: [...c.waveform].map((v) => Math.min(100, v)) }),
   };
 }
 

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import type { Converted } from './convert.ts';
 import { proto } from 'baileys';
-import { forwardedOf, quotedOf, toMessage } from './convert.ts';
+import { forwardedOf, mediaOf, quotedOf, toMessage } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
 import { forwardScoreIn, Store } from './store.ts';
 
@@ -348,5 +348,13 @@ void describe('galerie', () => {
     assert.deepEqual(store.mediaMessages(PN, ['document'], 10).map((m) => m.id), ['d1']);
     store.applyRevoke(PN, 'i2');
     assert.deepEqual(store.mediaMessages(PN, ['image'], 10).map((m) => m.id), ['a3', 'a2', 'a1', 'i1']);
+  });
+});
+
+void describe('forme d’onde', () => {
+  void it('lue dans un vocal', () => {
+    const media = mediaOf({ audioMessage: { mimetype: 'audio/ogg; codecs=opus', seconds: 3, ptt: true, waveform: new Uint8Array([0, 50, 100, 120]) } });
+    assert.deepEqual(media?.waveform, [0, 50, 100, 100]);
+    assert.equal(mediaOf({ imageMessage: { mimetype: 'image/jpeg' } })?.waveform, undefined);
   });
 });

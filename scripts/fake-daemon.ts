@@ -220,7 +220,7 @@ const none = { width: null, height: null, thumbnail: null, fileName: null, size:
 const doc = pdf('Menu du dimanche');
 add(GROUP, false, '', 40 * 60, ALICE, 'Alice', { kind: 'document', media: { ...none, mimetype: 'application/pdf', fileName: 'Menu du dimanche.pdf', size: doc.length }, data: doc });
 const voice = wav(4);
-add(GROUP, false, '', 30 * 60, BOB, 'Bob', { kind: 'audio', media: { ...none, mimetype: 'audio/wav', seconds: 4 }, data: voice });
+add(GROUP, false, '', 30 * 60, BOB, 'Bob', { kind: 'audio', media: { ...none, mimetype: 'audio/wav', seconds: 4, waveform: Array.from({ length: 64 }, (_, i) => Math.round(50 + 45 * Math.sin(i / 3) * Math.sin(i / 11))) }, data: voice });
 add(GROUP, false, 'Le chat du voisin', 20 * 60, BOB, 'Bob', { kind: 'video', media: { ...none, mimetype: 'video/webm', width: 480, height: 320, seconds: 3, thumbnail: landscape(48, 32).toString('base64') }, data: video() });
 const SHOP = '33600000004@s.whatsapp.net';
 const NEWS = '120363000000000002@g.us';
@@ -410,7 +410,7 @@ const backend: Backend = {
     const kind = uploadKind(f.mimetype, f.asDocument);
     const m = add(chatId, true, f.caption, 0, null, null, {
       kind,
-      media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: f.voice?.seconds ?? null },
+      media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: f.voice?.seconds ?? null, ...(f.voice === undefined ? {} : { waveform: [...f.voice.waveform] }) },
       data: f.data,
     }, f.replyTo);
     progress(chatId, m.id);

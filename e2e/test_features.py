@@ -247,3 +247,13 @@ def test_emojis_seuls_en_grand(run_app):
     big = app.find('label', '👍')
     normal = app.find('label', 'Parfait, à tout à l’heure')
     assert big.get_extents(Atspi.CoordType.WINDOW).height > 2 * normal.get_extents(Atspi.CoordType.WINDOW).height
+
+
+def test_forme_onde_du_vocal(run_app):
+    _, app = run_app()
+    app.open_chat('Famille')
+    # vocal de Bob : forme d'onde (curseur accessible), active une fois la lecture lancée
+    wave = wait_until(lambda: [n for n in app.all('slider') if n.description == 'Position dans le vocal' or n.name == 'Position dans le vocal'][:1], 10, 'forme d’onde')[0]
+    assert not wave.sensitive
+    app.click('button', 'Lire')
+    wait_until(lambda: wave.sensitive, 10, 'forme d’onde active')

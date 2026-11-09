@@ -111,6 +111,8 @@ export const Media = z.object({
   size: z.nullable(z.number()),
   /** durée en secondes (audio, vidéo) */
   seconds: z.nullable(z.number()),
+  /** forme d'onde d'un vocal (valeurs de 0 à 100), absente des autres médias */
+  waveform: z.optional(z.nullable(z.array(z.number()))),
 });
 export type Media = z.infer<typeof Media>;
 

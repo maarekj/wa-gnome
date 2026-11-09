@@ -213,7 +213,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 12;
+const VERSION = 13;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -336,6 +336,11 @@ export class Store {
           FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
           WHERE push <> '' GROUP BY who
         ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
+    }
+    if (!fresh && version < 13) {
+      // forme d'onde des vocaux : médias audio reconvertis depuis le message brut
+      this.#db.exec("UPDATE messages SET media = NULL WHERE kind = 'audio' AND raw LIKE '%waveform%'");
+      this.needsMediaBackfill = true;
     }
     this.#db.exec(`PRAGMA user_version = ${VERSION}`);
     for (const r of this.#db.prepare('SELECT lid, pn FROM lid_map').all()) {

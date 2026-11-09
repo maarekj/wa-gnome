@@ -20,6 +20,7 @@ import { byMonth } from '../src/app/Gallery.ts';
 import { rangeSelection, rowAt } from '../src/app/DragSelect.ts';
 import { patternSvg, wallpaperCss } from '../src/app/Wallpaper.ts';
 import { infoSubtitle, roleOf } from '../src/app/ChatInfoDialog.ts';
+import { bars } from '../src/app/Waveform.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -443,5 +444,13 @@ describe('émojis en grand', () => {
     expect(bigEmoji({ kind: 'text', text: '😂😂😂' })).toEqual(['emoji-3']);
     expect(bigEmoji({ kind: 'text', text: '😂😂😂😂' })).toEqual([]);
     expect(bigEmoji({ kind: 'image', text: '😂' })).toEqual([]);
+  });
+});
+
+describe('forme d’onde', () => {
+  it('ramenée au nombre de barres affichées (maximum par groupe, de 0 à 1)', () => {
+    expect(bars([0, 100, 50, 20], 2)).toEqual([1, 0.5]);
+    expect(bars([40], 3)).toEqual([0.4, 0.4, 0.4]);
+    expect(bars([], 5)).toEqual([]);
   });
 });
