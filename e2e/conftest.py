@@ -105,9 +105,9 @@ class Fake:
     def wait_call(self, method: str, timeout: float = 10) -> dict:
         return wait_until(lambda: (self.calls(method) or [None])[-1], timeout, f'appel {method}')
 
-    def incoming(self, chat_id: str, text: str) -> None:
-        """Message reçu dans une discussion."""
-        self._request('POST', '/incoming', {'chatId': chat_id, 'text': text})
+    def incoming(self, chat_id: str, text: str, account: str | None = None) -> None:
+        """Message reçu dans une discussion (`account` : d'un compte ajouté)."""
+        self._request('POST', '/incoming', {'chatId': chat_id, 'text': text, **({} if account is None else {'account': account})})
 
     def pair(self) -> None:
         """Appairage terminé (QR scanné) : connecté."""

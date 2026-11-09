@@ -77,6 +77,8 @@ export class WhatsApp {
   #online = false;
   #status: Status = { state: 'starting', qr: null, me: null, error: null };
   #stopped = false;
+  /** reconnexion programmée (annulée par stop) */
+  #restartTimer: NodeJS.Timeout | null = null;
 
   constructor(store: Store, dataDir: string, emit: (e: Event) => void) {
     this.#store = store;
@@ -96,12 +98,15 @@ export class WhatsApp {
   }
 
   async start(): Promise<void> {
-    this.#stopped = false;
+    // arrêté (compte retiré) : plus de connexion, même pour une reconnexion déjà programmée
+    if (this.#stopped) return;
     fs.mkdirSync(this.#authDir, { recursive: true, mode: 0o700 });
     const { state, saveCreds } = await useMultiFileAuthState(this.#authDir);
+    if (this.#stopped) return;
     this.#keys = state.keys;
     // version du client web annoncée : la plus récente connue, sinon celle de Baileys
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+    if (this.#stopped) return;
     const sock = makeWASocket({
       ...(version === undefined ? {} : { version }),
       auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
@@ -727,7 +732,9 @@ export class WhatsApp {
   }
 
   #restart(delay: number): void {
-    setTimeout(() => {
+    if (this.#restartTimer !== null) clearTimeout(this.#restartTimer);
+    this.#restartTimer = setTimeout(() => {
+      this.#restartTimer = null;
       this.start().catch((error: unknown) => {
         this.#setStatus({ state: 'closed', error: errorText(error) });
         this.#restart(RECONNECT_MS);
@@ -1022,8 +1029,17 @@ export class WhatsApp {
     await this.#open().logout();
   }
 
+  /** Compte en cours de retrait : plus aucune reconnexion (la déconnexion suit). */
+  retire(): void {
+    this.#stopped = true;
+    if (this.#restartTimer !== null) clearTimeout(this.#restartTimer);
+    this.#restartTimer = null;
+  }
+
   stop(): void {
     this.#stopped = true;
+    if (this.#restartTimer !== null) clearTimeout(this.#restartTimer);
+    this.#restartTimer = null;
     // oxlint-disable-next-line unicorn/no-useless-undefined -- paramètre obligatoire (erreur de fermeture)
     void this.#sock?.end(undefined);
     this.#sock = null;

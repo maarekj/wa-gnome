@@ -13,6 +13,8 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
     dans `raw` pour les médias et le renvoi).
   - `convert.ts` : message protobuf → `Message` de l'API.
   - `server.ts` : API HTTP + SSE sur 127.0.0.1:4180, jeton `Authorization: Bearer` (fichier `token`).
+    Plusieurs comptes : chacun sous `/accounts/:id/…` (mêmes routes) ; le premier (`default`) aussi
+    sans préfixe. Données d'un compte ajouté dans `accounts/<id>/` (même structure que la racine).
 - `src/shared/api.ts` : **contrat** démon ↔ app (schémas zod/mini), importé des deux côtés ; sans
   dépendance à Node ni à GJS.
 - `src/shared/` (GJS) : client libsoup 3 (`client.ts`), état réactif (`store.ts`), formats.
@@ -29,10 +31,11 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   l'app est pilotée par l'accessibilité (rôle et nom : texte affiché ou infobulle) sur un écran
   virtuel, bus D-Bus et bus d'accessibilité privés. Un seul : `pnpm e2e -k envoyer`. Le faux démon
   y est lancé avec `--control <port>` (`GET /calls` : appels reçus de l'app ; `POST /incoming`
-  {chatId, text} : message reçu ; `POST /pair` : appairage terminé) et `--no-replies`.
+  {chatId, text, account?} : message reçu ; `POST /pair` : appairage terminé, du dernier compte ajouté
+  s'il y en a un) et `--no-replies`.
   Scénarios : appairage, ouverture, envoi, réception (liste et discussion ouverte), déconnexion,
   nouvelle discussion, recherche globale et dans la discussion, « Répondre » d’une notification,
-  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias, sélection en glissant, sélecteur d’émojis, fiche du groupe et du contact, liens cliquables (`WA_GNOME_TEST_LINKS` : `LIEN url` journalisé), message vocal (son de test à la place du micro), brouillon par discussion, émojis seuls en grand, forme d’onde des vocaux, traduction et transcription (`WA_GNOME_TEST_TRANSLATE` : simulées, aucun outil lancé).
+  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias, sélection en glissant, sélecteur d’émojis, fiche du groupe et du contact, liens cliquables (`WA_GNOME_TEST_LINKS` : `LIEN url` journalisé), message vocal (son de test à la place du micro), brouillon par discussion, émojis seuls en grand, forme d’onde des vocaux, traduction et transcription (`WA_GNOME_TEST_TRANSLATE` : simulées, aucun outil lancé), plusieurs comptes (ajout, sélecteur, notification d’un autre compte, retrait).
   À lancer avant de fusionner un changement d'interface ; ajouter le scénario de chaque fonctionnalité.
   Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
 - `pnpm daemon` : lance le démon au premier plan (`WA_GNOME_LOG=debug` pour les journaux Baileys).

@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Chat, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
+import { Account, AccountCreated, accountPath, Chat, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_ACCOUNT, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -44,21 +44,31 @@ export class WaClient {
   /** flux SSE uniquement : connexion permanente, jamais en concurrence avec les requêtes */
   readonly #events = new Soup.Session({ timeout: 0, idleTimeout: 0 });
   readonly #token: () => string;
+  /** compte WhatsApp du démon visé par les requêtes */
+  readonly account: string;
 
-  constructor(url = daemonUrl(), token: () => string = () => readToken()) {
+  constructor(url = daemonUrl(), token: () => string = () => readToken(), account = DEFAULT_ACCOUNT) {
     this.url = url.replace(/\/+$/u, '');
     this.#token = token;
+    this.account = account;
   }
 
-  #message(method: string, path: string): Soup.Message {
+  /** Client du même démon pour un autre compte. */
+  forAccount(account: string): WaClient {
+    return new WaClient(this.url, this.#token, account);
+  }
+
+  /** `global` : route du démon (comptes), sans le préfixe du compte. */
+  #message(method: string, route: string, global = false): Soup.Message {
+    const path = global ? route : accountPath(this.account, route);
     const msg = Soup.Message.new(method, `${this.url}${path}`);
     if (msg === null) throw new Error(`URL invalide : ${this.url}${path}`);
     msg.get_request_headers().replace('Authorization', `Bearer ${this.#token()}`);
     return msg;
   }
 
-  async request<S extends z.ZodMiniType>(method: string, path: string, schema: S, body?: unknown): Promise<z.output<S>> {
-    const msg = this.#message(method, path);
+  async request<S extends z.ZodMiniType>(method: string, path: string, schema: S, body?: unknown, global = false): Promise<z.output<S>> {
+    const msg = this.#message(method, path, global);
     if (body !== undefined) msg.set_request_body_from_bytes('application/json', new GLib.Bytes(encoder.encode(JSON.stringify(body))));
     const bytes = await this.#session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
     const data = bytes.get_data();
@@ -218,6 +228,21 @@ export class WaClient {
 
   async markRead(chatId: string): Promise<void> {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/read`, z.unknown());
+  }
+
+  /** Comptes du démon et leur état. */
+  accounts(): Promise<Account[]> {
+    return this.request('GET', '/accounts', z.array(Account), undefined, true);
+  }
+
+  /** Nouveau compte (appairage par QR code) ; son identifiant. */
+  async addAccount(): Promise<string> {
+    return (await this.request('POST', '/accounts', AccountCreated, undefined, true)).id;
+  }
+
+  /** Déconnecte et retire ce compte (pas le compte par défaut). */
+  async removeAccount(): Promise<void> {
+    await this.request('DELETE', '', z.unknown());
   }
 
   async logout(): Promise<void> {

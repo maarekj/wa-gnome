@@ -3,7 +3,8 @@
 // Usage : node scripts/fake-daemon.ts [--state open|qr|connecting] [--port 4798] [--dir /tmp/…]
 //   [--control 4799] : pilotage des tests de bout en bout (sans jeton, 127.0.0.1 seulement) :
 //   GET /calls (appels reçus de l'app : méthode et arguments), POST /incoming {chatId, text}
-//   (message reçu), POST /pair (appairage terminé : connecté).
+//   (message reçu, {account} : d'un autre compte), POST /pair (appairage terminé : connecté ;
+//   {account} : compte ajouté, appairé sous le nom « Travail » avec une discussion).
 //   [--no-replies] : pas de réponse automatique ni de « écrit… » après un envoi.
 // Le jeton est écrit dans <dir>/token : lancer l'app avec WA_GNOME_DATA_DIR=<dir> WA_GNOME_URL=….
 import { spawnSync } from 'node:child_process';
@@ -13,8 +14,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { deflateSync } from 'node:zlib';
-import { ConnectionState, type Event, type Media, type Message, type MessageKind, type Presence, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
-import { type Backend, type Server, startServer } from '../src/daemon/server.ts';
+import { ConnectionState, DEFAULT_ACCOUNT, type Event, type Media, type Message, type MessageKind, type Presence, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
+import { type Account, type Backend, type Server, startServer } from '../src/daemon/server.ts';
 import type { Converted } from '../src/daemon/convert.ts';
 import { Store } from '../src/daemon/store.ts';
 
@@ -275,7 +276,7 @@ const progress = (chatId: string, id: string): void => {
 };
 
 let server: Server | null = null;
-const emit = (e: Event): void => server?.emit(e);
+const emit = (e: Event): void => server?.emit(DEFAULT_ACCOUNT, e);
 let status: Status = { state: ConnectionState.parse(values.state), qr: values.state === 'qr' ? 'https://wa.me/settings/linked_devices#fake-qr-code' : null, me: values.state === 'open' ? { id: '33600000000@s.whatsapp.net', name: 'Moi' } : null, error: null };
 
 const backend: Backend = {
@@ -430,6 +431,83 @@ const backend: Backend = {
   },
 };
 
+// ---------------------------------------------------------------- comptes ajoutés
+
+const resolved = (): Promise<void> => Promise.resolve();
+
+/** Compte ajouté : vide, en attente d'appairage ; envoi et lecture seulement. */
+function extraAccount(id: string): Account & { pair: () => void; incoming: (chatId: string, text: string) => void } {
+  const accountDir = path.join(values.dir, 'accounts', id);
+  fs.mkdirSync(accountDir, { recursive: true });
+  const db = new Store(path.join(accountDir, 'wa.db'));
+  const send = (e: Event): void => server?.emit(id, e);
+  let st: Status = { state: 'qr', qr: `https://wa.me/settings/linked_devices#fake-${id}`, me: null, error: null };
+  let n = 0;
+  const push = (chatId: string, fromMe: boolean, text: string): Message => {
+    n += 1;
+    const mid = `${id}-${n}`;
+    db.upsertMessage({ id: mid, chatId, fromMe, sender: null, senderName: null, timestamp: Math.floor(Date.now() / 1000), kind: 'text', text, media: null, quoted: null, status: fromMe ? 'sent' : null, forwarded: 0 }, '{}');
+    const m = db.message(chatId, mid);
+    if (m === null) throw new Error('message introuvable');
+    send({ type: 'message', message: m });
+    send({ type: 'chats', chats: [db.chat(chatId)].filter((c) => c !== null) });
+    return m;
+  };
+  const wa: Backend = {
+    get status() {
+      return st;
+    },
+    send: (chatId, text) => {
+      push(chatId, true, text);
+      return Promise.resolve();
+    },
+    markRead: (chatId) => {
+      db.markRead(chatId);
+      send({ type: 'chats', chats: [db.chat(chatId)].filter((c) => c !== null) });
+      return Promise.resolve();
+    },
+    chatAction: resolved,
+    picture: () => Promise.resolve(null),
+    logout: () => {
+      db.clear();
+      st = { state: 'qr', qr: `https://wa.me/settings/linked_devices#fake-${id}-2`, me: null, error: null };
+      send({ type: 'status', status: st });
+      return Promise.resolve();
+    },
+    media: () => Promise.reject(new Error('média introuvable')),
+    sendMedia: resolved,
+    requestHistory: () => Promise.resolve(false),
+    react: resolved,
+    messageInfo: (chatId, messageId) => ({ receipts: db.receipts(chatId, messageId) }),
+    messageAction: resolved,
+    subscribe: () => Promise.resolve({ online: false, lastSeen: null, typing: [] }),
+    setOnline: resolved,
+    lookup: (digits) => Promise.resolve(`${digits}@s.whatsapp.net`),
+    info: (chatId) => Promise.resolve({ id: chatId, name: db.displayName(chatId), group: false, phone: chatId.split('@')[0] ?? null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] }),
+    typing: resolved,
+  };
+  return {
+    store: db,
+    wa,
+    pair: () => {
+      const me = '33600000100@s.whatsapp.net';
+      db.setMe([me]);
+      db.upsertContact(COLLEAGUE, { name: 'Collègue de bureau' });
+      st = { state: 'open', qr: null, me: { id: me, name: 'Travail' }, error: null };
+      send({ type: 'status', status: st });
+      push(COLLEAGUE, false, 'Réunion à 10 h demain');
+    },
+    incoming: (chatId, text) => {
+      push(chatId, false, text);
+      db.incrementUnread(chatId);
+      send({ type: 'chats', chats: [db.chat(chatId)].filter((c) => c !== null) });
+    },
+  };
+}
+const COLLEAGUE = '33600000101@s.whatsapp.net';
+const extras = new Map<string, ReturnType<typeof extraAccount>>();
+let accountSeq = 0;
+
 // ---------------------------------------------------------------- pilotage des tests (--control)
 
 /** Appels reçus de l'app (tests de bout en bout) ; contenus binaires remplacés par leur taille. */
@@ -460,6 +538,11 @@ async function control(req: http.IncomingMessage): Promise<unknown> {
   if (req.method === 'POST' && req.url === '/incoming') {
     const b = await readJson(req);
     const chatId = String(b['chatId']);
+    const extra = typeof b['account'] === 'string' ? extras.get(b['account']) : undefined;
+    if (extra !== undefined) {
+      extra.incoming(chatId, String(b['text']));
+      return {};
+    }
     const m = add(chatId, false, String(b['text']), 0);
     store.incrementUnread(chatId);
     emit({ type: 'message', message: m });
@@ -467,6 +550,13 @@ async function control(req: http.IncomingMessage): Promise<unknown> {
     return m;
   }
   if (req.method === 'POST' && req.url === '/pair') {
+    const b = await readJson(req);
+    // compte ajouté : celui indiqué, sinon le dernier
+    const extra = typeof b['account'] === 'string' ? extras.get(b['account']) : [...extras.values()].at(-1);
+    if (extra !== undefined && (b['account'] !== undefined || status.state === 'open')) {
+      extra.pair();
+      return extra.wa.status;
+    }
     status = { state: 'open', qr: null, me: { id: ME, name: 'Moi' }, error: null };
     emit({ type: 'status', status });
     emit({ type: 'chats', chats: store.chats() });
@@ -487,5 +577,26 @@ if (values.control !== undefined) {
     .listen(Number(values.control), '127.0.0.1');
 }
 
-server = await startServer({ host: '127.0.0.1', port: Number(values.port), token, store, wa: () => recorded });
+server = await startServer({
+  host: '127.0.0.1',
+  port: Number(values.port),
+  token,
+  accounts: {
+    get: (id) => (id === DEFAULT_ACCOUNT ? { store, wa: recorded } : extras.get(id)),
+    ids: () => [DEFAULT_ACCOUNT, ...extras.keys()],
+    add: () => {
+      accountSeq += 1;
+      const id = `compte${accountSeq}`;
+      extras.set(id, extraAccount(id));
+      calls.push({ method: 'addAccount', args: [id] });
+      return Promise.resolve(id);
+    },
+    remove: (id) => {
+      extras.get(id)?.store.close();
+      extras.delete(id);
+      calls.push({ method: 'removeAccount', args: [id] });
+      return Promise.resolve();
+    },
+  },
+});
 console.log(`faux démon : http://127.0.0.1:${values.port} (WA_GNOME_DATA_DIR=${dir})`);

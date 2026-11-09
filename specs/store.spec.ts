@@ -310,7 +310,7 @@ describe('préférences', () => {
     expect(parseSettings('{"accent":"fuchsia"}').accent).toBe('system');
     expect(parseSettings('pas du json').accent).toBe('system');
     expect(parseSettings(null).notify).toBeTrue();
-    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false, wallpaper: 'pattern', translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {} });
+    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false, wallpaper: 'pattern', translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: 'default' });
     expect(parseSettings('{"translator":"opencode","whisperModel":"huge","translateTo":""}')).toEqual(jasmine.objectContaining({ translator: 'opencode', whisperModel: 'small', translateTo: 'français' }));
     expect(parseSettings('{"wallpaper":"color:menthe"}').wallpaper).toBe('color:menthe');
     expect(parseSettings('{"wallpaper":"color:fuchsia"}').wallpaper).toBe('pattern');

@@ -276,3 +276,39 @@ def test_transcrire_et_traduire_un_vocal(run_app):
     app.click('button', 'Traduire')
     assert app.text_visible('Bonjour, ceci est un vocal de test.')
     assert app.text_visible('[français] Le chat du voisin')
+
+
+COLLEAGUE = '33600000101@s.whatsapp.net'
+
+
+def test_plusieurs_comptes(run_app):
+    fake, app = run_app()
+    # ajout d'un compte : appairage par QR code
+    app.point(app.find(None, 'Comptes'))
+    app.click('button', 'Ajouter un compte')
+    fake.wait_call('addAccount')
+    assert app.text_visible('Connecter WhatsApp')
+    app.find('button', 'Annuler l’ajout de ce compte')
+    fake.pair()
+    assert app.text_visible('Collègue de bureau', 15)
+    # retour au premier compte par le sélecteur
+    app.point(app.find(None, 'Comptes'))
+    app.point(app.find(None, 'Moi'))
+    assert app.text_visible('Alice Martin')
+    app.text_gone('Collègue de bureau')
+    # message reçu sur l'autre compte : « Répondre » de sa notification ouvre ce compte
+    fake.incoming(COLLEAGUE, 'Tu as le dossier ?', 'compte1')
+    app.action('reply-chat', f"'compte1/{COLLEAGUE}'")
+    assert app.text_visible('Tu as le dossier ?')
+    app.text_gone('Alice Martin')
+    app.type('Oui')
+    wait_until(lambda: app.composer().text == 'Oui', 5, 'saisie dans le compte ajouté')
+    # retrait du compte (menu principal, 4e entrée) : retour au premier
+    app.key('Escape')
+    app.point(app.find(None, 'Menu principal'))
+    for _ in range(3):
+        app.key('Down')
+    app.key('Return')
+    app.click('button', 'Retirer')
+    assert fake.wait_call('removeAccount')['args'] == ['compte1']
+    assert app.text_visible('Alice Martin')

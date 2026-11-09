@@ -140,7 +140,7 @@ export function visibleChats(all: readonly Chat[], query: string, view: View, fi
   return all.filter((c) => inView(c, view) && (list === undefined || inList(c, list)));
 }
 
-export function ChatList({ store, pictures, toast }: { store: Store; pictures: Pictures; toast: (text: string) => void }): JSX.Element {
+export function ChatList({ store, pictures, toast, switcher, removable = false }: { store: Store; pictures: Pictures; toast: (text: string) => void; switcher?: Gtk.Widget; removable?: boolean }): JSX.Element {
   const [query, setQuery] = createState('');
   const [view, setView] = createState<View>('main');
   // messages trouvés (recherche dans le contenu, après une courte pause de frappe)
@@ -193,7 +193,19 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
   return (
     <Adw.NavigationPage title={view((v) => (v === 'archived' ? 'Archivées' : v === 'channels' ? 'Chaînes' : 'Discussions'))} tag="chats">
       <Adw.ToolbarView>
-        <Adw.HeaderBar $type="top">
+        <Adw.HeaderBar
+          $type="top"
+          $={(self: Adw.HeaderBar) => {
+            // sélecteur de compte : en tête, masqué dans les archives et les chaînes
+            if (switcher === undefined) return;
+            self.pack_start(switcher);
+            const sync = (): void => {
+              switcher.visible = !archived.peek();
+            };
+            sync();
+            onCleanup(archived.subscribe(sync));
+          }}
+        >
           <Gtk.Button $type="start" iconName="go-previous-symbolic" tooltipText="Retour aux discussions" visible={archived} onClicked={() => setArchived(false)} />
           <Gtk.Button
             $type="start"
@@ -212,6 +224,8 @@ export function ChatList({ store, pictures, toast }: { store: Store; pictures: P
               menu.append('Préférences', 'app.preferences');
               menu.append('Raccourcis clavier', 'app.shortcuts');
               menu.append('Déconnecter ce poste…', 'app.logout');
+              // compte ajouté : retirable (le premier se déconnecte seulement)
+              if (removable) menu.append('Retirer ce compte…', 'app.remove-account');
               menu.append('À propos de WhatsApp pour GNOME', 'app.about');
               self.menuModel = menu;
             }}

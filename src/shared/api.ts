@@ -35,6 +35,18 @@ export const Status = z.object({
 });
 export type Status = z.infer<typeof Status>;
 
+/**
+ * Comptes WhatsApp du démon. Le compte `default` (le premier, dossier de données racine) répond
+ * aussi aux routes sans préfixe ; chaque compte répond sous `/accounts/:id/…` (mêmes routes).
+ */
+export const DEFAULT_ACCOUNT = 'default';
+export const Account = z.object({ id: z.string(), status: Status });
+export type Account = z.infer<typeof Account>;
+export const AccountCreated = z.object({ id: z.string() });
+
+/** Chemin d'une route pour un compte (le compte par défaut garde les routes sans préfixe). */
+export const accountPath = (account: string, path: string): string => (account === DEFAULT_ACCOUNT ? path : `/accounts/${encodeURIComponent(account)}${path}`);
+
 export const Chat = z.object({
   /** JID WhatsApp (`…@s.whatsapp.net`, `…@g.us`, `…@lid`) */
   id: z.string(),

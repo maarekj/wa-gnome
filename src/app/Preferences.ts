@@ -5,6 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import * as z from 'zod/mini';
+import { DEFAULT_ACCOUNT } from '../shared/api.ts';
 import { dataDir } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { cancelWhisper, DownloadCancelled, deleteWhisper, downloads, downloadWhisper, hasWhisper, models, whisperDir } from './Whisper.ts';
@@ -38,6 +39,7 @@ const SettingsFile = z.object({
   whisperModel: z.optional(z.string()),
   voiceLanguages: z.optional(z.array(z.string())),
   chatVoiceLanguages: z.optional(z.record(z.string(), z.string())),
+  account: z.optional(z.string()),
 });
 
 /** Outil de traduction : CLI installée par l'utilisateur (ses identifiants). */
@@ -87,8 +89,10 @@ export interface Settings {
   readonly voiceLanguages: readonly string[];
   /** langue retenue par discussion (choisie à la main) */
   readonly chatVoiceLanguages: Readonly<Record<string, string>>;
+  /** compte affiché au dernier lancement */
+  readonly account: string;
 }
-const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {} };
+const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT };
 const asAccent = (id: string | undefined): AccentId => ACCENTS.find((a) => a.id === id)?.id ?? 'system';
 
 /** Texte sans espaces autour, ou null s'il est absent ou vide. */
@@ -114,6 +118,7 @@ export function parseSettings(text: string | null): Settings {
       whisperModel: WHISPER_MODELS.find((m) => m.id === raw.whisperModel)?.id ?? DEFAULTS.whisperModel,
       voiceLanguages: raw.voiceLanguages ?? DEFAULTS.voiceLanguages,
       chatVoiceLanguages: raw.chatVoiceLanguages ?? {},
+      account: nonEmpty(raw.account) ?? DEFAULT_ACCOUNT,
     };
   } catch {
     return DEFAULTS;
@@ -185,6 +190,11 @@ export function setChatVoiceLanguage(chatId: string, lang: string | null): void 
 
 /** Réglages en cours. */
 export const settings = (): Settings => current;
+
+/** Compte affiché, retenu pour le prochain lancement. */
+export function rememberAccount(account: string): void {
+  if (current.account !== account) update({ account });
+}
 
 /** Réglage modifié et enregistré. */
 function update(patch: Partial<Settings>): void {

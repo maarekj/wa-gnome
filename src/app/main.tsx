@@ -5,13 +5,14 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createRoot } from 'gnim';
-import { isMuted, previewOf } from '../shared/api.ts';
+import { DEFAULT_ACCOUNT, isMuted, previewOf } from '../shared/api.ts';
 import { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { Store } from '../shared/store.ts';
+import type { Store } from '../shared/store.ts';
+import { Accounts, accountName } from './Accounts.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { openNewChat } from './NewChat.ts';
-import { initSettings, openPreferences, settings } from './Preferences.ts';
+import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
 import { openShortcuts } from './Shortcuts.ts';
 import { STYLESHEET } from './style.ts';
 
@@ -20,83 +21,127 @@ export const APP_ID = GLib.getenv('WA_GNOME_APP_ID') ?? 'io.github.maarekj.WaGno
 
 const app = new Adw.Application({ applicationId: APP_ID, flags: Gio.ApplicationFlags.DEFAULT_FLAGS });
 Gtk.Window.set_default_icon_name(APP_ID);
-const store = new Store(new WaClient());
+const accounts = new Accounts(new WaClient(), loadSettings().account);
+/** compte affiché */
+const active = (): Store => accounts.active.peek();
 let mainWindow: Gtk.Window | null = null;
 let api: WindowApi | null = null;
 
 // ------------------------------------------------------------------ notifications
 
-store.onIncoming = (m, chat) => {
-  // discussion affichée dans une fenêtre active : déjà vue
-  if (mainWindow?.isActive === true && store.current.peek() === m.chatId) {
-    store.markRead(m.chatId);
-    return;
-  }
-  // mode silencieux ou notifications coupées dans les préférences : rien
-  if ((chat !== undefined && isMuted(chat)) || !settings().notify) return;
-  const n = new Gio.Notification();
-  const name = chat?.name ?? m.senderName ?? m.chatId.split('@')[0] ?? '';
-  // contenu masqué (préférences) : ni auteur ni texte
-  if (settings().preview) {
-    n.set_title(chat?.group === true && m.senderName !== null ? `${m.senderName} · ${name}` : name);
-    n.set_body(previewOf(m));
-  } else {
-    n.set_title('WhatsApp');
-    n.set_body('Nouveau message');
-  }
-  n.set_default_action_and_target('app.open-chat', new GLib.Variant('s', m.chatId));
-  // Répondre : discussion ouverte, saisie active ; Marquer comme lu : sans ouvrir l'app
-  n.add_button_with_target('Répondre', 'app.reply-chat', new GLib.Variant('s', m.chatId));
-  n.add_button_with_target('Marquer comme lu', 'app.read-chat', new GLib.Variant('s', m.chatId));
-  app.send_notification(`chat-${m.chatId}`, n);
-  notified.add(m.chatId);
+/** Cible des actions de notification : discussion, préfixée du compte s'il n'est pas le premier. */
+const target = (store: Store, chatId: string): string => (store.client.account === DEFAULT_ACCOUNT ? chatId : `${store.client.account}/${chatId}`);
+/** Compte et discussion d'une cible (un JID ne contient pas de « / »). */
+function parseTarget(param: GLib.Variant | null): { store: Store; chatId: string } | null {
+  const raw = param?.get_string()[0] ?? '';
+  const slash = raw.indexOf('/');
+  const store = slash === -1 ? accounts.main : accounts.byId(raw.slice(0, slash));
+  const chatId = slash === -1 ? raw : raw.slice(slash + 1);
+  return store === undefined || chatId === '' ? null : { store, chatId };
+}
+const notificationId = (store: Store, chatId: string): string => `chat-${target(store, chatId)}`;
+
+/** Compte retiré : notifications et abonnements libérés. */
+const unwatch = new Map<Store, () => void>();
+
+/** Notifications d'un compte suivi. */
+function watch(store: Store): void {
+  /** discussions ayant une notification affichée */
+  const shown = new Set<string>();
+  store.onIncoming = (m, chat) => {
+    // discussion affichée dans une fenêtre active : déjà vue
+    if (mainWindow?.isActive === true && active() === store && store.current.peek() === m.chatId) {
+      store.markRead(m.chatId);
+      return;
+    }
+    // mode silencieux ou notifications coupées dans les préférences : rien
+    if ((chat !== undefined && isMuted(chat)) || !settings().notify) return;
+    const n = new Gio.Notification();
+    const name = chat?.name ?? m.senderName ?? m.chatId.split('@')[0] ?? '';
+    // plusieurs comptes : celui qui a reçu le message
+    const several = accounts.list.peek().length > 1;
+    // contenu masqué (préférences) : ni auteur ni texte
+    if (settings().preview) {
+      const title = chat?.group === true && m.senderName !== null ? `${m.senderName} · ${name}` : name;
+      n.set_title(several ? `${title} (${accountName(store)})` : title);
+      n.set_body(previewOf(m));
+    } else {
+      n.set_title(several ? `WhatsApp (${accountName(store)})` : 'WhatsApp');
+      n.set_body('Nouveau message');
+    }
+    const t = new GLib.Variant('s', target(store, m.chatId));
+    n.set_default_action_and_target('app.open-chat', t);
+    // Répondre : discussion ouverte, saisie active ; Marquer comme lu : sans ouvrir l'app
+    n.add_button_with_target('Répondre', 'app.reply-chat', t);
+    n.add_button_with_target('Marquer comme lu', 'app.read-chat', t);
+    app.send_notification(notificationId(store, m.chatId), n);
+    shown.add(m.chatId);
+  };
+  // discussion lue ailleurs (téléphone, autre fenêtre) : notification retirée
+  const off = store.chats.subscribe(() => {
+    if (shown.size === 0) return;
+    for (const c of store.chats.peek()) {
+      if (!shown.has(c.id) || c.unread > 0 || c.markedUnread) continue;
+      app.withdraw_notification(notificationId(store, c.id));
+      shown.delete(c.id);
+    }
+  });
+  unwatch.set(store, () => {
+    off();
+    store.onIncoming = null;
+    for (const id of shown) app.withdraw_notification(notificationId(store, id));
+  });
+}
+watch(accounts.main);
+accounts.onAdded = watch;
+accounts.onRemoved = (store) => {
+  unwatch.get(store)?.();
+  unwatch.delete(store);
+};
+accounts.onSwitch = (store) => {
+  rememberAccount(store.client.account);
+  // présence : le compte quitté n'est plus « en ligne »
+  for (const s of accounts.list.peek()) if (s !== store && s.status.peek().state === 'open') void s.client.setOnline(false).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+  if (mainWindow?.isActive === true && store.status.peek().state === 'open') void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
 };
 
-/** discussions ayant une notification affichée */
-const notified = new Set<string>();
-// discussion lue ailleurs (téléphone, autre fenêtre) : notification retirée
-store.chats.subscribe(() => {
-  if (notified.size === 0) return;
-  for (const c of store.chats.peek()) {
-    if (!notified.has(c.id) || c.unread > 0 || c.markedUnread) continue;
-    app.withdraw_notification(`chat-${c.id}`);
-    notified.delete(c.id);
-  }
-});
+/** Fenêtre au premier plan sur le compte d'une discussion. */
+function bring(store: Store, chatId: string): void {
+  if (mainWindow === null) app.activate();
+  else mainWindow.present();
+  accounts.select(store);
+  app.withdraw_notification(notificationId(store, chatId));
+}
 
 // ------------------------------------------------------------------ actions
 
 /** app.open-chat(jid) : clic sur une notification */
 const openChat = new Gio.SimpleAction({ name: 'open-chat', parameterType: new GLib.VariantType('s') });
 openChat.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
-  const id = param?.get_string()[0];
-  if (id === undefined || id === '') return;
-  if (mainWindow === null) app.activate();
-  else mainWindow.present();
-  app.withdraw_notification(`chat-${id}`);
-  store.open(id);
+  const t = parseTarget(param);
+  if (t === null) return;
+  bring(t.store, t.chatId);
+  t.store.open(t.chatId);
 });
 app.add_action(openChat);
 
 /** app.reply-chat(jid) : bouton « Répondre » d'une notification */
 const replyChat = new Gio.SimpleAction({ name: 'reply-chat', parameterType: new GLib.VariantType('s') });
 replyChat.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
-  const id = param?.get_string()[0];
-  if (id === undefined || id === '') return;
-  if (mainWindow === null) app.activate();
-  else mainWindow.present();
-  app.withdraw_notification(`chat-${id}`);
-  store.reply(id);
+  const t = parseTarget(param);
+  if (t === null) return;
+  bring(t.store, t.chatId);
+  t.store.reply(t.chatId);
 });
 app.add_action(replyChat);
 
 /** app.read-chat(jid) : bouton « Marquer comme lu » d'une notification (sans ouvrir la fenêtre) */
 const readChat = new Gio.SimpleAction({ name: 'read-chat', parameterType: new GLib.VariantType('s') });
 readChat.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
-  const id = param?.get_string()[0];
-  if (id === undefined || id === '') return;
-  app.withdraw_notification(`chat-${id}`);
-  store.markRead(id);
+  const t = parseTarget(param);
+  if (t === null) return;
+  app.withdraw_notification(notificationId(t.store, t.chatId));
+  t.store.markRead(t.chatId);
 });
 app.add_action(readChat);
 
@@ -113,11 +158,31 @@ logout.connect('activate', () => {
   dialog.set_response_appearance('logout', Adw.ResponseAppearance.DESTRUCTIVE);
   dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
     if (response !== 'logout') return;
-    store.client.logout().catch((error: unknown) => api?.toast(`Déconnexion impossible : ${errorMessage(error)}`));
+    active().client.logout().catch((error: unknown) => api?.toast(`Déconnexion impossible : ${errorMessage(error)}`));
   });
   dialog.present(mainWindow);
 });
 app.add_action(logout);
+
+/** app.remove-account : retire le compte affiché (pas le premier) */
+const removeAccount = new Gio.SimpleAction({ name: 'remove-account' });
+removeAccount.connect('activate', () => {
+  const store = active();
+  if (mainWindow === null || store === accounts.main) return;
+  const dialog = new Adw.AlertDialog({
+    heading: `Retirer le compte ${accountName(store)} ?`,
+    body: 'Ce poste sera déconnecté de ce compte et ses discussions enregistrées sur cet ordinateur seront effacées.',
+  });
+  dialog.add_response('cancel', 'Annuler');
+  dialog.add_response('remove', 'Retirer');
+  dialog.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE);
+  dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
+    if (response !== 'remove') return;
+    accounts.remove(store).catch((error: unknown) => api?.toast(`Retrait impossible : ${errorMessage(error)}`));
+  });
+  dialog.present(mainWindow);
+});
+app.add_action(removeAccount);
 
 const about = new Gio.SimpleAction({ name: 'about' });
 about.connect('activate', () => {
@@ -136,7 +201,7 @@ app.add_action(about);
 /** app.new-chat : nouvelle discussion (Ctrl+N) */
 const newChat = new Gio.SimpleAction({ name: 'new-chat' });
 newChat.connect('activate', () => {
-  if (mainWindow !== null && api !== null) openNewChat(mainWindow, store, api.pictures, (t) => api?.toast(t));
+  if (mainWindow !== null && api !== null) openNewChat(mainWindow, active(), api.pictures, (t) => api?.toast(t));
 });
 app.add_action(newChat);
 app.set_accels_for_action('app.new-chat', ['<Control>n']);
@@ -182,11 +247,11 @@ app.connect('activate', () => {
     mainWindow.present();
     return;
   }
-  store.start();
+  accounts.start();
   createRoot((dispose) => {
     const win = MainWindow({
       app,
-      store,
+      accounts,
       ready: (a) => {
         api = a;
       },
@@ -200,31 +265,45 @@ app.connect('activate', () => {
       // regroupé : un passage bref dans une autre fenêtre ne bascule pas la présence
       onlineTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
         onlineTimer = 0;
+        const store = active();
         if (store.status.peek().state === 'open') void store.client.setOnline(win.isActive).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
         return GLib.SOURCE_REMOVE;
       });
     });
     // connexion (ré)ouverte alors que la fenêtre a déjà le focus : en ligne
-    let wasOpen = store.status.peek().state === 'open';
-    const statusSub = store.status.subscribe(() => {
-      const open = store.status.peek().state === 'open';
-      if (open && !wasOpen && win.isActive) void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
-      wasOpen = open;
+    // (compte affiché seulement : les autres restent hors ligne)
+    const wasOpen = new WeakMap<Store, boolean>();
+    const follow = (store: Store): (() => void) => {
+      wasOpen.set(store, store.status.peek().state === 'open');
+      return store.status.subscribe(() => {
+        const open = store.status.peek().state === 'open';
+        if (open && wasOpen.get(store) !== true && win.isActive && active() === store) void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+        wasOpen.set(store, open);
+      });
+    };
+    let statusSubs = accounts.list.peek().map((st) => follow(st));
+    const listSub = accounts.list.subscribe(() => {
+      for (const off of statusSubs) off();
+      statusSubs = accounts.list.peek().map((st) => follow(st));
     });
-    win.connect('destroy', statusSub);
+    win.connect('destroy', () => {
+      listSub();
+      for (const off of statusSubs) off();
+    });
     // discussion affichée redevenue visible : lue
     win.connect('notify::is-active', () => {
+      const store = active();
       const id = store.current.peek();
       if (win.isActive && id !== null) {
         store.markRead(id);
-        app.withdraw_notification(`chat-${id}`);
+        app.withdraw_notification(notificationId(store, id));
       }
     });
     win.connect('close-request', () => {
-      void store.client.setOnline(false).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+      void active().client.setOnline(false).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
       api = null;
       mainWindow = null;
-      store.open(null);
+      for (const s of accounts.list.peek()) s.open(null);
       dispose();
       return false;
     });
@@ -232,7 +311,7 @@ app.connect('activate', () => {
   });
 });
 
-app.connect('shutdown', () => store.stop());
+app.connect('shutdown', () => accounts.stop());
 
 app.runAsync([imports.system.programInvocationName, ...ARGV]).catch((error: unknown) => {
   console.error(error);

@@ -1,13 +1,16 @@
 // Fenêtre principale : selon l'état, démon injoignable, appairage (QR code) ou discussions.
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
-import { createMemo, onCleanup } from 'gnim';
+import { createMemo, createRoot, onCleanup } from 'gnim';
 import type { Status } from '../shared/api.ts';
 import type { Link } from '../shared/client.ts';
+import { errorMessage } from '../shared/errors.ts';
 import type { Store } from '../shared/store.ts';
 import { ChatList } from './ChatList.tsx';
 import { ConversationPage } from './ConversationPage.tsx';
-import { Pictures } from './pictures.ts';
+import type { Accounts } from './Accounts.ts';
+import { accountSwitcher } from './AccountSwitcher.ts';
+import type { Pictures } from './pictures.ts';
 import { qrCode } from './QrCode.ts';
 
 /** Unité systemd du démon (scripts/install.ts). */
@@ -37,39 +40,73 @@ function asPage(o: JSX.Element): Adw.NavigationPage {
 
 export interface WindowApi {
   toast: (text: string) => void;
-  /** photos de profil (fenêtres ouvertes depuis l'application) */
-  pictures: Pictures;
+  /** photos de profil du compte affiché (fenêtres ouvertes depuis l'application) */
+  readonly pictures: Pictures;
 }
 
-export function MainWindow({ app, store, ready }: { app: Adw.Application; store: Store; ready: (api: WindowApi) => void }): JSX.Element {
-  const screen = createMemo(() => screenOf(store.link(), store.status()));
+/** Bouton du sélecteur de compte, en tête d'une barre d'en-tête. */
+function switcherIn(bar: Adw.HeaderBar, accounts: Accounts, toast: (t: string) => void): void {
+  bar.pack_start(accountSwitcher(accounts, toast));
+}
+
+export function MainWindow({ app, accounts, ready }: { app: Adw.Application; accounts: Accounts; ready: (api: WindowApi) => void }): JSX.Element {
   let overlay: Adw.ToastOverlay | null = null;
-  let split: Adw.NavigationSplitView | null = null;
-  const pictures = new Pictures(store.client);
-  store.onPicture = (id) => pictures.invalidate(id);
   const toast = (text: string): void => overlay?.add_toast(new Adw.Toast({ title: text, timeout: 5 }));
-  ready({ toast, pictures });
+  ready({
+    toast,
+    get pictures() {
+      return accounts.pictures(accounts.active.peek());
+    },
+  });
+  /** contenu du compte affiché, refait à chaque changement de compte */
+  let disposeView: (() => void) | null = null;
+  const show = (bin: Adw.Bin): void => {
+    disposeView?.();
+    createRoot((dispose) => {
+      disposeView = dispose;
+      const view = AccountView({ store: accounts.active.peek(), accounts, toast });
+      if (!(view instanceof Gtk.Widget)) throw new TypeError('widget attendu');
+      bin.child = view;
+    });
+  };
 
   return (
-    <Adw.ApplicationWindow
-      application={app}
-      title="WhatsApp"
-      defaultWidth={1000}
-      defaultHeight={700}
+    <Adw.ApplicationWindow application={app} title="WhatsApp" defaultWidth={1000} defaultHeight={700} widthRequest={360} heightRequest={400}>
+      <Adw.ToastOverlay
+        $={(self: Adw.ToastOverlay) => {
+          overlay = self;
+        }}
+      >
+        <Adw.Bin
+          $={(self: Adw.Bin) => {
+            show(self);
+            onCleanup(accounts.active.subscribe(() => show(self)));
+            onCleanup(() => disposeView?.());
+          }}
+        />
+      </Adw.ToastOverlay>
+    </Adw.ApplicationWindow>
+  );
+}
+
+/** Écrans d'un compte : démon injoignable, chargement, appairage ou discussions. */
+function AccountView({ store, accounts, toast }: { store: Store; accounts: Accounts; toast: (t: string) => void }): JSX.Element {
+  const screen = createMemo(() => screenOf(store.link(), store.status()));
+  let split: Adw.NavigationSplitView | null = null;
+  const pictures = accounts.pictures(store);
+  /** compte ajouté (pas le premier) : appairage annulable */
+  const extra = store !== accounts.main;
+  return (
+    <Adw.BreakpointBin
       widthRequest={360}
       heightRequest={400}
-      $={(self: Adw.ApplicationWindow) => {
+      $={(self: Adw.BreakpointBin) => {
         // fenêtre étroite : une seule colonne, la discussion ouverte au premier plan
         const bp = new Adw.Breakpoint({ condition: Adw.BreakpointCondition.parse('max-width: 640sp') });
         if (split !== null) bp.add_setter(split, 'collapsed', true);
         self.add_breakpoint(bp);
       }}
     >
-      <Adw.ToastOverlay
-        $={(self: Adw.ToastOverlay) => {
-          overlay = self;
-        }}
-      >
         <Gtk.Stack visibleChildName={screen} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Adw.ToolbarView $type="named" name="daemon">
             <Adw.HeaderBar $type="top" />
@@ -80,13 +117,13 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
             />
           </Adw.ToolbarView>
           <Adw.ToolbarView $type="named" name="loading">
-            <Adw.HeaderBar $type="top" />
+            <Adw.HeaderBar $type="top" $={(self: Adw.HeaderBar) => switcherIn(self, accounts, toast)} />
             <Adw.StatusPage title={store.status((s) => STATE_BANNER[s.state])} description={store.status((s) => s.error ?? '')}>
               <Adw.Spinner widthRequest={32} heightRequest={32} />
             </Adw.StatusPage>
           </Adw.ToolbarView>
           <Adw.ToolbarView $type="named" name="pair">
-            <Adw.HeaderBar $type="top" />
+            <Adw.HeaderBar $type="top" $={(self: Adw.HeaderBar) => switcherIn(self, accounts, toast)} />
             <Gtk.ScrolledWindow hscrollbarPolicy={Gtk.PolicyType.NEVER}>
               <Adw.Clamp maximumSize={480}>
                 <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={18} valign={Gtk.Align.CENTER} marginTop={24} marginBottom={24} marginStart={12} marginEnd={12}>
@@ -104,6 +141,15 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
                     justify={Gtk.Justification.CENTER}
                     label={'1. Ouvrez WhatsApp sur votre téléphone\n2. Touchez <b>Appareils connectés</b> puis <b>Connecter un appareil</b>\n3. Scannez ce code'}
                   />
+                  <Gtk.Button
+                    label="Annuler l’ajout de ce compte"
+                    visible={extra}
+                    halign={Gtk.Align.CENTER}
+                    cssClasses={['pill']}
+                    onClicked={() => {
+                      accounts.remove(store).catch((error: unknown) => toast(`Retrait impossible : ${errorMessage(error)}`));
+                    }}
+                  />
                 </Gtk.Box>
               </Adw.Clamp>
             </Gtk.ScrolledWindow>
@@ -116,7 +162,7 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
               maxSidebarWidth={400}
               $={(self: Adw.NavigationSplitView) => {
                 split = self;
-                self.sidebar = asPage(ChatList({ store, pictures, toast }));
+                self.sidebar = asPage(ChatList({ store, pictures, toast, switcher: accountSwitcher(accounts, toast), removable: extra }));
                 self.content = asPage(ConversationPage({ store, pictures, toast }));
                 onCleanup(
                   store.current.subscribe(() => {
@@ -130,7 +176,6 @@ export function MainWindow({ app, store, ready }: { app: Adw.Application; store:
             />
           </Gtk.Box>
         </Gtk.Stack>
-      </Adw.ToastOverlay>
-    </Adw.ApplicationWindow>
+    </Adw.BreakpointBin>
   );
 }
