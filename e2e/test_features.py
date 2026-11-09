@@ -257,3 +257,22 @@ def test_forme_onde_du_vocal(run_app):
     assert not wave.sensitive
     app.click('button', 'Lire')
     wait_until(lambda: wave.sensitive, 10, 'forme d’onde active')
+
+
+def test_traduire_des_messages(run_app):
+    _, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    app.drag(app.find('label', 'Message n° 148'), max(app.all('label', 'Message n° 150'), key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).x))
+    app.click('button', 'Traduire')
+    assert app.text_visible('[français] Message n° 148')
+    assert app.text_visible('[français] Message n° 150')
+    assert app.text_visible('Traduit de l’anglais')
+
+
+def test_transcrire_et_traduire_un_vocal(run_app):
+    _, app = run_app()
+    app.open_chat('Famille')
+    app.drag(app.find('label', 'Menu du dimanche.pdf'), app.find('label', 'Le chat du voisin'))
+    app.click('button', 'Traduire')
+    assert app.text_visible('Bonjour, ceci est un vocal de test.')
+    assert app.text_visible('[français] Le chat du voisin')

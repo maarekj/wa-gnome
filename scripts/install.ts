@@ -68,6 +68,8 @@ export GDK_PIXBUF_MODULE_FILE=${shq(process.env['GDK_PIXBUF_MODULE_FILE'] ?? '')
 # schémas GSettings de GTK (sélecteur de fichiers « Enregistrer sous… »)
 export XDG_DATA_DIRS=${shq(process.env['WA_GNOME_GTK_DATA'] ?? '')}:\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
 export GI_TYPELIB_PATH=${shq(process.env['GI_TYPELIB_PATH'] ?? '')}\${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
+# transcription des vocaux (whisper.cpp, voir devenv.nix)
+export WA_GNOME_WHISPER=${shq(which('whisper-cli'))}
 exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "$@"
 `,
   0o755,

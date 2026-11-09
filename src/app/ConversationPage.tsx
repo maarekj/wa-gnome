@@ -15,6 +15,9 @@ import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pas
 import { avatarText, isChannel } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
+import { setChatVoiceLanguage, settings, WHISPER_MODELS, type WhisperModel } from './Preferences.ts';
+import { DownloadCancelled } from './Whisper.ts';
+import { downloadWhisper, hideTranslation, languageName, MissingModel, translateMessage, translationOf, translations } from './Translate.ts';
 import { fmtRecording, Recorder } from './Recorder.ts';
 import { attachDragSelect } from './DragSelect.ts';
 import { openGallery } from './Gallery.ts';
@@ -57,6 +60,85 @@ export function bigEmoji(m: Pick<Message, 'kind' | 'text'>): string[] {
   if (m.kind !== 'text') return [];
   const n = emojiOnly(m.text);
   return n === 0 || n > 3 ? [] : [n === 1 ? 'emoji-1' : 'emoji-3'];
+}
+
+/** « de l’anglais », « du russe », « de l’hébreu » (langue d'origine d'une traduction). */
+export const fromLanguage = (lang: string): string => (/^[aeiouyéèêh]/iu.test(lang) ? `de l’${lang}` : `du ${lang}`);
+
+/**
+ * Modèle de transcription absent : téléchargement proposé (taille indiquée, suivi dans les
+ * préférences), puis `then`.
+ */
+function offerWhisperDownload(parent: Gtk.Widget, model: WhisperModel, toast: (t: string) => void, then: () => void): void {
+  const info = WHISPER_MODELS.find((w) => w.id === model);
+  const dialog = new Adw.AlertDialog({
+    heading: 'Télécharger le modèle de transcription ?',
+    body: `Les vocaux sont transcrits sur cet ordinateur. Le modèle « ${info?.name ?? model} » doit être téléchargé une fois${info === undefined ? '' : ` (${info.size} Mo)`}. Les modèles se gèrent dans Préférences › Transcription des vocaux.`,
+  });
+  dialog.add_response('cancel', 'Annuler');
+  dialog.add_response('prefs', 'Préférences');
+  dialog.add_response('download', 'Télécharger');
+  dialog.set_response_appearance('download', Adw.ResponseAppearance.SUGGESTED);
+  dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
+    if (response === 'prefs') {
+      parent.activate_action('app.preferences', null);
+      return;
+    }
+    if (response !== 'download') return;
+    toast('Téléchargement du modèle… (avancement dans les préférences)');
+    void (async (): Promise<void> => {
+      try {
+        await downloadWhisper(model);
+        toast('Modèle de transcription prêt');
+        then();
+      } catch (error) {
+        // annulé depuis les préférences : rien à reprendre
+        if (!(error instanceof DownloadCancelled)) toast(`Téléchargement impossible : ${errorMessage(error)}`);
+      }
+    })();
+  });
+  dialog.present(parent);
+}
+
+/** Transcription et traduction d'un message (sous son texte), mises à jour en direct. */
+function TranslationView(m: Message): Gtk.Widget {
+  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, cssClasses: ['translation'], visible: false });
+  const transcript = new Gtk.Label({ xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, selectable: true, maxWidthChars: 60, cssClasses: ['transcript'] });
+  const head = new Gtk.Label({ xalign: 0, cssClasses: ['caption', 'dim-label'] });
+  const text = new Gtk.Label({ xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, selectable: true, maxWidthChars: 60, useMarkup: true });
+  openLinks(text);
+  box.append(transcript);
+  box.append(head);
+  box.append(text);
+  const sync = (): void => {
+    const t = translationOf(m);
+    box.visible = t !== undefined;
+    if (t === undefined) return;
+    transcript.visible = t.transcript !== undefined && t.transcript !== '';
+    transcript.label = t.transcript === undefined ? '' : `« ${t.transcript} »`;
+    head.visible = true;
+    text.visible = t.text !== undefined && t.text !== '';
+    text.label = waMarkup(t.text ?? '');
+    head.label =
+      t.status === 'transcribing'
+        ? 'Transcription…'
+        : t.status === 'translating'
+          ? 'Traduction…'
+          : t.status === 'error'
+            ? `Échec : ${t.error ?? ''}`
+            : t.text === undefined
+              ? t.spoken === null || t.spoken === undefined
+                ? 'Transcription'
+                : `Transcription (${languageName(t.spoken)})`
+              : t.text === ''
+                ? `Déjà en ${settings().translateTo}`
+                : t.from === null || t.from === undefined
+                  ? 'Traduction'
+                  : `Traduit ${fromLanguage(t.from)}`;
+  };
+  sync();
+  onCleanup(translations.subscribe(sync));
+  return box;
 }
 
 /** Couleurs des noms des participants (lisibles en thème clair et sombre). */
@@ -132,6 +214,8 @@ interface BubbleContext {
   readonly toggleSelect: (m: Message) => void;
   /** transférer ce message (fenêtre de choix des discussions) */
   readonly forward: (parent: Gtk.Widget, m: Message) => void;
+  /** traduire (texte, vocal : transcription puis traduction) ou seulement transcrire un vocal */
+  readonly translate: (parent: Gtk.Widget, m: Message, mode: 'translate' | 'transcribe', lang?: string | null) => void;
 }
 
 /** Messages transférables (pas ceux supprimés pour tous). */
@@ -242,6 +326,21 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   const forwardAction = new Gio.SimpleAction({ name: 'forward' });
   forwardAction.connect('activate', () => ctx.forward(widget, msg()));
   group.add_action(forwardAction);
+  for (const [name, mode] of [['translate', 'translate'], ['transcribe', 'transcribe']] as const) {
+    const a = new Gio.SimpleAction({ name });
+    a.connect('activate', () => ctx.translate(widget, msg(), mode));
+    group.add_action(a);
+  }
+  // vocal : langue imposée (« auto » : détection), retenue pour la discussion
+  const inLang = new Gio.SimpleAction({ name: 'transcribe-in', parameterType: new GLib.VariantType('s') });
+  inLang.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
+    const code = param?.get_string()[0] ?? 'auto';
+    ctx.translate(widget, msg(), 'translate', code === 'auto' ? null : code);
+  });
+  group.add_action(inLang);
+  const hide = new Gio.SimpleAction({ name: 'hide-translation' });
+  hide.connect('activate', () => hideTranslation(msg()));
+  group.add_action(hide);
   const copy = new Gio.SimpleAction({ name: 'copy' });
   copy.connect('activate', () => {
     widget.get_clipboard().set(msg().text);
@@ -296,6 +395,24 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
     }
     model.append_submenu('Réagir', reactions);
     if (msg().text !== '') model.append('Copier le texte', 'msg.copy');
+    // traduction : texte ou légende ; vocaux : transcription (puis traduction)
+    if (translationOf(m) !== undefined) model.append(m.kind === 'audio' ? 'Masquer la transcription' : 'Masquer la traduction', 'msg.hide-translation');
+    else if (m.kind === 'audio') {
+      model.append('Transcrire', 'msg.transcribe');
+      model.append('Transcrire et traduire', 'msg.translate');
+    } else if (m.text.trim() !== '') model.append('Traduire', 'msg.translate');
+    if (m.kind === 'audio' && m.media !== null) {
+      // langue du vocal (mal détectée) : imposée, puis retenue pour la discussion
+      const langs = new Gio.Menu();
+      const chosen = settings().chatVoiceLanguages[m.chatId] ?? 'auto';
+      const items = [...settings().voiceLanguages.map((code) => ({ code, label: languageName(code) })), { code: 'auto', label: 'détecter automatiquement' }];
+      for (const l of items) {
+        const it = Gio.MenuItem.new(`${l.label.replace(/^./u, (c) => c.toUpperCase())}${l.code === chosen ? '  ✓' : ''}`, null);
+        it.set_action_and_target_value('msg.transcribe-in', new GLib.Variant('s', l.code));
+        langs.append_item(it);
+      }
+      model.append_submenu('Transcrire et traduire en…', langs);
+    }
     model.append('Sélectionner', 'msg.select');
     const danger = new Gio.Menu();
     if (m.fromMe && age < REVOKE_WINDOW_S) danger.append('Supprimer pour tous…', 'msg.revoke');
@@ -443,6 +560,7 @@ function bubble(ctx: BubbleContext) {
             // liens : ouverts dans le navigateur par défaut
             $={(self: Gtk.Label) => openLinks(self)}
           />
+          {TranslationView(m)}
           <Gtk.Box spacing={4} halign={Gtk.Align.END}>
             <Gtk.Label label="Modifié" visible={live(() => msg().edited)} tooltipText="Message modifié par son auteur" cssClasses={['caption', 'dim-label', 'edited-mark']} />
             <Gtk.Label label={live(() => fmtTime(msg().timestamp))} cssClasses={['caption', 'dim-label']} />
@@ -936,6 +1054,34 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     else next.add(m.id);
     setSelection(next);
   };
+  /**
+   * Traduit des messages l'un après l'autre (vocaux : transcription d'abord) ; modèle de
+   * transcription absent : téléchargement proposé, puis nouvel essai.
+   */
+  const translateAll = (parent: Gtk.Widget, list: readonly Message[], mode: 'translate' | 'transcribe', lang?: string | null): void => {
+    // langue choisie à la main : retenue pour les vocaux suivants de la discussion
+    if (lang !== undefined) for (const id of new Set(list.map((m) => m.chatId))) setChatVoiceLanguage(id, lang);
+    const todo = list.filter((m) => !m.deleted && (m.kind === 'audio' ? m.media !== null : m.text.trim() !== ''));
+    if (todo.length === 0) {
+      toast('Rien à traduire dans ces messages');
+      return;
+    }
+    void (async (): Promise<void> => {
+      for (const [i, m] of todo.entries()) {
+        const media = m.media;
+        try {
+          // oxlint-disable-next-line no-await-in-loop -- une traduction à la fois (outil de l'utilisateur)
+          await translateMessage(m, { ...(m.kind === 'audio' && media !== null ? { file: () => loader.file(m, media) } : {}), translate: mode === 'translate', ...(lang === undefined ? {} : { lang }) });
+        } catch (error) {
+          if (error instanceof MissingModel) {
+            // modèle téléchargé : reprise à partir de ce vocal (les précédents sont déjà traduits)
+            offerWhisperDownload(parent, error.model, toast, () => translateAll(parent, todo.slice(i), mode, lang));
+            return;
+          }
+        }
+      }
+    })();
+  };
   /** messages sélectionnés, dans l'ordre de la discussion */
   const selected = (): Message[] => store.messages.peek().filter((m) => selection.peek().has(m.id));
   return (
@@ -1138,7 +1284,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                       conversation = self;
                       // glisser d'un message à l'autre : sélection (comme Telegram Desktop)
                       attachDragSelect(self, () => scroller, () => selection.peek(), setSelection);
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>
@@ -1160,6 +1306,15 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                       if (list.length === 0) return;
                       b.get_clipboard().set(copyText(list, chat.peek()?.name ?? ''));
                       toast(list.length === 1 ? 'Texte copié' : `${list.length} messages copiés`);
+                      clearSelection();
+                    }}
+                  />
+                  <Gtk.Button
+                    iconName="preferences-desktop-locale-symbolic"
+                    tooltipText="Traduire"
+                    cssClasses={['circular', 'flat']}
+                    onClicked={(b: Gtk.Button) => {
+                      translateAll(b, selected(), 'translate');
                       clearSelection();
                     }}
                   />

@@ -72,6 +72,7 @@ in
     pkgs.xdotool
     pkgs.xclip # presse-papier de l'écran virtuel (tests du collage)
     jasmine-gjs # tests unitaires (specs/*.spec.ts)
+    pkgs.whisper-cpp # transcription des vocaux (whisper-cli), avant traduction
     # tests de bout en bout (e2e/*.py, `pnpm e2e`) : dogtail pilote l'app par l'accessibilité (AT-SPI)
     (pkgs.python3.withPackages (ps: [ ps.dogtail ps.pygobject3 ps.pytest ]))
     pkgs.at-spi2-core

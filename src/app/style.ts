@@ -123,6 +123,17 @@ export const STYLESHEET = `
   font-size: 34px;
   line-height: 1.1;
 }
+.translation {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid alpha(currentColor, 0.12);
+}
+.bubble.with-media > .translation {
+  margin: 4px 6px 0 6px;
+}
+.transcript {
+  font-style: italic;
+}
 .chat-title {
   padding: 2px 10px;
 }

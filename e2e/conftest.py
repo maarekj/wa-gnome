@@ -141,6 +141,8 @@ class App:
             WA_GNOME_APP_ID=f'io.github.maarekj.WaGnome.E2e{fake.port}',
             # liens journalisés (`LIEN url`) au lieu d'ouvrir le navigateur
             WA_GNOME_TEST_LINKS='1',
+            # traduction et transcription simulées (aucun outil lancé, rien d'envoyé)
+            WA_GNOME_TEST_TRANSLATE='1',
         )
         self.app_id = env['WA_GNOME_APP_ID']
         self._log = self.log_path.open('w')

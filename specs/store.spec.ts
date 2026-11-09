@@ -21,6 +21,8 @@ import { rangeSelection, rowAt } from '../src/app/DragSelect.ts';
 import { patternSvg, wallpaperCss } from '../src/app/Wallpaper.ts';
 import { infoSubtitle, roleOf } from '../src/app/ChatInfoDialog.ts';
 import { bars } from '../src/app/Waveform.ts';
+import { languageName, opencodeText, parseAnswer, parsePick, parseWhisper, pickPrompt, translatePrompt } from '../src/app/Translate.ts';
+import { fromLanguage } from '../src/app/ConversationPage.tsx';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ...extra });
@@ -308,7 +310,8 @@ describe('préférences', () => {
     expect(parseSettings('{"accent":"fuchsia"}').accent).toBe('system');
     expect(parseSettings('pas du json').accent).toBe('system');
     expect(parseSettings(null).notify).toBeTrue();
-    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false, wallpaper: 'pattern' });
+    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false, wallpaper: 'pattern', translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {} });
+    expect(parseSettings('{"translator":"opencode","whisperModel":"huge","translateTo":""}')).toEqual(jasmine.objectContaining({ translator: 'opencode', whisperModel: 'small', translateTo: 'français' }));
     expect(parseSettings('{"wallpaper":"color:menthe"}').wallpaper).toBe('color:menthe');
     expect(parseSettings('{"wallpaper":"color:fuchsia"}').wallpaper).toBe('pattern');
   });
@@ -452,5 +455,57 @@ describe('forme d’onde', () => {
     expect(bars([0, 100, 50, 20], 2)).toEqual([1, 0.5]);
     expect(bars([40], 3)).toEqual([0.4, 0.4, 0.4]);
     expect(bars([], 5)).toEqual([]);
+  });
+});
+
+describe('traduction', () => {
+  it('consigne : langue cible et message', () => {
+    const prompt = translatePrompt('Hello', 'français');
+    expect(prompt).toContain('Traduis en français');
+    expect(prompt).toContain('<message>\nHello\n</message>');
+  });
+  it('réponse JSON (au milieu d’un texte), sinon texte brut', () => {
+    expect(parseAnswer('Voici : {"langue": "anglais", "traduction": "Bonjour"}')).toEqual({ from: 'anglais', text: 'Bonjour' });
+    expect(parseAnswer('{"langue":"","traduction":""}')).toEqual({ from: null, text: '' });
+    expect(parseAnswer('Bonjour')).toEqual({ from: null, text: 'Bonjour' });
+  });
+  it('sortie d’opencode : texte des événements', () => {
+    const out = ['{"type":"step_start"}', '{"type":"text","part":{"type":"text","text":"{\\"traduction\\": \\"Merci\\"}"}}', 'journal'].join('\n');
+    expect(parseAnswer(opencodeText(out)).text).toBe('Merci');
+  });
+  it('langue d’origine', () => {
+    expect(fromLanguage('anglais')).toBe('de l’anglais');
+    expect(fromLanguage('hébreu')).toBe('de l’hébreu');
+    expect(fromLanguage('russe')).toBe('du russe');
+  });
+});
+
+describe('transcription', () => {
+  it('sortie JSON de whisper : texte, langue, confiance (jetons spéciaux exclus)', () => {
+    const json = JSON.stringify({
+      result: { language: 'he' },
+      transcription: [
+        { text: ' בוקר', tokens: [{ text: '[_BEG_]', p: 0.1 }, { text: ' בוקר', p: 0.9 }] },
+        { text: ' טוב ', tokens: [{ text: ' טוב', p: 0.7 }] },
+      ],
+    });
+    const r = parseWhisper(json);
+    expect(r.text).toBe('בוקר טוב');
+    expect(r.lang).toBe('he');
+    expect(r.score).toBeCloseTo(0.8, 5);
+    expect(parseWhisper('{"transcription":[]}')).toEqual({ text: '', lang: null, score: 0 });
+  });
+  it('choix de la transcription cohérente', () => {
+    const prompt = pickPrompt([{ lang: 'fr', text: 'Couton tronc' }, { lang: 'he', text: 'בוקר טוב' }]);
+    expect(prompt).toContain('1. [français] Couton tronc');
+    expect(prompt).toContain('2. [hébreu] בוקר טוב');
+    expect(parsePick('2', 2)).toBe(1);
+    expect(parsePick('La bonne est la 1.', 2)).toBe(0);
+    expect(parsePick('3', 2)).toBeNull();
+    expect(parsePick('aucune', 2)).toBeNull();
+  });
+  it('noms des langues', () => {
+    expect(languageName('he')).toBe('hébreu');
+    expect(languageName('hy')).toBe('hy');
   });
 });
