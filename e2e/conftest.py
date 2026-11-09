@@ -139,6 +139,8 @@ class App:
             XDG_CONFIG_HOME=str(fake.dir / 'config'),
             # identifiant propre au test : actions D-Bus (boutons des notifications)
             WA_GNOME_APP_ID=f'io.github.maarekj.WaGnome.E2e{fake.port}',
+            # liens journalisés (`LIEN url`) au lieu d'ouvrir le navigateur
+            WA_GNOME_TEST_LINKS='1',
         )
         self.app_id = env['WA_GNOME_APP_ID']
         self._log = self.log_path.open('w')
@@ -301,6 +303,18 @@ class App:
         path = '/' + self.app_id.replace('.', '/')
         params = f'[<{parameter}>]' if parameter is not None else '[]'
         subprocess.run(['gdbus', 'call', '--session', '--dest', self.app_id, '--object-path', path, '--method', 'org.gtk.Actions.Activate', name, params, '{}'], check=True, capture_output=True, timeout=5)
+
+    def logged(self, prefix: str, timeout: float = 5) -> str:
+        """Ligne du journal de l'application commençant (après l'en-tête GJS) par `prefix`."""
+
+        def check() -> str | None:
+            for line in self.log_path.read_text(errors='replace').splitlines():
+                i = line.find(prefix)
+                if i != -1:
+                    return line[i:]
+            return None
+
+        return wait_until(check, timeout, f'« {prefix} » journalisé')
 
     def screenshot(self, path: str) -> None:
         """Capture de l'écran virtuel (diagnostic d'un test)."""

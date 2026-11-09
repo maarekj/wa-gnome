@@ -25,7 +25,7 @@ import { bindAvatar, type Pictures } from './pictures.ts';
 import { displaySize, type Loaded, MediaLoader, openViewer, type Photo, thumbnailTexture } from './media.ts';
 import { MediaFrame } from './MediaFrame.ts';
 import { AudioView, DocumentView, VideoView } from './MediaViews.ts';
-import { asWidget } from './widgets.ts';
+import { asWidget, openLinks } from './widgets.ts';
 
 /** Élément de la conversation : séparateur de jour ou message. */
 export type Item = { kind: 'day'; key: string; label: string } | { kind: 'message'; key: string; message: Message; showSender: boolean; group: boolean };
@@ -422,6 +422,8 @@ function bubble(ctx: BubbleContext) {
             selectable
             // sous une image : la légende prend la largeur de l'image au lieu d'élargir la bulle
             maxWidthChars={picture === null ? 60 : 1}
+            // liens : ouverts dans le navigateur par défaut
+            $={(self: Gtk.Label) => openLinks(self)}
           />
           <Gtk.Box spacing={4} halign={Gtk.Align.END}>
             <Gtk.Label label="Modifié" visible={live(() => msg().edited)} tooltipText="Message modifié par son auteur" cssClasses={['caption', 'dim-label', 'edited-mark']} />

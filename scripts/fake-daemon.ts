@@ -211,6 +211,7 @@ add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype:
 store.upsertChat({ id: GROUP, unread: 1 });
 // mise en forme WhatsApp
 add(BOB, true, 'Pour samedi : *rendez-vous à 14 h*, _pas avant_, ~dimanche~ et le code `A1B2`\n> Il a dit : prends les places\n1. Billets\n2. Écharpes\n* parking\n- sandwichs\n```\nporte = 12\n```', 9 * 24 * H + 120);
+add(BOB, false, 'Les infos sont sur https://exemple.fr/match_du_samedi.', 9 * 24 * H + 90);
 add(BOB, false, 'Oublie pas Naomie', 9 * 24 * H + 60, null, null, null, undefined, 1);
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
 const none = { width: null, height: null, thumbnail: null, fileName: null, size: null, seconds: null };

@@ -9,6 +9,7 @@ import type { Media, Message } from '../shared/api.ts';
 import type { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { waMarkup } from '../shared/format.ts';
+import { openLinks } from './widgets.ts';
 
 Gio._promisify(Gtk.FileDialog.prototype, 'save', 'save_finish');
 Gio._promisify(Gio.File.prototype, 'replace_contents_bytes_async', 'replace_contents_finish');
@@ -233,6 +234,7 @@ export function openViewer(parent: Gtk.Widget, title: string, photos: readonly P
   const view = new Adw.ToolbarView({ content: overlay });
   view.add_top_bar(header);
   const caption = new Gtk.Label({ wrap: true, marginTop: 6, marginBottom: 12, marginStart: 12, marginEnd: 12, selectable: true, useMarkup: true });
+  openLinks(caption);
   view.add_bottom_bar(caption);
   const root = parent.get_root();
   const [ww, wh] = root instanceof Gtk.Window ? [root.get_width(), root.get_height()] : [900, 700];

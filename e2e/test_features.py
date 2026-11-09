@@ -1,5 +1,8 @@
 """Fonctions : nouvelle discussion, recherche, réponse depuis une notification."""
 
+import subprocess
+
+import conftest
 from conftest import GROUP, Atspi, wait_until
 
 
@@ -177,3 +180,18 @@ def test_infos_du_groupe_et_du_contact(run_app):
     assert app.text_visible('En vacances jusqu’à lundi')
     assert app.text_visible('+33 6 00 00 00 01')
     assert app.text_visible('2 groupes en commun')
+
+
+def test_lien_cliquable(run_app):
+    _, app = run_app()
+    app.open_chat('~ Bob')
+    label = app.find('label', None, contains='https://exemple.fr/match_du_samedi')
+    # clic sur l'adresse : sélection au clavier impossible ; on vise le milieu de l'adresse en
+    # estimant la position d'après la longueur du texte (une seule ligne, chasse moyenne)
+    content = label.name or ''
+    start = content.index('https://')
+    middle = (start + len('https://exemple.fr/match_du_samedi') // 2) / len(content)
+    e = label.get_extents(Atspi.CoordType.WINDOW)
+    dx, dy = conftest._OFFSET or (0, 0)
+    subprocess.run(['xdotool', 'mousemove', str(int(e.x + e.width * middle) + dx), str(e.y + 10 + dy), 'click', '1'], check=True, timeout=5)
+    assert app.logged('LIEN https://exemple.fr/match_du_samedi').endswith('match_du_samedi')

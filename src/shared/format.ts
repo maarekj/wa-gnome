@@ -70,12 +70,52 @@ const isSpace = (c: string | undefined): boolean => c === undefined || /\s/u.tes
 function closing(s: string, i: number, c: string): number {
   if (!isBoundary(s[i - 1]) || isSpace(s[i + 1]) || s[i + 1] === c) return -1;
   for (let j = i + 2; j < s.length; j++) {
+    // lien : ses « _ », « * », « ~ » ne ferment rien
+    const link = c === '`' ? null : linkAt(s, j);
+    if (link !== null) {
+      j += link.text.length - 1;
+      continue;
+    }
     if (s[j] === c && !isSpace(s[j - 1]) && isBoundary(s[j + 1])) return j;
   }
   return -1;
 }
 
-/** Une ligne : gras, italique, barré (imbricables) et code en ligne (non interprété). */
+/** Début d'adresse web ou e-mail. */
+const URL_START = /^(?:https?:\/\/|www\.)[^\s<>"]+/iu;
+const EMAIL = /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+/u;
+
+/**
+ * Lien commençant en `i` (adresse web ou e-mail, en début de mot), ponctuation finale exclue
+ * (« voir https://x.fr. » : le point n'en fait pas partie, parenthèse fermante si non ouverte).
+ */
+export function linkAt(s: string, i: number): { text: string; href: string } | null {
+  if (i > 0 && /[\w@/.]/u.test(s[i - 1] ?? '')) return null;
+  const rest = s.slice(i);
+  const url = URL_START.exec(rest)?.[0];
+  if (url !== undefined) {
+    let text = url;
+    for (;;) {
+      const last = text.at(-1) ?? '';
+      const unbalanced = last === ')' && (text.match(/\(/gu)?.length ?? 0) < (text.match(/\)/gu)?.length ?? 0);
+      if (!/[.,;:!?'"»*_~]/u.test(last) && !unbalanced) break;
+      text = text.slice(0, -1);
+    }
+    if (/^www\.$/iu.test(text) || text.length < 5) return null;
+    return { text, href: /^www\./iu.test(text) ? `https://${text}` : text };
+  }
+  const mail = EMAIL.exec(rest)?.[0];
+  if (mail !== undefined) {
+    const text = mail.replace(/[.-]+$/u, '');
+    return { text, href: `mailto:${text}` };
+  }
+  return null;
+}
+
+/** Lien Pango (adresse en infobulle). */
+const anchor = (l: { text: string; href: string }): string => `<a href="${esc(l.href)}" title="${esc(l.href)}">${esc(l.text)}</a>`;
+
+/** Une ligne : liens, gras, italique, barré (imbricables) et code en ligne (non interprété). */
 function inline(s: string): string {
   let out = '';
   let plain = '';
@@ -85,6 +125,14 @@ function inline(s: string): string {
   };
   for (let i = 0; i < s.length; i++) {
     const c = s[i] ?? '';
+    // lien : jamais interprété (un « _ » d'adresse n'ouvre pas d'italique)
+    const link = linkAt(s, i);
+    if (link !== null) {
+      flush();
+      out += anchor(link);
+      i += link.text.length - 1;
+      continue;
+    }
     const tag = INLINE[c];
     const end = tag !== undefined || c === '`' ? closing(s, i, c) : -1;
     if (end < 0) {
