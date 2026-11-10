@@ -335,3 +335,17 @@ def test_appels_refus_avec_message_et_appel_manque(run_app):
     wait_until(lambda: len(fake.calls('rejectCall')) == 2, 5, 'second refus')
     assert fake.calls('rejectCall')[-1]['args'][0] == call
     app.text_gone('Alice Martin vous appelle')
+
+
+def test_compteur_de_non_lus_barre_du_haut(run_app):
+    fake, app = run_app()
+
+    def label() -> int:
+        out = subprocess.run(['gdbus', 'call', '--session', '--dest', app.app_id, '--object-path', '/StatusNotifierItem', '--method', 'org.freedesktop.DBus.Properties.Get', 'org.kde.StatusNotifierItem', 'XAyatanaLabel'], check=True, capture_output=True, text=True, timeout=5).stdout
+        digits = ''.join(c for c in out if c.isdigit())
+        return int(digits or 0)
+
+    before = wait_until(lambda: label() or None, 10, 'compteur initial')
+    # message reçu dans une discussion lue : une discussion non lue de plus
+    fake.incoming(conftest.ALICE, 'Tu es là ?')
+    wait_until(lambda: label() == before + 1, 10, 'compteur augmenté')

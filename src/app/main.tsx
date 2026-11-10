@@ -9,7 +9,8 @@ import { DEFAULT_ACCOUNT, isMissedCall, isMuted, previewOf } from '../shared/api
 import { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Store } from '../shared/store.ts';
-import { Accounts, accountName } from './Accounts.ts';
+import { Accounts, accountName, unreadChats } from './Accounts.ts';
+import { Badge } from './Badge.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { openNewChat } from './NewChat.ts';
 import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
@@ -40,6 +41,16 @@ function parseTarget(param: GLib.Variant | null): { store: Store; chatId: string
   return store === undefined || chatId === '' ? null : { store, chatId };
 }
 const notificationId = (store: Store, chatId: string): string => `chat-${target(store, chatId)}`;
+
+/** Compteur de non-lus hors de la fenêtre (barre du haut, docks) : clic, fenêtre au premier plan. */
+const badge = new Badge(APP_ID, () => {
+  if (mainWindow === null) app.activate();
+  else mainWindow.present();
+});
+/** `removed` : compte en cours de retrait, encore dans la liste */
+const updateBadge = (removed?: Store): void => {
+  badge.set(accounts.list.peek().filter((s) => s !== removed).reduce((n, s) => n + unreadChats(s.chats.peek()), 0));
+};
 
 /** Compte retiré : notifications et abonnements libérés. */
 const unwatch = new Map<Store, () => void>();
@@ -122,6 +133,7 @@ function watch(store: Store): void {
   };
   // discussion lue ailleurs (téléphone, autre fenêtre) : notification retirée
   const off = store.chats.subscribe(() => {
+    updateBadge();
     if (shown.size === 0) return;
     for (const c of store.chats.peek()) {
       if (!shown.has(c.id) || c.unread > 0 || c.markedUnread) continue;
@@ -141,6 +153,7 @@ accounts.onAdded = watch;
 accounts.onRemoved = (store) => {
   unwatch.get(store)?.();
   unwatch.delete(store);
+  updateBadge(store);
 };
 accounts.onSwitch = (store) => {
   rememberAccount(store.client.account);
@@ -301,6 +314,7 @@ app.connect('startup', () => {
   if (display !== null) Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
   // couleur d'accent choisie (sinon celle du système)
   initSettings();
+  badge.start();
 });
 
 app.connect('activate', () => {
@@ -374,7 +388,10 @@ app.connect('activate', () => {
   });
 });
 
-app.connect('shutdown', () => accounts.stop());
+app.connect('shutdown', () => {
+  badge.stop();
+  accounts.stop();
+});
 
 app.runAsync([imports.system.programInvocationName, ...ARGV]).catch((error: unknown) => {
   console.error(error);

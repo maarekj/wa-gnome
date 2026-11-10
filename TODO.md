@@ -2,6 +2,6 @@
 
 Les fonctionnalités planifiées sont dans les issues GitHub : https://github.com/maarekj/wa-gnome/issues
 
-- Démon en arrière-plan avec compteur de non-lus (extension GNOME Shell ou icône).
-- Appels (hors périmètre de Baileys pour l'audio/vidéo).
-- Statuts (« stories »).
+- Aperçu de la liste sans les marques de mise en forme brutes (`*gras*`, `_italique_`).
+- Paquet Flatpak avec le démon intégré (déploiement, à la fin).
+- Publication de statuts.
