@@ -32,7 +32,7 @@ import * as z from 'zod/mini';
 import { callText, type CallOutcome, type ChatAction, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
-import { type Change, changeOf, editedContent, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage } from './convert.ts';
+import { type Change, changeOf, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
@@ -198,6 +198,8 @@ export class WhatsApp {
         }
       });
       this.#emit({ type: 'chats', chats: this.#store.chats() });
+      // historique : messages éphémères déjà expirés retirés aussitôt
+      this.purgeExpired();
       // réponse à une demande d'historique : discussions concernées rechargées par l'app
       if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
         const ids = [...new Set(messages.map((m) => this.#jid(m.key.remoteJid)))];
@@ -251,6 +253,12 @@ export class WhatsApp {
         const change = changeOf(wa);
         if (change !== null) {
           this.#applyChange(change);
+          continue;
+        }
+        // message gardé ou plus gardé (discussion éphémère) : il ne disparaît plus, ou de nouveau
+        const keep = keepOf(normalizeContent(wa));
+        if (keep !== null && wa.key.remoteJid !== null && wa.key.remoteJid !== undefined) {
+          this.#keep(this.#jid(wa.key.remoteJid), keep.id, keep.kept);
           continue;
         }
         // réaction : rattachée au message visé, pas de bulle ni de notification
@@ -374,7 +382,7 @@ export class WhatsApp {
 
     // noms de groupes : pas toujours présents dans l'historique
     sock.ev.on('groups.upsert', (groups) => {
-      for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject });
+      for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject, ...(g.ephemeralDuration === undefined ? {} : { ephemeral: g.ephemeralDuration }) });
       this.#emitChats(groups.map((g) => g.id));
     });
   }
@@ -432,8 +440,9 @@ export class WhatsApp {
       case 'forward':
         // un destinataire après l'autre (médias réutilisés, pas de nouvel envoi de fichier)
         for (const to of a.to) {
+          const ephemeral = this.#store.ephemeralOf(to);
           // oxlint-disable-next-line no-await-in-loop -- envois successifs
-          this.#sent(await sock.sendMessage(to, { forward: target }));
+          this.#sent(await sock.sendMessage(to, { forward: target }, ephemeral > 0 ? { ephemeralExpiration: ephemeral } : {}));
         }
         break;
       default:
@@ -610,6 +619,8 @@ export class WhatsApp {
     if (typeof c.archived === 'boolean') patch.archived = c.archived;
     if ('muteEndTime' in c) patch.mutedUntil = muteEnd(c.muteEndTime);
     if ('pinned' in c) patch.pinned = c.pinned === null || c.pinned === undefined ? 0 : seconds(c.pinned);
+    // messages éphémères (réglage changé, ou historique)
+    if ('ephemeralExpiration' in c) patch.ephemeral = c.ephemeralExpiration ?? 0;
     return patch;
   }
 
@@ -619,7 +630,7 @@ export class WhatsApp {
       const groups = Object.values(await sock.groupFetchAllParticipating());
       this.#store.transaction(() => {
         for (const g of groups) {
-          this.#store.upsertChat({ id: g.id, name: g.subject });
+          this.#store.upsertChat({ id: g.id, name: g.subject, ephemeral: g.ephemeralDuration ?? 0 });
           // participants : correspondances lid / numéro et noms publics éventuels
           for (const p of g.participants) this.#saveContact(p);
         }
@@ -784,12 +795,51 @@ export class WhatsApp {
   }
 
   /** Option d'envoi « en réponse à » : message cité tel qu'il est stocké (brut). */
-  #quoteOptions(chatId: string, replyTo: string | undefined): { quoted: WAMessage } | undefined {
-    if (replyTo === undefined || replyTo === '') return undefined;
+  /** Options d'envoi : message cité, durée éphémère de la discussion (mes messages disparaissent aussi). */
+  #quoteOptions(chatId: string, replyTo: string | undefined): { quoted?: WAMessage; ephemeralExpiration?: number } {
+    const ephemeral = this.#store.ephemeralOf(chatId);
+    const options = ephemeral > 0 ? { ephemeralExpiration: ephemeral } : {};
+    if (replyTo === undefined || replyTo === '') return options;
     const raw = this.#store.raw(chatId, replyTo);
     const quoted = raw === null ? null : this.#parseRaw(raw);
     if (quoted === null) throw new Error('message cité introuvable');
-    return { quoted };
+    return { ...options, quoted };
+  }
+
+  /** Vue unique et durée éphémère des messages existants (migration v14), puis réglage des discussions. */
+  backfillEphemeral(): void {
+    if (!this.#store.flag('backfill-ephemeral')) return;
+    const rows = this.#store.ephemeralToBackfill();
+    this.#store.transaction(() => {
+      for (const r of rows) {
+        const wa = this.#parseRaw(r.raw);
+        const content = normalizeContent(wa);
+        if (content !== undefined) this.#store.setEphemeralFields(r.chatId, r.id, viewOnceOf(wa?.message, content), isKept(wa?.keepInChat?.keepType) ? 0 : expirationOf(content));
+      }
+      this.#store.ephemeralFromLastMessages();
+    });
+    this.#store.setFlag('backfill-ephemeral', false);
+    logger.info(`messages éphémères et à vue unique : ${rows.length} message(s) relus`);
+  }
+
+  /** Message gardé : n'expire plus ; plus gardé : durée de son message brut rétablie. */
+  #keep(chatId: string, id: string, kept: boolean): void {
+    const raw = this.#store.raw(chatId, id);
+    const content = raw === null ? undefined : normalizeContent(this.#parseRaw(raw));
+    this.#store.setExpiration(chatId, id, kept || content === undefined ? 0 : expirationOf(content));
+  }
+
+  /** Messages éphémères expirés retirés (comme sur le téléphone), médias en cache compris. */
+  purgeExpired(): void {
+    const gone = this.#store.purgeExpired(Math.floor(Date.now() / 1000));
+    for (const g of gone) {
+      fs.rmSync(path.join(this.#mediaDir, createHash('sha256').update(`${g.chatId}/${g.id}`).digest('hex')), { force: true });
+      this.#emit({ type: 'message.delete', chatId: g.chatId, id: g.id });
+    }
+    if (gone.length > 0) {
+      this.#emitChats([...new Set(gone.map((g) => g.chatId))]);
+      logger.info(`messages éphémères : ${gone.length} expiré(s)`);
+    }
   }
 
   /**

@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS chats (
   muted_until INTEGER NOT NULL DEFAULT 0,
   -- date d'épinglage (ms), 0 : non épinglée
   pinned INTEGER NOT NULL DEFAULT 0,
-  marked_unread INTEGER NOT NULL DEFAULT 0
+  marked_unread INTEGER NOT NULL DEFAULT 0,
+  -- messages éphémères : durée en secondes, 0 : désactivés
+  ephemeral INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY,
@@ -48,6 +50,10 @@ CREATE TABLE IF NOT EXISTS messages (
   deleted INTEGER NOT NULL DEFAULT 0,
   -- nombre de transferts (contextInfo.forwardingScore), 0 : non transféré
   forwarded INTEGER NOT NULL DEFAULT 0,
+  -- média à vue unique (contenu inaccessible depuis un appareil lié)
+  view_once INTEGER NOT NULL DEFAULT 0,
+  -- message éphémère : durée en secondes après laquelle il disparaît, 0 sinon
+  expiration INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -139,6 +145,8 @@ const ChatRow = z.object({
   last_kind: z.nullable(z.string()),
   last_text: z.nullable(z.string()),
   last_deleted: z.nullable(z.number()),
+  last_view_once: z.nullable(z.number()),
+  ephemeral: z.number(),
 });
 
 /** JSON lu sans échec (null si invalide). */
@@ -182,6 +190,7 @@ const MessageRow = z.object({
   edited: z.number(),
   deleted: z.number(),
   forwarded: z.number(),
+  view_once: z.number(),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
@@ -213,7 +222,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 13;
+const VERSION = 14;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -246,6 +255,8 @@ export interface ChatPatch {
   mutedUntil?: number | null;
   pinned?: number | null;
   markedUnread?: boolean | null;
+  /** messages éphémères (secondes, 0 : désactivés) */
+  ephemeral?: number | null;
 }
 
 export class Store {
@@ -336,6 +347,14 @@ export class Store {
           FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
           WHERE push <> '' GROUP BY who
         ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
+    }
+    if (!fresh && version < 14) {
+      this.#db.exec(`
+        ALTER TABLE chats ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE messages ADD COLUMN view_once INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE messages ADD COLUMN expiration INTEGER NOT NULL DEFAULT 0;`);
+      // vue unique et durée éphémère des messages existants : relues dans les messages bruts
+      this.setFlag('backfill-ephemeral', true);
     }
     if (!fresh && version < 13) {
       // forme d'onde des vocaux : médias audio reconvertis depuis le message brut
@@ -468,8 +487,8 @@ export class Store {
     if (c.id.endsWith('@broadcast')) return;
     this.#db
       .prepare(
-        `INSERT INTO chats (id, name, unread, timestamp, archived, muted_until, pinned, marked_unread)
-         VALUES (:id, :name, coalesce(:unread, 0), coalesce(:timestamp, 0), coalesce(:archived, 0), coalesce(:muted, 0), coalesce(:pinned, 0), coalesce(:marked, 0))
+        `INSERT INTO chats (id, name, unread, timestamp, archived, muted_until, pinned, marked_unread, ephemeral)
+         VALUES (:id, :name, coalesce(:unread, 0), coalesce(:timestamp, 0), coalesce(:archived, 0), coalesce(:muted, 0), coalesce(:pinned, 0), coalesce(:marked, 0), coalesce(:ephemeral, 0))
          ON CONFLICT (id) DO UPDATE SET
            name = coalesce(excluded.name, chats.name),
            unread = coalesce(:unread, chats.unread),
@@ -477,7 +496,8 @@ export class Store {
            archived = coalesce(:archived, chats.archived),
            muted_until = coalesce(:muted, chats.muted_until),
            pinned = coalesce(:pinned, chats.pinned),
-           marked_unread = coalesce(:marked, chats.marked_unread)`,
+           marked_unread = coalesce(:marked, chats.marked_unread),
+           ephemeral = coalesce(:ephemeral, chats.ephemeral)`,
       )
       .run({
         id: c.id,
@@ -488,6 +508,7 @@ export class Store {
         muted: c.mutedUntil ?? null,
         pinned: c.pinned ?? null,
         marked: flag(c.markedUnread),
+        ephemeral: c.ephemeral ?? null,
       });
   }
 
@@ -591,8 +612,8 @@ export class Store {
     if (this.#db.prepare('SELECT 1 FROM deleted_for_me WHERE chat_id = ? AND id = ?').get(m.chatId, m.id) !== undefined) return;
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, edited, deleted, status)
-         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted, :forwarded,
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, view_once, expiration, edited, deleted, status)
+         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted, :forwarded, :view_once, :expiration,
            -- modification et suppression déjà appliquées (message rejoué par l'historique) : conservées
            coalesce((SELECT edited FROM messages WHERE chat_id = :chat_id AND id = :id), 0),
            max(:deleted, coalesce((SELECT deleted FROM messages WHERE chat_id = :chat_id AND id = :id), 0)),
@@ -614,6 +635,8 @@ export class Store {
         status: m.status,
         deleted: m.deleted === true ? 1 : 0,
         forwarded: m.forwarded ?? 0,
+        view_once: m.viewOnce === true ? 1 : 0,
+        expiration: m.expiration ?? 0,
       });
     // modification ou suppression arrivée avant (ou rejouée après) le message d'origine : appliquée
     const edit = this.meta(`edit:${m.chatId}/${m.id}`);
@@ -624,6 +647,11 @@ export class Store {
     if (this.flag(`revoke:${m.chatId}/${m.id}`)) this.applyRevoke(m.chatId, m.id);
     if (m.status !== null) this.setStatus(m.chatId, m.id, m.status);
     this.upsertChat({ id: m.chatId, timestamp: m.timestamp });
+    // message le plus récent de la discussion : réglage éphémère qu'il annonce (si connu)
+    // (seulement s'il en annonce un : désactivation connue par la mise à jour de la discussion)
+    if (m.expiration !== undefined && m.expiration > 0) {
+      this.#db.prepare('UPDATE chats SET ephemeral = ? WHERE id = ? AND timestamp <= ?').run(m.expiration, m.chatId, m.timestamp);
+    }
   }
 
   incrementUnread(chatId: string): void {
@@ -665,11 +693,11 @@ export class Store {
   #chats(where: string, params: SQLInputValue[]): Chat[] {
     const rows = this.#db
       .prepare(
-        `SELECT c.id, c.name, c.unread, c.timestamp, c.archived, c.muted_until, c.pinned, c.marked_unread,
+        `SELECT c.id, c.name, c.unread, c.timestamp, c.archived, c.muted_until, c.pinned, c.marked_unread, c.ephemeral,
                 (SELECT group_concat(label_id, ',') FROM chat_labels cl WHERE cl.chat_id = c.id) AS labels,
                 EXISTS (SELECT 1 FROM favorites f WHERE f.chat_id = c.id) AS favorite,
                 ct.name AS contact, ct.notify,
-                m.kind AS last_kind, m.text AS last_text, m.deleted AS last_deleted
+                m.kind AS last_kind, m.text AS last_text, m.deleted AS last_deleted, m.view_once AS last_view_once
          FROM chats c
          LEFT JOIN contacts ct ON ct.id = c.id
          LEFT JOIN messages m ON m.rowid = (
@@ -685,13 +713,14 @@ export class Store {
       group: r.id.endsWith('@g.us'),
       unread: r.unread,
       timestamp: r.timestamp,
-      preview: r.last_kind === null ? '' : r.last_deleted === 1 ? DELETED_TEXT : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '' }),
+      preview: r.last_kind === null ? '' : r.last_deleted === 1 ? DELETED_TEXT : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '', viewOnce: r.last_view_once === 1 }),
       archived: r.archived !== 0,
       mutedUntil: r.muted_until,
       pinned: r.pinned,
       markedUnread: r.marked_unread !== 0,
       labels: r.labels === null ? [] : r.labels.split(','),
       favorite: r.favorite !== 0,
+      ephemeral: r.ephemeral,
     }));
   }
 
@@ -746,7 +775,7 @@ export class Store {
     const ts = after?.timestamp ?? Number.MAX_SAFE_INTEGER;
     // même seconde (album) : départagés par l'identifiant, rien n'est sauté entre deux pages
     return this.#messages(
-      `m.chat_id = ? AND m.deleted = 0 AND m.media IS NOT NULL AND m.kind IN (${marks}) AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?)) ORDER BY m.timestamp DESC, m.id DESC LIMIT ?`,
+      `m.chat_id = ? AND m.deleted = 0 AND m.view_once = 0 AND m.media IS NOT NULL AND m.kind IN (${marks}) AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?)) ORDER BY m.timestamp DESC, m.id DESC LIMIT ?`,
       [chatId, ...kinds, ts, ts, after?.id ?? '', limit],
     );
   }
@@ -828,6 +857,7 @@ export class Store {
       edited: r.edited !== 0,
       deleted: r.deleted !== 0,
       forwarded: r.deleted === 0 ? r.forwarded : 0,
+      viewOnce: r.view_once !== 0,
       status: r.from_me === 1 ? effectiveStatus(MessageStatus.safeParse(r.status).data ?? 'sent', r.timestamp) : null,
     }));
   }
@@ -979,6 +1009,53 @@ export class Store {
   deleteForMe(chatId: string, id: string): boolean {
     this.#db.prepare('INSERT OR IGNORE INTO deleted_for_me (chat_id, id) VALUES (?, ?)').run(chatId, id);
     return this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id).changes > 0;
+  }
+
+  // ------------------------------------------------------------------ messages éphémères
+
+  /** Durée éphémère d'une discussion (secondes, 0 : désactivés). */
+  ephemeralOf(chatId: string): number {
+    return Number(this.#db.prepare('SELECT ephemeral FROM chats WHERE id = ?').get(chatId)?.['ephemeral'] ?? 0);
+  }
+
+  /** Messages bruts à relire (migration v14) : vue unique ou durée éphémère. */
+  ephemeralToBackfill(): { chatId: string; id: string; raw: string }[] {
+    return this.#db
+      .prepare(`SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%viewOnce%' OR raw LIKE '%"expiration":%'`)
+      .all()
+      .map((r) => ({ chatId: String(r['chat_id']), id: String(r['id']), raw: String(r['raw']) }));
+  }
+
+  setEphemeralFields(chatId: string, id: string, viewOnce: boolean, expiration: number): void {
+    this.#db.prepare('UPDATE messages SET view_once = ?, expiration = ? WHERE chat_id = ? AND id = ?').run(viewOnce ? 1 : 0, expiration, chatId, id);
+  }
+
+  /** Réglage éphémère de chaque discussion d'après son dernier message (migration v14). */
+  ephemeralFromLastMessages(): void {
+    this.#db.exec(`UPDATE chats SET ephemeral = coalesce((SELECT expiration FROM messages m WHERE m.chat_id = chats.id AND m.kind NOT IN ('call', 'other') ORDER BY timestamp DESC LIMIT 1), 0)`);
+  }
+
+  /** Durée éphémère d'un message (0 : gardé, ne disparaît pas). */
+  setExpiration(chatId: string, id: string, seconds: number): void {
+    this.#db.prepare('UPDATE messages SET expiration = ? WHERE chat_id = ? AND id = ?').run(seconds, chatId, id);
+  }
+
+  /** Messages éphémères expirés à `now` (secondes) : supprimés ; leurs identifiants. */
+  purgeExpired(now: number): { chatId: string; id: string }[] {
+    const rows = this.#db
+      .prepare('SELECT chat_id, id FROM messages WHERE expiration > 0 AND timestamp + expiration < ?')
+      .all(now)
+      .map((r) => ({ chatId: String(r['chat_id']), id: String(r['id']) }));
+    if (rows.length === 0) return [];
+    this.transaction(() => {
+      const del = this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?');
+      const reactions = this.#db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ?');
+      for (const r of rows) {
+        del.run(r.chatId, r.id);
+        reactions.run(r.chatId, r.id);
+      }
+    });
+    return rows;
   }
 
   /** Mes identifiants (numéro, lid) : citations de mes propres messages reconnues. */

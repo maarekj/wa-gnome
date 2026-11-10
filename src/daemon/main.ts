@@ -48,9 +48,19 @@ function load(id: string): WhatsApp {
   wa.backfillReactions();
   wa.backfillReceipts();
   wa.moveBroadcasts();
+  wa.backfillEphemeral();
+  wa.purgeExpired();
   live.set(id, { store, wa });
   return wa;
 }
+
+// messages éphémères expirés : retirés toutes les 10 minutes
+setInterval(
+  () => {
+    for (const a of live.values()) a.wa.purgeExpired();
+  },
+  10 * 60 * 1000,
+);
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {

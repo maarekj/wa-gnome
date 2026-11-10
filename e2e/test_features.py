@@ -349,3 +349,13 @@ def test_compteur_de_non_lus_barre_du_haut(run_app):
     # message reçu dans une discussion lue : une discussion non lue de plus
     fake.incoming(conftest.ALICE, 'Tu es là ?')
     wait_until(lambda: label() == before + 1, 10, 'compteur augmenté')
+
+
+def test_vue_unique_et_messages_ephemeres(run_app):
+    _, app = run_app()
+    # aperçu de la liste puis bulle : photo à vue unique, à ouvrir sur le téléphone
+    assert app.text_visible('Photo à vue unique')
+    app.open_chat('~ Bob')
+    assert app.text_visible('À ouvrir sur votre téléphone')
+    # discussion éphémère : minuterie dans l'en-tête
+    app.find(None, 'Messages éphémères : 7 jours')

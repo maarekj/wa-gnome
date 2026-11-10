@@ -218,6 +218,10 @@ add(BOB, true, 'Pour samedi : *rendez-vous à 14 h*, _pas avant_, ~dimanche~ et 
 add(BOB, false, 'Les infos sont sur https://exemple.fr/match_du_samedi.', 9 * 24 * H + 90);
 add(BOB, false, 'Oublie pas Naomie', 9 * 24 * H + 60, null, null, null, undefined, 1);
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
+// photo à vue unique (contenu inaccessible depuis un appareil lié) ; discussion éphémère (7 jours)
+seq += 1;
+store.upsertMessage({ id: `fake${seq}`, chatId: BOB, fromMe: false, sender: null, senderName: null, timestamp: now - 9 * 24 * H + 30, kind: 'image', text: '', media: null, quoted: null, status: null, viewOnce: true }, '{}');
+store.upsertChat({ id: BOB, ephemeral: 7 * 24 * H });
 const none = { width: null, height: null, thumbnail: null, fileName: null, size: null, seconds: null };
 const doc = pdf('Menu du dimanche');
 add(GROUP, false, '', 40 * 60, ALICE, 'Alice', { kind: 'document', media: { ...none, mimetype: 'application/pdf', fileName: 'Menu du dimanche.pdf', size: doc.length }, data: doc });

@@ -7,7 +7,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { DELETED_TEXT, editability, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
+import { DELETED_TEXT, editability, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, emojiOnly, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
@@ -499,6 +499,17 @@ function DeletedBubble(ctx: BubbleContext, m: Message, msg: () => Message, live:
   );
 }
 
+/** Média à vue unique : inaccessible depuis un appareil lié, à ouvrir sur le téléphone. */
+function ViewOnceView(m: Message): Gtk.Widget {
+  const box = new Gtk.Box({ spacing: 10, marginTop: 4, marginBottom: 2, cssClasses: ['view-once'] });
+  box.append(new Gtk.Image({ iconName: m.kind === 'video' ? 'camera-video-symbolic' : m.kind === 'audio' ? 'audio-input-microphone-symbolic' : 'camera-photo-symbolic', pixelSize: 22 }));
+  const texts = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, valign: Gtk.Align.CENTER });
+  texts.append(new Gtk.Label({ label: viewOnceLabel(m.kind), xalign: 0, cssClasses: ['heading'] }));
+  texts.append(new Gtk.Label({ label: m.fromMe ? 'Envoyée depuis votre téléphone' : 'À ouvrir sur votre téléphone', xalign: 0, cssClasses: ['caption', 'dim-label'] }));
+  box.append(texts);
+  return box;
+}
+
 /** Ligne d'un appel (manqué, refusé…), centrée comme un séparateur de jour. */
 function CallLine(m: Message): Gtk.Widget {
   const missed = isMissedCall(m);
@@ -521,7 +532,7 @@ function bubble(ctx: BubbleContext) {
     const author = (w: Gtk.Widget): Gtk.Widget => (item.group && !m.fromMe ? withAuthor(ctx, w, m, live) : w);
     if (m.deleted) return selectableRow(ctx, author(DeletedBubble(ctx, m, msg, live)), m.id, msg);
     if (m.kind === 'call') return CallLine(m);
-    const picture = isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
+    const picture = m.viewOnce ? ViewOnceView(m) : isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
     // émojis seuls (sans citation ni « Transféré ») : en grand, sans fond de bulle, comme WhatsApp
@@ -1017,7 +1028,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
     const id = store.current();
     // nom et type suivis : la liste des discussions est mise à jour en direct
     const c = id === null ? undefined : store.chats().find((x) => x.id === id);
-    return id === null ? null : { id, name: c?.name ?? store.nameHint(id) ?? id.split('@')[0] ?? id, group: c?.group ?? id.endsWith('@g.us') };
+    return id === null ? null : { id, name: c?.name ?? store.nameHint(id) ?? id.split('@')[0] ?? id, group: c?.group ?? id.endsWith('@g.us'), ephemeral: c?.ephemeral ?? 0 };
   });
   const items = createMemo(() => itemsOf(store.messages(), chat()?.group ?? false));
   const loader = new MediaLoader(store.client);
@@ -1128,7 +1139,23 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               }
             />
             <Gtk.Box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER}>
-              <Gtk.Label label={chat((c) => c?.name ?? 'WhatsApp')} ellipsize={Pango.EllipsizeMode.END} xalign={0} cssClasses={['heading']} />
+              <Gtk.Box spacing={4}>
+                <Gtk.Label label={chat((c) => c?.name ?? 'WhatsApp')} ellipsize={Pango.EllipsizeMode.END} xalign={0} cssClasses={['heading']} />
+                {/* messages éphémères : minuterie de la discussion */}
+                <Gtk.Image
+                  iconName="alarm-symbolic"
+                  visible={chat((c) => (c?.ephemeral ?? 0) > 0)}
+                  tooltipText={chat((c) => `Messages éphémères : ${ephemeralText(c?.ephemeral ?? 0)}`)}
+                  cssClasses={['dim-label']}
+                  $={(self: Gtk.Image) => {
+                    const sync = (): void => {
+                      self.update_property([Gtk.AccessibleProperty.LABEL], [`Messages éphémères : ${ephemeralText(chat.peek()?.ephemeral ?? 0)}`]);
+                    };
+                    sync();
+                    onCleanup(chat.subscribe(sync));
+                  }}
+                />
+              </Gtk.Box>
               {/* présence : écrit…, en ligne, vu à … */}
               <Gtk.Label
                 visible={createMemo(() => chat() !== null && presenceLine(store.presence(), chat()?.group ?? false) !== '')}
@@ -1295,7 +1322,7 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                       conversation = self;
                       // glisser d'un message à l'autre : sélection (comme Telegram Desktop)
                       attachDragSelect(self, () => scroller, () => selection.peek(), setSelection);
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

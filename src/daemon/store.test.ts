@@ -281,6 +281,30 @@ void describe('statuts et diffusions', () => {
     assert.equal(toMessage(wa)?.chatId, PN);
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
   });
+  void it('conversion : vue unique et durée éphémère', () => {
+    const once = { key: { remoteJid: PN, id: 'v1', fromMe: false }, message: { imageMessage: { mimetype: 'image/jpeg', viewOnce: true, contextInfo: { expiration: 604_800 } } }, messageTimestamp: 10 };
+    assert.deepEqual([toMessage(once)?.viewOnce, toMessage(once)?.expiration], [true, 604_800]);
+    const kept = { ...once, keepInChat: { keepType: proto.KeepType.KEEP_FOR_ALL } };
+    assert.equal(toMessage(kept)?.expiration, 0);
+    const wrapped = { key: { remoteJid: PN, id: 'v2', fromMe: false }, message: { viewOnceMessageV2: { message: { videoMessage: { mimetype: 'video/mp4' } } } }, messageTimestamp: 10 };
+    assert.deepEqual([toMessage(wrapped)?.kind, toMessage(wrapped)?.viewOnce], ['video', true]);
+  });
+  void it('messages éphémères : réglage de la discussion et expiration', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage({ ...msg(PN, 'a', 100), expiration: 3600 }, '{}');
+    assert.equal(store.ephemeralOf(PN), 3600);
+    // message plus ancien (historique) : réglage inchangé
+    store.upsertMessage({ ...msg(PN, 'b', 50), expiration: 0 }, '{}');
+    assert.equal(store.ephemeralOf(PN), 3600);
+    store.upsertMessage({ ...msg(PN, 'c', 200), kind: 'image', text: '', viewOnce: true }, '{}');
+    assert.equal(store.chats()[0]?.preview, 'Photo à vue unique');
+    // message gardé : n'expire plus
+    store.upsertMessage({ ...msg(PN, 'k', 90), expiration: 3600 }, '{}');
+    store.setExpiration(PN, 'k', 0);
+    assert.deepEqual(store.purgeExpired(3600 + 101), [{ chatId: PN, id: 'a' }]);
+    assert.equal(store.message(PN, 'a'), null);
+    assert.notEqual(store.message(PN, 'b'), null);
+  });
   void it('conversion : appels manqués et journal d’appels', () => {
     const stub = { key: { remoteJid: PN, id: 'c1', fromMe: false }, messageStubType: proto.WebMessageInfo.StubType.CALL_MISSED_VIDEO, messageTimestamp: 10 };
     assert.deepEqual([toMessage(stub)?.kind, toMessage(stub)?.text], ['call', 'Appel vidéo manqué']);

@@ -69,8 +69,18 @@ export const Chat = z.object({
   labels: z.array(z.string()),
   /** dans les favoris */
   favorite: z.boolean(),
+  /** messages éphémères : durée en secondes (0 : désactivés) */
+  ephemeral: z.number(),
 });
 export type Chat = z.infer<typeof Chat>;
+
+/** Durée des messages éphémères, lisible (« 24 heures », « 7 jours », « 90 jours »). */
+export function ephemeralText(seconds: number): string {
+  const hours = Math.round(seconds / 3600);
+  if (hours < 48) return hours <= 1 ? '1 heure' : `${hours} heures`;
+  const days = Math.round(seconds / 86_400);
+  return `${days} jours`;
+}
 
 /** Genre d'une liste de WhatsApp (proto.SyncActionValue.LabelEditAction.ListType). */
 export const ListKind = z.enum(['unread', 'groups', 'favorites', 'custom', 'other']);
@@ -218,6 +228,8 @@ export const Message = z.object({
   deleted: z.boolean(),
   /** transféré : nombre de transferts successifs (WhatsApp : « à plusieurs reprises » dès 5), 0 sinon */
   forwarded: z.number(),
+  /** photo, vidéo ou vocal à vue unique : contenu inaccessible ici (à ouvrir sur le téléphone) */
+  viewOnce: z.boolean(),
 });
 
 /** Texte affiché à la place d'un message supprimé pour tous. */
@@ -473,8 +485,11 @@ export function formatPhone(digits: string): string {
   return `+${d}`;
 }
 
+/** Libellé d'un média à vue unique (« Photo à vue unique »). */
+export const viewOnceLabel = (kind: MessageKind): string => (kind === 'video' ? 'Vidéo à vue unique' : kind === 'audio' ? 'Message vocal à vue unique' : 'Photo à vue unique');
+
 /** Texte court d'un message pour la liste des discussions. */
-export function previewOf(m: Pick<Message, 'kind' | 'text'>): string {
+export function previewOf(m: Pick<Message, 'kind' | 'text'> & { viewOnce?: boolean }): string {
   const label: Record<MessageKind, string> = {
     text: '',
     image: 'Photo',
@@ -489,6 +504,7 @@ export function previewOf(m: Pick<Message, 'kind' | 'text'>): string {
     other: 'Message',
   };
   if (m.kind === 'call') return m.text === '' ? label.call : m.text;
+  if (m.viewOnce === true) return viewOnceLabel(m.kind);
   if (m.text !== '') return m.kind === 'text' ? m.text : `${label[m.kind]} · ${m.text}`;
   return label[m.kind];
 }

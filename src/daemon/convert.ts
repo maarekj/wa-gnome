@@ -118,7 +118,48 @@ export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
-export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded'> & { quoted: RawQuoted | null; deleted?: boolean; forwarded?: number };
+export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded' | 'viewOnce'> & {
+  quoted: RawQuoted | null;
+  deleted?: boolean;
+  forwarded?: number;
+  viewOnce?: boolean;
+  /** messages éphémères : durée annoncée par le message (secondes, 0 : non éphémère) */
+  expiration?: number;
+};
+
+/** Contexte (`contextInfo`) du contenu principal, ou null. */
+function contextOf(content: proto.IMessage): proto.IContextInfo | null {
+  const type = getContentType(content);
+  const value: unknown = type === undefined ? undefined : content[type];
+  if (typeof value !== 'object' || value === null || !('contextInfo' in value)) return null;
+  const info: unknown = value.contextInfo;
+  return typeof info === 'object' && info !== null ? proto.ContextInfo.fromObject(info) : null;
+}
+
+/** Message gardé (« garder » dans une discussion éphémère) : nombre ou nom selon la source. */
+export const isKept = (t: unknown): boolean => t === proto.KeepType.KEEP_FOR_ALL || t === 'KEEP_FOR_ALL';
+
+/** Message gardé ou plus gardé (`keepInChatMessage`) : message visé, ou null. */
+export function keepOf(content: proto.IMessage | undefined): { id: string; kept: boolean } | null {
+  const k = content?.keepInChatMessage;
+  const id = k?.key?.id;
+  if (k === null || k === undefined || id === null || id === undefined) return null;
+  return { id, kept: isKept(k.keepType) };
+}
+
+/** Durée éphémère annoncée par le message (secondes), 0 sinon. */
+export const expirationOf = (content: proto.IMessage): number => contextOf(content)?.expiration ?? 0;
+
+/** Média à vue unique : enveloppe `viewOnceMessage*`, ou drapeau `viewOnce` du média. */
+export function viewOnceOf(message: proto.IMessage | null | undefined, content: proto.IMessage): boolean {
+  if (message === null || message === undefined) return false;
+  if (message.viewOnceMessage !== null && message.viewOnceMessage !== undefined) return true;
+  if (message.viewOnceMessageV2 !== null && message.viewOnceMessageV2 !== undefined) return true;
+  if (message.viewOnceMessageV2Extension !== null && message.viewOnceMessageV2Extension !== undefined) return true;
+  const type = getContentType(content);
+  const value: unknown = type === undefined ? undefined : content[type];
+  return typeof value === 'object' && value !== null && 'viewOnce' in value && value.viewOnce === true;
+}
 
 /** Transfert porté par le contenu (`contextInfo`) : nombre de transferts, 0 si non transféré. */
 export function forwardedOf(content: proto.IMessage): number {
@@ -252,6 +293,9 @@ export function toMessage(wa: WAMessage): Converted | null {
     media: mediaOf(content),
     quoted: quotedOf(content),
     forwarded: forwardedOf(content),
+    viewOnce: viewOnceOf(wa.message, content),
+    // gardé dans la discussion (« garder ») : ne disparaît pas
+    expiration: isKept(wa.keepInChat?.keepType) ? 0 : expirationOf(content),
     // « en attente » : seulement pour un envoi de l'app (voir WhatsApp.#sent) ; un message envoyé
     // depuis un autre appareil est déjà parti
     status: fromMe ? (statusOf(wa.status) === 'pending' || statusOf(wa.status) === null ? 'sent' : statusOf(wa.status)) : null,
