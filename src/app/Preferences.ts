@@ -41,6 +41,7 @@ const SettingsFile = z.object({
   chatVoiceLanguages: z.optional(z.record(z.string(), z.string())),
   account: z.optional(z.string()),
   rejectMessage: z.optional(z.string()),
+  sidePanelWidth: z.optional(z.number()),
 });
 
 /** Outil de traduction : CLI installée par l'utilisateur (ses identifiants). */
@@ -94,8 +95,14 @@ export interface Settings {
   readonly account: string;
   /** message envoyé par « Refuser avec un message » (notification d'appel) */
   readonly rejectMessage: string;
+  /** largeur du panneau de droite (recherche, résumés), réglée en le tirant */
+  readonly sidePanelWidth: number;
 }
-const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT, rejectMessage: 'Je ne peux pas répondre, je te rappelle' };
+/** Panneau de droite : largeur par défaut et bornes (pixels). */
+export const SIDE_PANEL_DEFAULT = 340;
+export const sidePanelWidth = (w: number): number => Math.round(Math.min(Math.max(Number.isFinite(w) ? w : SIDE_PANEL_DEFAULT, 280), 600));
+
+const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT, rejectMessage: 'Je ne peux pas répondre, je te rappelle', sidePanelWidth: SIDE_PANEL_DEFAULT };
 const asAccent = (id: string | undefined): AccentId => ACCENTS.find((a) => a.id === id)?.id ?? 'system';
 
 /** Texte sans espaces autour, ou null s'il est absent ou vide. */
@@ -123,6 +130,7 @@ export function parseSettings(text: string | null): Settings {
       chatVoiceLanguages: raw.chatVoiceLanguages ?? {},
       account: nonEmpty(raw.account) ?? DEFAULT_ACCOUNT,
       rejectMessage: nonEmpty(raw.rejectMessage) ?? DEFAULTS.rejectMessage,
+      sidePanelWidth: sidePanelWidth(raw.sidePanelWidth ?? SIDE_PANEL_DEFAULT),
     };
   } catch {
     return DEFAULTS;
@@ -194,6 +202,12 @@ export function setChatVoiceLanguage(chatId: string, lang: string | null): void 
 
 /** Réglages en cours. */
 export const settings = (): Settings => current;
+
+/** Largeur du panneau de droite retenue (enregistrée à la fin du glissement). */
+export function rememberSidePanelWidth(width: number): void {
+  const w = sidePanelWidth(width);
+  if (current.sidePanelWidth !== w) update({ sidePanelWidth: w });
+}
 
 /** Compte affiché, retenu pour le prochain lancement. */
 export function rememberAccount(account: string): void {

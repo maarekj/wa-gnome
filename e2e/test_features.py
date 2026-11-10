@@ -359,3 +359,23 @@ def test_vue_unique_et_messages_ephemeres(run_app):
     assert app.text_visible('À ouvrir sur votre téléphone')
     # discussion éphémère : minuterie dans l'en-tête
     app.find(None, 'Messages éphémères : 7 jours')
+
+
+def test_resume_des_messages_selectionnes(run_app):
+    _, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    start = app.find('label', 'Message n° 148')
+    end = max(app.all('label', 'Message n° 150'), key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).x)
+    app.drag(start, end)
+    assert app.text_visible('3 messages sélectionnés')
+    # « Résumer (IA) » de la barre de sélection : fenêtre du résumé (outil simulé)
+    app.click('button', 'Résumer (IA)')
+    # panneau à droite : la discussion reste affichée
+    assert app.text_visible('Résumé de test (3 messages')
+    assert app.text_visible('Message n° 150')
+    app.find(None, 'Copier le résumé')
+    # fermé puis rouvert par le bouton de l'en-tête : résumé toujours là
+    app.click('button', 'Fermer les résumés')
+    app.text_gone('Résumé de test', 5)
+    app.point(app.find(None, 'Résumés (IA) de la discussion'))
+    assert app.text_visible('Résumé de test (3 messages')

@@ -1,5 +1,5 @@
 // Mise en forme WhatsApp → balisage Pango.
-import { emojiOnly, linkAt, waMarkup } from '../src/shared/format.ts';
+import { emojiOnly, linkAt, markdownMarkup, waMarkup } from '../src/shared/format.ts';
 
 describe('waMarkup', () => {
   it('gras, italique, barré, code', () => {
@@ -60,5 +60,22 @@ describe('émojis seuls', () => {
     expect(emojiOnly('©')).toBe(0);
     expect(emojiOnly('™')).toBe(0);
     expect(emojiOnly('❤️')).toBe(1);
+  });
+});
+
+describe('markdownMarkup', () => {
+  it('mise en ligne, listes, citations, titres', () => {
+    expect(markdownMarkup('**Décision** : *dimanche* à `12h30`')).toBe('<b>Décision</b> : <i>dimanche</i> à <tt>12h30</tt>');
+    expect(markdownMarkup('- un\n  - deux\n1. trois')).toBe('•  un\n    •  deux\n1.  trois');
+    expect(markdownMarkup('> On part à 8 h')).toBe('<span alpha="70%">▎ <i>On part à 8 h</i></span>');
+    // citation sous une puce (indentée)
+    expect(markdownMarkup('  > pain ?')).toBe('    <span alpha="70%">▎ <i>pain ?</i></span>');
+    expect(markdownMarkup('## Sujets')).toBe('<span weight="bold" size="large">Sujets</span>');
+    expect(markdownMarkup('[site](https://exemple.fr)')).toBe('<a href="https://exemple.fr">site</a>');
+  });
+  it('contenu échappé, astérisques isolés et identifiants laissés', () => {
+    expect(markdownMarkup('a < b & <b>c</b>')).toBe('a &lt; b &amp; &lt;b&gt;c&lt;/b&gt;');
+    expect(markdownMarkup('3 * 4 * 5 et nom_de_fichier_test')).toBe('3 * 4 * 5 et nom_de_fichier_test');
+    expect(markdownMarkup('```\n<x>\n```')).toBe('<tt>&lt;x&gt;</tt>');
   });
 });

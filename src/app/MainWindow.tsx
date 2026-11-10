@@ -101,6 +101,8 @@ export function MainWindow({ app, accounts, ready }: { app: Adw.Application; acc
 function AccountView({ store, accounts, toast }: { store: Store; accounts: Accounts; toast: (t: string) => void }): JSX.Element {
   const screen = createMemo(() => screenOf(store.link(), store.status()));
   let split: Adw.NavigationSplitView | null = null;
+  /** panneau à droite de la conversation (recherche, résumés) */
+  let side: Adw.OverlaySplitView | null = null;
   const pictures = accounts.pictures(store);
   /** compte ajouté (pas le premier) : appairage annulable */
   const extra = store !== accounts.main;
@@ -111,6 +113,13 @@ function AccountView({ store, accounts, toast }: { store: Store; accounts: Accou
       $={(self: Adw.BreakpointBin) => {
         // fenêtre étroite : une seule colonne, la discussion ouverte au premier plan
         const bp = new Adw.Breakpoint({ condition: Adw.BreakpointCondition.parse('max-width: 640sp') });
+        // fenêtre moyenne : panneau de droite par-dessus la conversation (pas de place à côté)
+        const medium = new Adw.Breakpoint({ condition: Adw.BreakpointCondition.parse('max-width: 1000sp') });
+        if (side !== null) {
+          medium.add_setter(side, 'collapsed', true);
+          bp.add_setter(side, 'collapsed', true);
+        }
+        self.add_breakpoint(medium);
         if (split !== null) bp.add_setter(split, 'collapsed', true);
         self.add_breakpoint(bp);
       }}
@@ -171,7 +180,14 @@ function AccountView({ store, accounts, toast }: { store: Store; accounts: Accou
               $={(self: Adw.NavigationSplitView) => {
                 split = self;
                 self.sidebar = asPage(ChatList({ store, pictures, toast, switcher: accountSwitcher(accounts, toast), removable: extra }));
-                self.content = asPage(ConversationPage({ store, pictures, toast }));
+                self.content = asPage(ConversationPage({
+                    store,
+                    pictures,
+                    toast,
+                    panels: (s) => {
+                      side = s;
+                    },
+                  }));
                 onCleanup(
                   store.current.subscribe(() => {
                     self.showContent = store.current.peek() !== null;

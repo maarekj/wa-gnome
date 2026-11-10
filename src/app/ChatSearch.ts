@@ -51,7 +51,7 @@ export function ChatSearch(store: Store, open: Accessor<boolean>, close: () => v
   const inner = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   inner.append(status);
   inner.append(list);
-  const panel = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, widthRequest: 320, cssClasses: ['chat-search'] });
+  const panel = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true, cssClasses: ['chat-search'] });
   panel.append(top);
   panel.append(new Gtk.Separator());
   panel.append(new Gtk.ScrolledWindow({ child: inner, vexpand: true, hscrollbarPolicy: Gtk.PolicyType.NEVER }));
@@ -100,7 +100,7 @@ export function ChatSearch(store: Store, open: Accessor<boolean>, close: () => v
   // autre discussion : recherche relancée sur celle-ci
   onCleanup(store.current.subscribe(run));
   // caché hors de l'animation : un révélateur replié garde sinon la largeur du panneau
-  const revealer = new Gtk.Revealer({ child: panel, transitionType: Gtk.RevealerTransitionType.SLIDE_LEFT, revealChild: open.peek(), visible: open.peek() });
+  const revealer = new Gtk.Revealer({ child: panel, transitionType: Gtk.RevealerTransitionType.NONE, revealChild: open.peek(), visible: open.peek() });
   revealer.connect('notify::child-revealed', () => {
     if (!revealer.childRevealed && !open.peek()) revealer.visible = false;
   });

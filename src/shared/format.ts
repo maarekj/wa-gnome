@@ -202,3 +202,56 @@ export function emojiOnly(text: string): number {
   }
   return n;
 }
+
+/** Mise en ligne Markdown : `code`, **gras**, *italique* / _italique_, ~~barré~~, [lien](url). */
+function mdInline(src: string): string {
+  return src
+    .split('`')
+    .map((part, i) => {
+      if (i % 2 === 1) return `<tt>${esc(part)}</tt>`;
+      return esc(part)
+        .replaceAll(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gu, '<a href="$2">$1</a>')
+        .replaceAll(/\*\*(?=\S)(.+?)(?<=\S)\*\*/gu, '<b>$1</b>')
+        .replaceAll(/__(?=\S)(.+?)(?<=\S)__/gu, '<b>$1</b>')
+        .replaceAll(/(?<![\w*])\*(?=\S)(.+?)(?<=\S)\*(?![\w*])/gu, '<i>$1</i>')
+        .replaceAll(/(?<!\w)_(?=\S)(.+?)(?<=\S)_(?!\w)/gu, '<i>$1</i>')
+        .replaceAll(/~~(?=\S)(.+?)(?<=\S)~~/gu, '<s>$1</s>');
+    })
+    .join('');
+}
+
+/**
+ * Markdown (réponse d'une IA) → balisage Pango : titres, listes à puces et numérotées, citations,
+ * blocs de code, séparateurs, mise en ligne. Texte échappé : aucun balisage ne vient du contenu.
+ */
+export function markdownMarkup(text: string): string {
+  const out: string[] = [];
+  let code: string[] | null = null;
+  for (const raw of text.replaceAll('\r', '').split('\n')) {
+    if (raw.trimStart().startsWith('```')) {
+      if (code === null) code = [];
+      else {
+        out.push(`<tt>${esc(code.join('\n'))}</tt>`);
+        code = null;
+      }
+      continue;
+    }
+    if (code !== null) {
+      code.push(raw);
+      continue;
+    }
+    const row = raw.trimEnd();
+    const heading = /^(#{1,6})\s+(.*)$/u.exec(row);
+    const bullet = /^(\s*)[-*+]\s+(.*)$/u.exec(row);
+    const numbered = /^(\s*)(\d+)[.)]\s+(.*)$/u.exec(row);
+    const quote = /^(\s*)>\s?(.*)$/u.exec(row);
+    if (heading !== null && heading[2] !== undefined) out.push(`<span weight="bold"${(heading[1]?.length ?? 1) <= 2 ? ' size="large"' : ''}>${mdInline(heading[2])}</span>`);
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/u.test(row)) out.push('<span alpha="40%">──────────</span>');
+    else if (bullet !== null) out.push(`${'    '.repeat(Math.floor((bullet[1]?.length ?? 0) / 2))}•  ${mdInline(bullet[2] ?? '')}`);
+    else if (numbered !== null) out.push(`${'    '.repeat(Math.floor((numbered[1]?.length ?? 0) / 2))}${numbered[2] ?? ''}.  ${mdInline(numbered[3] ?? '')}`);
+    else if (quote === null) out.push(mdInline(row));
+    else out.push(`${'    '.repeat(Math.floor((quote[1]?.length ?? 0) / 2))}<span alpha="70%">▎ <i>${mdInline(quote[2] ?? '')}</i></span>`);
+  }
+  if (code !== null) out.push(`<tt>${esc(code.join('\n'))}</tt>`);
+  return out.join('\n');
+}

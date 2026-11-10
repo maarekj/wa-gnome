@@ -15,8 +15,9 @@ import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pas
 import { avatarText, isChannel } from './ChatList.tsx';
 import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
-import { setChatVoiceLanguage, settings, WHISPER_MODELS, type WhisperModel } from './Preferences.ts';
+import { rememberSidePanelWidth, setChatVoiceLanguage, settings, sidePanelWidth, WHISPER_MODELS, type WhisperModel } from './Preferences.ts';
 import { DownloadCancelled } from './Whisper.ts';
+import { startSummary, SummaryPanel, summaries, summaryKey } from './Summary.ts';
 import { downloadWhisper, hideTranslation, languageName, MissingModel, translateMessage, translationOf, translations } from './Translate.ts';
 import { fmtRecording, Recorder } from './Recorder.ts';
 import { attachDragSelect } from './DragSelect.ts';
@@ -104,7 +105,8 @@ function offerWhisperDownload(parent: Gtk.Widget, model: WhisperModel, toast: (t
 function TranslationView(m: Message): Gtk.Widget {
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, cssClasses: ['translation'], visible: false });
   const transcript = new Gtk.Label({ xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, selectable: true, maxWidthChars: 60, cssClasses: ['transcript'] });
-  const head = new Gtk.Label({ xalign: 0, cssClasses: ['caption', 'dim-label'] });
+  // à la ligne : un long message d'erreur élargissait toute la conversation (et la fenêtre)
+  const head = new Gtk.Label({ xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, maxWidthChars: 60, cssClasses: ['caption', 'dim-label'] });
   const text = new Gtk.Label({ xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, selectable: true, maxWidthChars: 60, useMarkup: true });
   openLinks(text);
   box.append(transcript);
@@ -1023,7 +1025,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
   );
 }
 
-export function ConversationPage({ store, pictures, toast }: { store: Store; pictures: Pictures; toast: (text: string) => void }): JSX.Element {
+export function ConversationPage({ store, pictures, toast, panels }: { store: Store; pictures: Pictures; toast: (text: string) => void; panels?: (split: Adw.OverlaySplitView) => void }): JSX.Element {
   const chat = createMemo(() => {
     const id = store.current();
     // nom et type suivis : la liste des discussions est mise à jour en direct
@@ -1054,6 +1056,19 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
   };
   /** panneau de recherche dans la discussion ouvert */
   const [searching, setSearching] = createState(false);
+  /** panneau des résumés (IA) ouvert ; un seul panneau à droite à la fois */
+  const [summarizing, setSummarizing] = createState(false);
+  onCleanup(
+    searching.subscribe(() => {
+      if (searching.peek()) setSummarizing(false);
+    }),
+  );
+  onCleanup(
+    summarizing.subscribe(() => {
+      if (summarizing.peek()) setSearching(false);
+    }),
+  );
+  const summariesKey = createMemo(() => summaryKey(store.client.account, store.current() ?? ''));
   /** boîte des bulles (défilement vers un message trouvé par la recherche) */
   let conversation: Gtk.Box | null = null;
   /** ajout de pièces jointes du composer (renseigné à sa création) */
@@ -1179,6 +1194,14 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
           />
           <Gtk.ToggleButton
             $type="end"
+            iconName="view-list-bullet-symbolic"
+            tooltipText="Résumés (IA) de la discussion"
+            visible={createMemo(() => chat() !== null && (summarizing() || (summaries().get(summariesKey())?.length ?? 0) > 0))}
+            active={summarizing}
+            onToggled={(b: Gtk.ToggleButton) => setSummarizing(b.active)}
+          />
+          <Gtk.ToggleButton
+            $type="end"
             iconName="system-search-symbolic"
             tooltipText="Rechercher dans la discussion (Ctrl+F)"
             visible={chat((c) => c !== null)}
@@ -1188,8 +1211,88 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
         </Adw.HeaderBar>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Adw.StatusPage $type="named" name="none" iconName="chat-message-new-symbolic" title="WhatsApp pour GNOME" description="Choisissez une discussion" />
-          <Gtk.Box $type="named" name="chat">
+          {/* panneau à droite (recherche, résumés) : à côté de la conversation, ou par-dessus si la
+              place manque (repliée par la fenêtre : `panels`) */}
+          <Adw.OverlaySplitView
+            $type="named"
+            name="chat"
+            sidebarPosition={Gtk.PackType.END}
+            $={(self: Adw.OverlaySplitView) => {
+              panels?.(self);
+              // largeur choisie en tirant le bord du panneau (retenue)
+              const setWidth = (wanted: number): void => {
+                // place gardée pour la conversation (sinon la fenêtre déborderait de l'écran)
+                const room = self.get_width();
+                const w = room > 0 && !self.collapsed ? Math.min(wanted, Math.max(280, room - 400)) : wanted;
+                // ordre : jamais min > max (valeur corrigée par la vue, à-coup visible)
+                if (w > self.maxSidebarWidth) {
+                  self.maxSidebarWidth = w;
+                  self.minSidebarWidth = w;
+                } else {
+                  self.minSidebarWidth = w;
+                  self.maxSidebarWidth = w;
+                }
+              };
+              setWidth(settings().sidePanelWidth);
+              self.sidebarWidthFraction = 1;
+              // glissement suivi sur la vue entière (elle ne bouge pas) : la poignée se déplace avec
+              // le panneau, ses coordonnées propres faisaient trembler la largeur ; une mise en page
+              // par image au plus
+              const drag = new Gtk.GestureDrag({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
+              let startX = 0;
+              let width = settings().sidePanelWidth;
+              let pending: number | null = null;
+              let tick = 0;
+              drag.connect('drag-begin', (g: Gtk.GestureDrag, x: number) => {
+                const edge = self.get_width() - self.minSidebarWidth;
+                // hors de la poignée (bord gauche du panneau) : glissement laissé aux autres
+                if (!self.showSidebar || Math.abs(x - edge) > 8) {
+                  g.set_state(Gtk.EventSequenceState.DENIED);
+                  return;
+                }
+                g.set_state(Gtk.EventSequenceState.CLAIMED);
+                startX = x;
+                width = self.minSidebarWidth;
+              });
+              drag.connect('drag-update', (_g: Gtk.GestureDrag, dx: number) => {
+                pending = sidePanelWidth(self.get_width() - (startX + dx));
+                if (tick !== 0) return;
+                tick = self.add_tick_callback(() => {
+                  tick = 0;
+                  if (pending !== null) setWidth(pending);
+                  width = self.minSidebarWidth;
+                  pending = null;
+                  return GLib.SOURCE_REMOVE;
+                });
+              });
+              drag.connect('drag-end', () => {
+                if (pending !== null) setWidth(pending);
+                pending = null;
+                width = self.minSidebarWidth;
+                rememberSidePanelWidth(width);
+              });
+              self.add_controller(drag);
+              // ouvert seulement à la demande (sinon affiché à chaque changement de « replié »)
+              self.pinSidebar = true;
+              const sync = (): void => {
+                self.showSidebar = searching.peek() || summarizing.peek();
+              };
+              sync();
+              onCleanup(searching.subscribe(sync));
+              onCleanup(summarizing.subscribe(sync));
+              // fermé en glissant ou par Échap (mode superposé) : état suivi ; ouvert autrement : refermé
+              self.connect('notify::show-sidebar', () => {
+                if (self.showSidebar) {
+                  if (!searching.peek() && !summarizing.peek()) self.showSidebar = false;
+                  return;
+                }
+                setSearching(false);
+                setSummarizing(false);
+              });
+            }}
+          >
           <Gtk.Box
+            $type="content"
             hexpand
             orientation={Gtk.Orientation.VERTICAL}
             cssClasses={['chat-drop', 'wallpaper']}
@@ -1212,7 +1315,9 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
           >
             <Gtk.ScrolledWindow
               vexpand
-              hscrollbarPolicy={Gtk.PolicyType.NEVER}
+              // largeur minimale des bulles non imposée à la fenêtre : un contenu trop large est rogné,
+              // jamais la fenêtre élargie au-delà de l'écran (panneaux de droite repoussés hors champ)
+              hscrollbarPolicy={Gtk.PolicyType.EXTERNAL}
               $={(self: Gtk.ScrolledWindow) => {
                 scroller = self;
                 // collé en bas tant que l'utilisateur n'est pas remonté dans l'historique
@@ -1357,6 +1462,16 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
                     }}
                   />
                   <Gtk.Button
+                    iconName="view-list-bullet-symbolic"
+                    tooltipText="Résumer (IA)"
+                    cssClasses={['circular', 'flat']}
+                    onClicked={() => {
+                      startSummary(summariesKey.peek(), chat.peek()?.name ?? '', selected(), (m) => (m.media === null ? Promise.reject(new Error('pas de média')) : loader.file(m, m.media)));
+                      setSummarizing(true);
+                      clearSelection();
+                    }}
+                  />
+                  <Gtk.Button
                     iconName="mail-forward-symbolic"
                     tooltipText="Transférer"
                     cssClasses={['circular', 'flat']}
@@ -1381,9 +1496,26 @@ export function ConversationPage({ store, pictures, toast }: { store: Store; pic
               </Gtk.Stack>
             </Adw.Clamp>
           </Gtk.Box>
-          {/* recherche dans la discussion : panneau à droite */}
-          {ChatSearch(store, searching, () => setSearching(false))}
+          <Gtk.Overlay $type="sidebar">
+          <Gtk.Box orientation={Gtk.Orientation.VERTICAL} cssClasses={['side-panel']}>
+            {/* recherche dans la discussion */}
+            {ChatSearch(store, searching, () => setSearching(false))}
+            {/* résumés (IA) de la discussion : discussion toujours visible */}
+            {SummaryPanel(summariesKey, summarizing, () => setSummarizing(false))}
           </Gtk.Box>
+          {/* poignée : bord gauche du panneau, à tirer pour l'élargir ou le réduire */}
+          <Gtk.Box
+            $type="overlay"
+            widthRequest={8}
+            halign={Gtk.Align.START}
+            cssClasses={['side-resize']}
+            tooltipText="Tirer pour redimensionner le panneau"
+            $={(self: Gtk.Box) => {
+              self.set_cursor_from_name('col-resize');
+            }}
+          />
+          </Gtk.Overlay>
+          </Adw.OverlaySplitView>
         </Gtk.Stack>
       </Adw.ToolbarView>
     </Adw.NavigationPage>

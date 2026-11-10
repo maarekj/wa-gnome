@@ -141,6 +141,12 @@ export const STYLESHEET = `
   border-left: 1px solid var(--border-color);
   background: var(--sidebar-bg-color);
 }
+.side-resize:hover {
+  background: alpha(var(--accent-bg-color), 0.35);
+}
+.summary-card {
+  padding: 10px 12px;
+}
 .selection-bar {
   min-height: 46px;
 }
