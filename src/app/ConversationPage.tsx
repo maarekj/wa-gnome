@@ -7,7 +7,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { DELETED_TEXT, editability, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
+import { DELETED_TEXT, editability, PIN_DURATIONS, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, emojiOnly, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
@@ -218,6 +218,10 @@ interface BubbleContext {
   readonly forward: (parent: Gtk.Widget, m: Message) => void;
   /** traduire (texte, vocal : transcription puis traduction) ou seulement transcrire un vocal */
   readonly translate: (parent: Gtk.Widget, m: Message, mode: 'translate' | 'transcribe', lang?: string | null) => void;
+  /** messages épinglés de la discussion (identifiants) */
+  readonly pinned: () => ReadonlySet<string>;
+  /** épingler pour `duration` secondes, ou désépingler (null) */
+  readonly pin: (m: Message, duration: number | null) => void;
 }
 
 /** Messages transférables (pas ceux supprimés pour tous). */
@@ -343,6 +347,12 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   const hide = new Gio.SimpleAction({ name: 'hide-translation' });
   hide.connect('activate', () => hideTranslation(msg()));
   group.add_action(hide);
+  const pinAction = new Gio.SimpleAction({ name: 'pin', parameterType: new GLib.VariantType('u') });
+  pinAction.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => ctx.pin(msg(), param?.get_uint32() ?? PIN_DURATIONS[1].seconds));
+  group.add_action(pinAction);
+  const unpinAction = new Gio.SimpleAction({ name: 'unpin' });
+  unpinAction.connect('activate', () => ctx.pin(msg(), null));
+  group.add_action(unpinAction);
   const copy = new Gio.SimpleAction({ name: 'copy' });
   copy.connect('activate', () => {
     widget.get_clipboard().set(msg().text);
@@ -414,6 +424,17 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
         langs.append_item(it);
       }
       model.append_submenu('Transcrire et traduire en…', langs);
+    }
+    // épingler pour tous (durée), ou désépingler
+    if (ctx.pinned().has(m.id)) model.append('Désépingler', 'msg.unpin');
+    else {
+      const durations = new Gio.Menu();
+      for (const d of PIN_DURATIONS) {
+        const it = Gio.MenuItem.new(d.label, null);
+        it.set_action_and_target_value('msg.pin', new GLib.Variant('u', d.seconds));
+        durations.append_item(it);
+      }
+      model.append_submenu('Épingler', durations);
     }
     model.append('Sélectionner', 'msg.select');
     const danger = new Gio.Menu();
@@ -510,6 +531,56 @@ function ViewOnceView(m: Message): Gtk.Widget {
   texts.append(new Gtk.Label({ label: m.fromMe ? 'Envoyée depuis votre téléphone' : 'À ouvrir sur votre téléphone', xalign: 0, cssClasses: ['caption', 'dim-label'] }));
   box.append(texts);
   return box;
+}
+
+/**
+ * Bandeau des messages épinglés (en haut de la conversation) : le message affiché, son auteur et
+ * sa position (« 1/3 ») ; un clic amène le message à l'écran puis passe au suivant, comme WhatsApp.
+ */
+function PinnedBar(store: Store, go: (m: Message) => void): Gtk.Widget {
+  const bar = new Gtk.Button({ cssClasses: ['flat', 'pinned-bar'], visible: false, tooltipText: 'Aller au message épinglé' });
+  const box = new Gtk.Box({ spacing: 10 });
+  box.append(new Gtk.Image({ iconName: 'view-pin-symbolic' }));
+  const texts = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
+  const head = new Gtk.Label({ xalign: 0, cssClasses: ['caption-heading', 'accent'] });
+  const text = new Gtk.Label({ xalign: 0, ellipsize: Pango.EllipsizeMode.END, singleLineMode: true });
+  texts.append(head);
+  texts.append(text);
+  box.append(texts);
+  bar.child = box;
+  let index = 0;
+  const show = (): void => {
+    const pins = store.pins.peek();
+    bar.visible = pins.length > 0;
+    if (pins.length === 0) return;
+    if (index >= pins.length) index = 0;
+    const m = pins[index];
+    if (m === undefined) return;
+    const who = m.fromMe ? 'Vous' : (m.senderName ?? '');
+    head.label = `Message épinglé${pins.length > 1 ? ` ${index + 1}/${pins.length}` : ''}${who === '' ? '' : ` · ${who}`}`;
+    text.label = quotePreview(m);
+    bar.update_property([Gtk.AccessibleProperty.LABEL], [`Message épinglé : ${text.label}`]);
+  };
+  bar.connect('clicked', () => {
+    const m = store.pins.peek()[index];
+    if (m === undefined) return;
+    go(m);
+    // suivant (le plus ancien après le plus récent), comme WhatsApp
+    index += 1;
+    show();
+  });
+  // même liste (message modifié, réaction) : position gardée ; autre liste : premier
+  let ids = '';
+  onCleanup(
+    store.pins.subscribe(() => {
+      const next = store.pins.peek().map((p) => p.id).join(',');
+      if (next !== ids) index = 0;
+      ids = next;
+      show();
+    }),
+  );
+  show();
+  return bar;
 }
 
 /** Ligne d'un appel (manqué, refusé…), centrée comme un séparateur de jour. */
@@ -1119,6 +1190,13 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
       }
     })();
   };
+  /** Épingle le message pour `duration` secondes, ou le désépingle (null). */
+  const pinMessage = (m: Message, duration: number | null): void => {
+    store.client.messageAction(m.chatId, m.id, duration === null ? { action: 'pin', value: false } : { action: 'pin', value: true, duration }).then(
+      () => toast(duration === null ? 'Message désépinglé' : 'Message épinglé'),
+      (error: unknown) => toast(`Épinglage impossible : ${errorMessage(error)}`),
+    );
+  };
   /** messages sélectionnés, dans l'ordre de la discussion */
   const selected = (): Message[] => store.messages.peek().filter((m) => selection.peek().has(m.id));
   return (
@@ -1313,6 +1391,11 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
               self.add_controller(keys);
             }}
           >
+            {/* messages épinglés : bandeau en haut de la conversation */}
+            {PinnedBar(store, (m) => {
+              if (conversation !== null && scrollToMessage(conversation, m.id)) return;
+              store.openAt(m.chatId, m.id, m.timestamp);
+            })}
             <Gtk.ScrolledWindow
               vexpand
               // largeur minimale des bulles non imposée à la fenêtre : un contenu trop large est rogné,
@@ -1427,7 +1510,7 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
                       conversation = self;
                       // glisser d'un message à l'autre : sélection (comme Telegram Desktop)
                       attachDragSelect(self, () => scroller, () => selection.peek(), setSelection);
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), pinned: () => new Set(store.pins.peek().map((p) => p.id)), pin: (m, duration) => pinMessage(m, duration), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import type { Converted } from './convert.ts';
 import { proto } from 'baileys';
-import { forwardedOf, mediaOf, quotedOf, toMessage } from './convert.ts';
+import { forwardedOf, mediaOf, pinOf, quotedOf, toMessage } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
 import { forwardScoreIn, Store } from './store.ts';
 
@@ -280,6 +280,23 @@ void describe('statuts et diffusions', () => {
     const wa = { key: { remoteJid: '123@broadcast', id: 'x', fromMe: false, participant: PN }, message: { conversation: 'bonjour' }, messageTimestamp: 10 };
     assert.equal(toMessage(wa)?.chatId, PN);
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
+  });
+  void it('épinglage : message technique, état de l’historique, ordre et expiration', () => {
+    const action = { key: { remoteJid: PN, id: 'p1', fromMe: true }, message: { pinInChatMessage: { key: { id: 'cible' }, type: proto.Message.PinInChatMessage.Type.PIN_FOR_ALL, senderTimestampMs: 50_000 }, messageContextInfo: { messageAddOnDurationInSecs: 86_400 } }, messageTimestamp: 50 };
+    assert.deepEqual(pinOf(action), { targetId: 'cible', pinned: true, at: 50, duration: 86_400, action: true });
+    const state = { key: { remoteJid: PN, id: 'm1', fromMe: false }, message: { conversation: 'à lire' }, pinInChat: { type: proto.PinInChat.Type.PIN_FOR_ALL, key: { id: 'autre' }, serverTimestampMs: 70_000 }, messageTimestamp: 60 };
+    assert.deepEqual(pinOf(state), { targetId: 'm1', pinned: true, at: 70, duration: 0, action: false });
+    const store = new Store(':memory:');
+    store.upsertMessage(msg(PN, 'a', 10), '{}');
+    store.upsertMessage(msg(PN, 'b', 20), '{}');
+    store.setPin(PN, 'a', true, 100, 1000);
+    store.setPin(PN, 'b', true, 200, 1000);
+    assert.deepEqual(store.pins(PN, 150, 3).map((m) => m.id), ['b', 'a']);
+    // retrait plus ancien que l'épinglage (historique rejoué) : ignoré
+    assert.equal(store.setPin(PN, 'b', false, 150, 1000), false);
+    store.setPin(PN, 'a', false, 300, 1000);
+    assert.deepEqual(store.pins(PN, 150, 3).map((m) => m.id), ['b']);
+    assert.deepEqual(store.pins(PN, 1001, 3), []);
   });
   void it('conversion : vue unique et durée éphémère', () => {
     const once = { key: { remoteJid: PN, id: 'v1', fromMe: false }, message: { imageMessage: { mimetype: 'image/jpeg', viewOnce: true, contextInfo: { expiration: 604_800 } } }, messageTimestamp: 10 };

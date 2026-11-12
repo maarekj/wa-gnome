@@ -209,6 +209,8 @@ store.applyEdit(GROUP, dimanche.id, 'Qui vient dimanche midi ?');
 const oups = add(GROUP, false, 'Message envoyé par erreur', 3 * H + 20, BOB, 'Bob');
 store.applyRevoke(GROUP, oups.id);
 const dessert = add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
+// message épinglé dans le groupe (bandeau en haut de la discussion)
+store.setPin(GROUP, dimanche.id, true, now - 3 * H, now + 7 * 24 * H);
 // réactions de démonstration
 for (const [sender, emoji] of [[BOB, '❤️'], [ME, '❤️'], [ALICE, '😂']] as const) store.setReaction({ chatId: GROUP, targetId: dessert.id, sender: sender === ME ? 'me' : sender, emoji, timestamp: Date.now() });
 add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype: 'image/png', width: 512, height: 512, thumbnail: null, fileName: null, size: null, seconds: null }, data: sticker(512) });
@@ -412,6 +414,11 @@ const backend: Backend = {
         emit({ type: 'message', message: copy });
         emit({ type: 'chats', chats: [store.chat(to)].filter((c) => c !== null) });
       }
+      return Promise.resolve();
+    }
+    if (a.action === 'pin') {
+      store.setPin(chatId, messageId, a.value, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000) + (a.duration === 86_400 || a.duration === 2_592_000 ? a.duration : 604_800));
+      emit({ type: 'pins', chatId });
       return Promise.resolve();
     }
     if (a.action === 'delete-for-me') {

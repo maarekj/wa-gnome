@@ -158,6 +158,11 @@ export class WaClient {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
   }
 
+  /** Messages épinglés d'une discussion, le plus récemment épinglé d'abord. */
+  pins(chatId: string): Promise<Message[]> {
+    return this.request('GET', `/chats/${encodeURIComponent(chatId)}/pins`, z.array(Message));
+  }
+
   /** Fiche d'un contact ou d'un groupe. */
   info(chatId: string): Promise<ChatInfo> {
     return this.request('GET', `/chats/${encodeURIComponent(chatId)}/info`, ChatInfo);

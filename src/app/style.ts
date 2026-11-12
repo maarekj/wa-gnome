@@ -242,6 +242,13 @@ export const STYLESHEET = `
 .call-banner .ringing {
   color: var(--success-color);
 }
+/* bandeau des messages épinglés */
+.pinned-bar {
+  border-radius: 0;
+  padding: 6px 14px;
+  background: var(--headerbar-bg-color);
+  border-bottom: 1px solid var(--border-color);
+}
 /* ligne d'un appel ; manqué : en rouge, comme sur le téléphone */
 .call-line {
   background: alpha(currentColor, 0.06);

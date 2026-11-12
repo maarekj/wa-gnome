@@ -58,6 +58,9 @@ export class Store {
   readonly messages: Accessor<readonly Message[]>;
   /** présence de la discussion ouverte (null : inconnue) */
   readonly presence: Accessor<Presence | null>;
+  /** messages épinglés de la discussion ouverte (le plus récent d'abord) */
+  readonly pins: Accessor<readonly Message[]>;
+  readonly #setPins: Setter<readonly Message[]>;
   readonly #setPresence: (p: Presence | null) => void;
   /** personnes en train d'écrire, par discussion (aperçu de la liste) */
   readonly typing: Accessor<ReadonlyMap<string, string>>;
@@ -109,6 +112,7 @@ export class Store {
     [this.messages, this.#setMessages] = createState<readonly Message[]>([]);
     [this.older, this.#setOlder] = createState<OlderState>('idle');
     [this.presence, this.#setPresence] = createState<Presence | null>(null);
+    [this.pins, this.#setPins] = createState<readonly Message[]>([]);
     [this.typing, this.#setTyping] = createState<ReadonlyMap<string, string>>(new Map());
     [this.drafts, this.#setDrafts] = createState<ReadonlyMap<string, string>>(new Map());
     [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
@@ -148,6 +152,7 @@ export class Store {
       const id = this.current.peek();
       // autant de messages qu'affichés (pages plus anciennes déjà chargées comprises)
       if (id !== null) this.#setMessages(await this.client.messages(id, Math.min(500, Math.max(PAGE, this.messages.peek().length))));
+      if (id !== null) void this.#loadPins(id);
     } catch (error) {
       console.error(`rechargement : ${errorMessage(error)}`);
     }
@@ -193,10 +198,13 @@ export class Store {
         this.onPicture?.(e.id);
         break;
       case 'message.delete':
+        if (this.pins.peek().some((p) => p.id === e.id)) this.#setPins(this.pins.peek().filter((p) => p.id !== e.id));
         if (e.chatId === this.current.peek()) this.#setMessages(this.messages.peek().filter((m) => m.id !== e.id));
         if (this.editing.peek()?.id === e.id) this.setEditing(null);
         break;
       case 'message.update': {
+        // message épinglé modifié (ou supprimé pour tous) : bandeau à jour
+        if (this.pins.peek().some((p) => p.id === e.message.id)) this.#setPins(e.message.deleted ? this.pins.peek().filter((p) => p.id !== e.message.id) : this.pins.peek().map((p) => (p.id === e.message.id ? e.message : p)));
         // remplacé s'il est affiché (pas d'ajout : réaction à un message plus ancien que la page)
         const list = this.messages.peek();
         if (e.message.chatId === this.current.peek() && list.some((m) => m.id === e.message.id)) this.#setMessages(list.map((m) => (m.id === e.message.id ? e.message : m)));
@@ -217,6 +225,9 @@ export class Store {
       case 'message':
         if (e.message.chatId === this.current.peek()) this.#setMessages(mergeMessage(this.messages.peek(), e.message));
         if (!e.message.fromMe) this.onIncoming?.(e.message, this.#byId.get(e.message.chatId));
+        break;
+      case 'pins':
+        if (e.chatId === this.current.peek()) void this.#loadPins(e.chatId);
         break;
       case 'call':
         this.onCall?.(e.call, this.#byId.get(e.call.chatId));
@@ -289,8 +300,10 @@ export class Store {
     this.setReplyTo(null);
     this.setEditing(null);
     this.#setPresence(null);
+    this.#setPins([]);
     if (id === null) return;
     void this.#subscribe(id);
+    void this.#loadPins(id);
     if (load) void this.#load(id);
     this.markRead(id);
   }
@@ -317,6 +330,15 @@ export class Store {
         return GLib.SOURCE_REMOVE;
       }),
     );
+  }
+
+  async #loadPins(id: string): Promise<void> {
+    try {
+      const list = await this.client.pins(id);
+      if (this.current.peek() === id) this.#setPins(list);
+    } catch (error) {
+      console.error(`messages épinglés : ${errorMessage(error)}`);
+    }
   }
 
   async #subscribe(id: string): Promise<void> {

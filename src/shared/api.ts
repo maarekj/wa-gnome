@@ -260,7 +260,18 @@ export const MessageAction = z.discriminatedUnion('action', [
   z.object({ action: z.literal('delete-for-me') }),
   /** transférer vers ces discussions */
   z.object({ action: z.literal('forward'), to: z.array(z.string()).check(z.minLength(1)) }),
+  /** épingler (pour la durée choisie) ou désépingler, pour tous */
+  z.object({ action: z.literal('pin'), value: z.boolean(), duration: z.optional(z.number()) }),
 ]);
+
+/** Durées d'épinglage proposées par WhatsApp (secondes). */
+export const PIN_DURATIONS = [
+  { seconds: 86_400, label: '24 heures' },
+  { seconds: 604_800, label: '7 jours' },
+  { seconds: 2_592_000, label: '30 jours' },
+] as const;
+/** Messages épinglés au plus par discussion (les plus récents). */
+export const MAX_PINNED_MESSAGES = 3;
 export type MessageAction = z.infer<typeof MessageAction>;
 export type Message = z.infer<typeof Message>;
 
@@ -456,6 +467,8 @@ export const Event = z.discriminatedUnion('type', [
   /** listes modifiées (liste complète) */
   z.object({ type: z.literal('lists'), lists: z.array(ChatList) }),
   z.object({ type: z.literal('message'), message: Message }),
+  /** messages épinglés d'une discussion changés : à relire (`GET /chats/:id/pins`) */
+  z.object({ type: z.literal('pins'), chatId: z.string() }),
   /** appel reçu : sonne, ou terminé */
   z.object({ type: z.literal('call'), call: Call }),
 ]);

@@ -379,3 +379,24 @@ def test_resume_des_messages_selectionnes(run_app):
     app.text_gone('Résumé de test', 5)
     app.point(app.find(None, 'Résumés (IA) de la discussion'))
     assert app.text_visible('Résumé de test (3 messages')
+
+
+def test_messages_epingles(run_app):
+    fake, app = run_app()
+    app.open_chat('Famille')
+    # bandeau du message épinglé (démonstration)
+    app.find(None, 'Message épinglé : Qui vient dimanche midi ?')
+    # épingler le dernier message (visible) : menu, « Épingler » › 7 jours ; entrées d'un menu
+    # surgissant absentes de l'arbre d'accessibilité : au clavier (Répondre, Transférer, Réagir,
+    # Copier le texte, Traduire, Épingler › 24 heures, 7 jours)
+    label = max(app.all('label', 'Le chat du voisin'), key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).x)
+    app.point(label, '3')
+    for _ in range(5):
+        app.key('Down')
+    app.key('Right')
+    app.key('Down')
+    app.key('Return')
+    call = fake.wait_call('messageAction')
+    assert call['args'][2] == {'action': 'pin', 'value': True, 'duration': 604800}
+    app.find(None, 'Message épinglé : Vidéo · Le chat du voisin')
+    assert app.text_visible('Message épinglé 1/2')

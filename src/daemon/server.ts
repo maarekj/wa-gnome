@@ -6,6 +6,7 @@
 //   POST /chats/:id/messages        envoi d'un texte { text }
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
 //   POST /chats/:id/media           envoi d'un fichier (corps brut, voir shared/api.ts)
+//   GET  /chats/:id/pins            messages épinglés, le plus récent d'abord
 //   GET  /chats/:id/picture         photo de profil (JPEG), 404 sans photo
 //   GET  /chats/:id/messages/:mid/info   infos d'un message envoyé (accusés par destinataire)
 //   POST /chats/:id/messages/:mid/action  modifier, supprimer pour tous, supprimer pour moi
@@ -26,7 +27,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
+import { type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, MAX_PINNED_MESSAGES, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -218,6 +219,9 @@ export function startServer(opts: { host: string; port: number; token: string; a
         json(res, 200, {});
         return;
       }
+      case 'GET /chats/:id/pins':
+        json(res, 200, store.pins(chatId, Math.floor(Date.now() / 1000), MAX_PINNED_MESSAGES));
+        return;
       case 'GET /chats/:id/info':
         json(res, 200, await wa.info(chatId));
         return;

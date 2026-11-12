@@ -32,7 +32,7 @@ import * as z from 'zod/mini';
 import { callText, type CallOutcome, type ChatAction, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
-import { type Change, changeOf, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
+import { type Change, changeOf, pinOf, type RawPin, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
@@ -193,10 +193,12 @@ export class WhatsApp {
             continue;
           }
           const reaction = reactionOf(m);
-          if (reaction === null) this.#saveMessage(m);
+          if (reaction === null) this.#saveMessage(m, false);
           else this.#react(reaction, false);
         }
       });
+      // épinglages reçus avec l'historique : discussion ouverte rafraîchie
+      for (const id of new Set(messages.flatMap((m) => (pinOf(m) !== null && m.key.remoteJid !== null && m.key.remoteJid !== undefined ? [this.#jid(m.key.remoteJid)] : [])))) this.#emit({ type: 'pins', chatId: id });
       this.#emit({ type: 'chats', chats: this.#store.chats() });
       // historique : messages éphémères déjà expirés retirés aussitôt
       this.purgeExpired();
@@ -437,6 +439,15 @@ export class WhatsApp {
         this.#emit({ type: 'message.delete', chatId, id });
         this.#emitChats([chatId]);
         break;
+      case 'pin': {
+        // durées de WhatsApp seulement (7 jours sinon) : même valeur ici et chez les autres
+        const duration = a.duration === 86_400 || a.duration === 2_592_000 ? a.duration : 604_800;
+        await sock.sendMessage(jid, a.value ? { pin: target.key, type: proto.PinInChat.Type.PIN_FOR_ALL, time: duration } : { pin: target.key, type: proto.PinInChat.Type.UNPIN_FOR_ALL });
+        // appliqué tout de suite (le message technique revient aussi par messages.upsert)
+        // date locale un peu en arrière : un retrait fait ensuite ailleurs (date du serveur) n'est pas ignoré
+        this.#pin(chatId, { targetId: id, pinned: a.value, at: Math.floor(Date.now() / 1000) - 60, duration, action: true });
+        break;
+      }
       case 'forward':
         // un destinataire après l'autre (médias réutilisés, pas de nouvel envoi de fichier)
         for (const to of a.to) {
@@ -521,7 +532,14 @@ export class WhatsApp {
     return { receipts: this.#store.receipts(chatId, id) };
   }
 
-  #saveMessage(wa: WAMessage): Message | null {
+  #saveMessage(wa: WAMessage, notify = true): Message | null {
+    // épingler / désépingler : état du message visé, pas de bulle ; état porté par le message : noté
+    const pin = pinOf(wa);
+    if (pin !== null && wa.key.remoteJid !== null && wa.key.remoteJid !== undefined) {
+      // historique : pas d'événement par épinglage (liste relue à l'ouverture)
+      this.#pin(this.#jid(wa.key.remoteJid), pin, notify);
+      if (pin.action) return null;
+    }
     const converted = toMessage(wa);
     // accusés portés par un message envoyé (historique)
     for (const r of wa.userReceipt ?? []) this.#saveReceipt(wa.key, r);
@@ -820,6 +838,30 @@ export class WhatsApp {
     });
     this.#store.setFlag('backfill-ephemeral', false);
     logger.info(`messages éphémères et à vue unique : ${rows.length} message(s) relus`);
+  }
+
+  /** Épinglage appliqué (s'il est plus récent que l'état connu), app prévenue. */
+  #pin(chatId: string, p: RawPin, notify = true): void {
+    // durée inconnue : la plus longue de WhatsApp (30 jours)
+    const expires = p.at + (p.duration > 0 ? p.duration : 30 * 24 * 3600);
+    if (this.#store.setPin(chatId, p.targetId, p.pinned, p.at, expires) && notify) this.#emit({ type: 'pins', chatId });
+  }
+
+  /** Épinglages de l'historique (migration v15) : appliqués, messages techniques retirés. */
+  backfillPins(): void {
+    if (!this.#store.flag('backfill-pins')) return;
+    const rows = this.#store.pinsToBackfill();
+    this.#store.transaction(() => {
+      for (const r of rows) {
+        const wa = this.#parseRaw(r.raw);
+        const pin = wa === null ? null : pinOf(wa);
+        if (pin === null) continue;
+        this.#pin(r.chatId, pin, false);
+        if (pin.action) this.#store.dropMessage(r.chatId, r.id);
+      }
+    });
+    this.#store.setFlag('backfill-pins', false);
+    logger.info(`messages épinglés : ${rows.length} message(s) relus`);
   }
 
   /** Message gardé : n'expire plus ; plus gardé : durée de son message brut rétablie. */

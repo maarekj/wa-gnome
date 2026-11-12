@@ -49,6 +49,7 @@ function load(id: string): WhatsApp {
   wa.backfillReceipts();
   wa.moveBroadcasts();
   wa.backfillEphemeral();
+  wa.backfillPins();
   wa.purgeExpired();
   live.set(id, { store, wa });
   return wa;

@@ -79,6 +79,15 @@ CREATE TABLE IF NOT EXISTS deleted_for_me (
 CREATE INDEX IF NOT EXISTS messages_by_sender ON messages (sender);
 -- identifiant anonyme (…@lid) → numéro (…@s.whatsapp.net) : une personne, une discussion
 -- réactions : une par personne et par message (« me » : les miennes)
+-- messages épinglés (dernier état connu par message ; at : date de l'épinglage ou du retrait)
+CREATE TABLE IF NOT EXISTS pins (
+  chat_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  pinned INTEGER NOT NULL,
+  at INTEGER NOT NULL,
+  expires INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, message_id)
+);
 CREATE TABLE IF NOT EXISTS reactions (
   chat_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -222,7 +231,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 14;
+const VERSION = 15;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -347,6 +356,10 @@ export class Store {
           FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
           WHERE push <> '' GROUP BY who
         ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
+    }
+    if (!fresh && version < 15) {
+      // épinglages de l'historique (messages techniques jusqu'ici affichés « Message ») : relus
+      this.setFlag('backfill-pins', true);
     }
     if (!fresh && version < 14) {
       this.#db.exec(`
@@ -1056,6 +1069,46 @@ export class Store {
       }
     });
     return rows;
+  }
+
+  // ------------------------------------------------------------------ messages épinglés
+
+  /** Épinglage ou retrait (ignoré s'il est plus ancien que l'état connu) ; true s'il a changé. */
+  setPin(chatId: string, id: string, pinned: boolean, at: number, expires: number): boolean {
+    return (
+      this.#db
+        .prepare(
+          `INSERT INTO pins (chat_id, message_id, pinned, at, expires) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (chat_id, message_id) DO UPDATE SET pinned = excluded.pinned, at = excluded.at, expires = excluded.expires
+           WHERE excluded.at >= pins.at`,
+        )
+        .run(chatId, id, pinned ? 1 : 0, at, expires).changes > 0
+    );
+  }
+
+  /** Messages épinglés (non expirés, présents), le plus récemment épinglé d'abord. */
+  pins(chatId: string, now: number, limit: number): Message[] {
+    const ids = this.#db
+      .prepare('SELECT p.message_id FROM pins p JOIN messages m ON m.chat_id = p.chat_id AND m.id = p.message_id WHERE p.chat_id = ? AND p.pinned = 1 AND p.expires > ? AND m.deleted = 0 ORDER BY p.at DESC LIMIT ?')
+      .all(chatId, now, limit)
+      .map((r) => String(r['message_id']));
+    return ids.flatMap((id) => {
+      const m = this.message(chatId, id);
+      return m === null ? [] : [m];
+    });
+  }
+
+  /** Messages portant un épinglage (technique ou état de l'historique), migration v15. */
+  pinsToBackfill(): { chatId: string; id: string; raw: string }[] {
+    return this.#db
+      .prepare("SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%pinInChat%' ORDER BY timestamp")
+      .all()
+      .map((r) => ({ chatId: String(r['chat_id']), id: String(r['id']), raw: String(r['raw']) }));
+  }
+
+  /** Message retiré de la base (message technique enregistré à tort). */
+  dropMessage(chatId: string, id: string): void {
+    this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id);
   }
 
   /** Mes identifiants (numéro, lid) : citations de mes propres messages reconnues. */

@@ -136,6 +136,51 @@ function contextOf(content: proto.IMessage): proto.IContextInfo | null {
   return typeof info === 'object' && info !== null ? proto.ContextInfo.fromObject(info) : null;
 }
 
+/** Long de protobuf (objet avec `toNumber`). */
+const hasToNumber = (v: unknown): v is { toNumber: () => number } => typeof v === 'object' && v !== null && 'toNumber' in v && typeof v.toNumber === 'function';
+
+/** Nombre, texte ou Long (protobuf) → nombre (0 si absent). */
+const toNum = (v: unknown): number => {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') return Number(v) || 0;
+  // Long de protobuf
+  return hasToNumber(v) ? v.toNumber() : 0;
+};
+
+/** Épinglage d'un message : message visé, épinglé ou non, date (secondes) et durée (0 : inconnue). */
+export interface RawPin {
+  targetId: string;
+  pinned: boolean;
+  at: number;
+  duration: number;
+  /** message technique (épingler / désépingler) : pas affiché ; sinon état porté par le message lui-même */
+  action: boolean;
+}
+
+/**
+ * Épinglage : message technique `pinInChatMessage` (vise un autre message), ou état `pinInChat`
+ * d'un message de l'historique (le message lui-même est épinglé). Null sinon.
+ */
+export function pinOf(wa: WAMessage): RawPin | null {
+  const content = normalizeMessageContent(wa.message);
+  const T = proto.Message.PinInChatMessage.Type;
+  const isPin = (t: unknown): boolean => t === T.PIN_FOR_ALL || t === 'PIN_FOR_ALL';
+  const action = content?.pinInChatMessage;
+  if (action !== null && action !== undefined) {
+    const id = action.key?.id;
+    if (id === null || id === undefined) return null;
+    // date du serveur (horloges des appareils décalées), à défaut celle de l'expéditeur
+    const ms = toNum(action.senderTimestampMs);
+    const server = seconds(wa.messageTimestamp);
+    return { targetId: id, pinned: isPin(action.type), at: server > 0 ? server : Math.floor(ms / 1000), duration: toNum(content?.messageContextInfo?.messageAddOnDurationInSecs ?? wa.message?.messageContextInfo?.messageAddOnDurationInSecs), action: true };
+  }
+  const state = wa.pinInChat;
+  const own = wa.key.id;
+  if (state === null || state === undefined || own === null || own === undefined) return null;
+  const ms = toNum(state.serverTimestampMs) || toNum(state.senderTimestampMs);
+  return { targetId: own, pinned: isPin(state.type), at: ms > 0 ? Math.floor(ms / 1000) : seconds(wa.messageTimestamp), duration: 0, action: false };
+}
+
 /** Message gardé (« garder » dans une discussion éphémère) : nombre ou nom selon la source. */
 export const isKept = (t: unknown): boolean => t === proto.KeepType.KEEP_FOR_ALL || t === 'KEEP_FOR_ALL';
 
