@@ -233,6 +233,20 @@ describe('itemsOf', () => {
     );
     expect(items.map((i) => (i.kind === 'day' ? 'J' : `${i.message.id}${i.showSender ? '*' : ''}`))).toEqual(['J', '1*', '2', '3*', 'J', '4*']);
   });
+
+  it('reprend les éléments inchangés (bulles non réveillées)', () => {
+    const a = msg('1', 100, { sender: 'x' });
+    const b = msg('2', 200, { sender: 'x' });
+    const first = itemsOf([a, b], true);
+    const prev = new Map(first.map((i) => [i.key, i]));
+    const b2 = { ...b, text: 'modifié' };
+    const next = itemsOf([a, b2], true, prev);
+    expect(next[0]).toBe(first[0]);
+    expect(next[1]).toBe(first[1]);
+    expect(next[2]).not.toBe(first[2]);
+    // groupe devenu discussion simple : auteur masqué, élément recréé
+    expect(itemsOf([a, b2], false, prev)[1]).not.toBe(first[1]);
+  });
 });
 
 describe('divers', () => {

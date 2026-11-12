@@ -399,7 +399,12 @@ app.connect('activate', () => {
       return false;
     });
     win.present();
-    if (PERF) void runBench(active(), win, () => app.quit());
+    if (PERF) {
+      // taille de fenêtre choisie par `pnpm bench --size` (pas de gestionnaire de fenêtres)
+      const [w, h] = (GLib.getenv('WA_GNOME_PERF_SIZE') ?? '').split('x').map(Number);
+      if (w !== undefined && h !== undefined && w > 0 && h > 0) win.set_default_size(w, h);
+      void runBench(active(), win, () => app.quit());
+    }
   });
 });
 

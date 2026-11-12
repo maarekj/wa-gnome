@@ -493,3 +493,16 @@ def test_diagnostic(run_app):
     assert app.text_visible('faux démon')
     app.click('button', 'Copier le diagnostic')
     assert app.text_visible('Diagnostic copié')
+
+
+def test_lire_la_suite(run_app):
+    fake, app = run_app()
+    # très long message : début seulement, puis en entier sur « Lire la suite » (comme WhatsApp)
+    fake.incoming('33600000005@s.whatsapp.net', 'Début du long message. ' + 'Suite du texte. ' * 120 + 'Fin cachée du message.')
+    app.open_chat('Claire (longue discussion)')
+    assert app.text_visible('Lire la suite')
+    # (l'aperçu de la liste contient aussi le texte entier : on compte les libellés)
+    before = len(app.all('label', None, contains='Fin cachée du message.'))
+    app.click('button', 'Lire la suite')
+    wait_until(lambda: len(app.all('label', None, contains='Fin cachée du message.')) > before, 5, 'message entier')
+    app.text_gone('Lire la suite', 5)

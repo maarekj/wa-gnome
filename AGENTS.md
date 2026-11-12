@@ -35,7 +35,7 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   s'il y en a un ; `POST /call` {chatId, video?} : appel qui sonne, `POST /call/end` {id} : manqué) et `--no-replies`.
   Scénarios : appairage, ouverture, envoi, réception (liste et discussion ouverte), déconnexion,
   nouvelle discussion, recherche globale et dans la discussion, « Répondre » d’une notification,
-  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias, sélection en glissant, sélecteur d’émojis, fiche du groupe et du contact, liens cliquables (`WA_GNOME_TEST_LINKS` : `LIEN url` journalisé), message vocal (son de test à la place du micro), brouillon par discussion, émojis seuls en grand, forme d’onde des vocaux, traduction et transcription (`WA_GNOME_TEST_TRANSLATE` : simulées, aucun outil lancé), plusieurs comptes (ajout, sélecteur, notification d’un autre compte, retrait), appels (refus avec message, appel manqué), compteur de non-lus (icône de la barre du haut), vue unique et éphémères, résumé par IA de la sélection (simulé), messages épinglés (bandeau, épingler), mentions @ (reçue, saisie et envoi), statuts (liste, visionneuse, vu), messages programmés (programmer, annuler, envoi à l’heure), sondages (affichage, vote), diagnostic.
+  raccourcis (Alt+Haut/Bas, Ctrl+K) et fenêtre des raccourcis, galerie des médias, sélection en glissant, sélecteur d’émojis, fiche du groupe et du contact, liens cliquables (`WA_GNOME_TEST_LINKS` : `LIEN url` journalisé), message vocal (son de test à la place du micro), brouillon par discussion, émojis seuls en grand, forme d’onde des vocaux, traduction et transcription (`WA_GNOME_TEST_TRANSLATE` : simulées, aucun outil lancé), plusieurs comptes (ajout, sélecteur, notification d’un autre compte, retrait), appels (refus avec message, appel manqué), compteur de non-lus (icône de la barre du haut), vue unique et éphémères, résumé par IA de la sélection (simulé), messages épinglés (bandeau, épingler), mentions @ (reçue, saisie et envoi), statuts (liste, visionneuse, vu), messages programmés (programmer, annuler, envoi à l’heure), sondages (affichage, vote), diagnostic, « Lire la suite » des très longs messages.
   À lancer avant de fusionner un changement d'interface ; ajouter le scénario de chaque fonctionnalité.
   Un bouton à icône sans infobulle est introuvable : toujours lui donner une infobulle.
 - `pnpm daemon` : lance le démon au premier plan (`WA_GNOME_LOG=debug` pour les journaux Baileys).
@@ -53,6 +53,11 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   sur écran virtuel : temps jusqu'à l'affichage de la liste, puis de chaque ouverture de la
   discussion (défaut « ERETZ HEMDA », la plus lente). Chronos dans `src/app/Perf.ts`
   (`WA_GNOME_PERF=1`). À lancer avant et après toute optimisation ; donner les médianes.
+  Mesures : première image, tous les messages affichés, plus longue image (app bloquée), images
+  décalées (sauts visibles, doit rester 0). `--size` : taille de fenêtre (défaut 1400x900).
+  L'écran virtuel rend en logiciel (cairo) : les temps y sont pessimistes. `--screen` : sur l'écran
+  de la session avec sa carte graphique (une fenêtre s'ouvre) — à proposer à l'utilisateur, jamais
+  lancé par un agent.
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `node scripts/install.ts` : installe le démon (systemd), le lanceur `wa-gnome`, le .desktop, le
   service D-Bus et les icônes.

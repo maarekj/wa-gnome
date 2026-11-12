@@ -320,6 +320,12 @@ export const STYLESHEET = `
   min-height: 24px;
   font-size: 0.9em;
 }
+.read-more {
+  padding: 0 2px;
+  min-height: 0;
+  color: var(--accent-color);
+  font-weight: bold;
+}
 .archived-entry {
   padding: 8px 0;
 }

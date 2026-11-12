@@ -9,7 +9,7 @@ import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
 import { DELETED_TEXT, editability, PIN_DURATIONS, type Poll, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { dayKey, emojiOnly, esc, fmtDateTime, fmtDay, fmtTime, mentionMarkup, waMarkup } from '../shared/format.ts';
+import { dayKey, emojiOnly, esc, fmtDateTime, fmtDay, fmtTime, mentionMarkup, readMoreCut, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText, isChannel } from './ChatList.tsx';
@@ -28,32 +28,48 @@ import { openChatInfo } from './ChatInfoDialog.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { PERF, perfCount, perfMark } from './Perf.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
 import { displaySize, type Loaded, MediaLoader, openViewer, type Photo, thumbnailTexture } from './media.ts';
 import { MediaFrame } from './MediaFrame.ts';
 import { AudioView, DocumentView, VideoView } from './MediaViews.ts';
 import { asWidget, openLinks } from './widgets.ts';
 
+/** Éléments affichés à l'ouverture d'une discussion, puis ajoutés par image (voir `items`). */
+const FIRST_ITEMS = 6;
+/** durée visée d'une image de l'affichage progressif (µs) : le lot suivant s'y adapte */
+const GROW_BUDGET = 40_000;
+
 /** Élément de la conversation : séparateur de jour ou message. */
 export type Item = { kind: 'day'; key: string; label: string } | { kind: 'message'; key: string; message: Message; showSender: boolean; group: boolean };
 
-/** Messages groupés par jour ; nom de l'auteur affiché au premier message d'une suite (groupes). */
-export function itemsOf(messages: readonly Message[], group: boolean): Item[] {
+/**
+ * Messages groupés par jour ; nom de l'auteur affiché au premier message d'une suite (groupes).
+ * `previous` : éléments du calcul précédent, repris tels quels s'ils n'ont pas changé (même
+ * objet : les liaisons de la bulle ne sont pas réveillées).
+ */
+export function itemsOf(messages: readonly Message[], group: boolean, previous?: ReadonlyMap<string, Item>): Item[] {
   const items: Item[] = [];
   let day = '';
-  let previous: Message | null = null;
+  let before: Message | null = null;
   for (const m of messages) {
     const k = dayKey(m.timestamp);
     if (k !== day) {
       day = k;
-      previous = null;
-      items.push({ kind: 'day', key: `day:${k}`, label: fmtDay(m.timestamp) });
+      before = null;
+      const key = `day:${k}`;
+      const old = previous?.get(key);
+      const label = fmtDay(m.timestamp);
+      // libellé relatif (« Aujourd'hui ») : repris seulement s'il n'a pas changé
+      items.push(old?.kind === 'day' && old.label === label ? old : { kind: 'day', key, label });
     }
     const known = m.sender !== null || m.senderName !== null;
-    const showSender = group && !m.fromMe && known && (previous === null || previous.fromMe || previous.sender !== m.sender);
+    const showSender = group && !m.fromMe && known && (before === null || before.fromMe || before.sender !== m.sender);
     // supprimé : clé différente, bulle reconstruite (média et citation retirés)
-    items.push({ kind: 'message', key: m.deleted ? `m:${m.id}:x` : `m:${m.id}`, message: m, showSender, group });
-    previous = m;
+    const key = m.deleted ? `m:${m.id}:x` : `m:${m.id}`;
+    const old = previous?.get(key);
+    items.push(old?.kind === 'message' && old.message === m && old.showSender === showSender && old.group === group ? old : { kind: 'message', key, message: m, showSender, group });
+    before = m;
   }
   return items;
 }
@@ -707,6 +723,8 @@ function bubble(ctx: BubbleContext) {
     // émojis seuls (sans citation ni « Transféré ») : en grand, sans fond de bulle, comme WhatsApp
     const plain = picture === null && m.quoted === null && m.forwarded === 0;
     const emojiClasses = (): string[] => (plain ? bigEmoji(msg()) : []);
+    /** « Lire la suite » cliqué : texte entier */
+    const [expanded, setExpanded] = createState(false);
     const classes = bare ? ['sticker'] : ['bubble', m.fromMe ? 'outgoing' : 'incoming', ...(picture === null ? [] : ['with-media'])];
     return selectableRow(ctx, author(asWidget(
       <Gtk.Box name={`m:${m.id}`} orientation={Gtk.Orientation.VERTICAL} halign={m.fromMe ? Gtk.Align.END : Gtk.Align.START} marginStart={m.fromMe ? 64 : 0} marginEnd={m.fromMe ? 0 : 64}>
@@ -740,7 +758,7 @@ function bubble(ctx: BubbleContext) {
             visible={live(() => (picture === null || msg().text !== '') && msg().kind !== 'poll')}
             // mise en forme WhatsApp (gras, italique, code, citations, listes)
             useMarkup
-            label={live(() => (msg().kind === 'text' || picture !== null ? mentionMarkup(waMarkup(msg().text), msg().mentions) : esc(previewOf(msg()))))}
+            label={live(() => (msg().kind === 'text' || picture !== null ? mentionMarkup(waMarkup(expanded() ? msg().text : (readMoreCut(msg().text) ?? msg().text)), msg().mentions) : esc(previewOf(msg()))))}
             cssClasses={live(() => (msg().kind === 'text' || picture !== null ? ['body', ...emojiClasses()] : ['body', 'dim-label']))}
             wrap
             wrapMode={Pango.WrapMode.WORD_CHAR}
@@ -748,8 +766,20 @@ function bubble(ctx: BubbleContext) {
             selectable
             // sous une image : la légende prend la largeur de l'image au lieu d'élargir la bulle
             maxWidthChars={picture === null ? 60 : 1}
+            // texte long : largeur minimale donnée (sinon GTK la calcule en coupant le texte à chaque
+            // caractère : des dizaines de ms par long message). Un texte long occupe de toute façon
+            // la largeur maximale ; un court garde la sienne.
+            widthChars={picture === null && m.text.length > 100 ? 20 : -1}
             // liens : ouverts dans le navigateur par défaut
             $={(self: Gtk.Label) => openLinks(self)}
+          />
+          {/* très long message : début seulement, comme WhatsApp */}
+          <Gtk.Button
+            label="Lire la suite"
+            visible={live(() => !expanded() && (msg().kind === 'text' || picture !== null) && readMoreCut(msg().text) !== null)}
+            halign={Gtk.Align.START}
+            cssClasses={['flat', 'read-more']}
+            onClicked={() => setExpanded(true)}
           />
           {TranslationView(m)}
           <Gtk.Box spacing={4} halign={Gtk.Align.END}>
@@ -1136,15 +1166,19 @@ function Composer({ store, chatId, toast, register, pictures }: { store: Store; 
           cssClasses={['circular', 'flat']}
           direction={Gtk.ArrowType.UP}
           $={(self: Gtk.MenuButton) => {
-            const chooser = new Gtk.EmojiChooser();
-            chooser.connect('emoji-picked', (_c: Gtk.EmojiChooser, text: string) => {
-              if (view === null) return;
-              // texte sélectionné : remplacé par l'émoji (comme une frappe)
-              view.buffer.delete_selection(true, true);
-              view.buffer.insert_at_cursor(text, -1);
-              view.grab_focus();
+            // créé à la première ouverture (des milliers d'émojis à construire : pas au lancement)
+            self.set_create_popup_func(() => {
+              if (self.popover !== null) return;
+              const chooser = new Gtk.EmojiChooser();
+              chooser.connect('emoji-picked', (_c: Gtk.EmojiChooser, text: string) => {
+                if (view === null) return;
+                // texte sélectionné : remplacé par l'émoji (comme une frappe)
+                view.buffer.delete_selection(true, true);
+                view.buffer.insert_at_cursor(text, -1);
+                view.grab_focus();
+              });
+              self.popover = chooser;
             });
-            self.popover = chooser;
           }}
         />
         <Gtk.Button
@@ -1253,12 +1287,46 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
     const c = id === null ? undefined : store.chats().find((x) => x.id === id);
     return id === null ? null : { id, name: c?.name ?? store.nameHint(id) ?? id.split('@')[0] ?? id, group: c?.group ?? id.endsWith('@g.us'), ephemeral: c?.ephemeral ?? 0 };
   });
-  const items = createMemo(() => itemsOf(store.messages(), chat()?.group ?? false));
+  // groupe ou non seulement : un changement de la liste des discussions ne recalcule rien ici
+  const group = createMemo(() => chat()?.group ?? false);
+  let previousItems = new Map<string, Item>();
+  const allItems = createMemo(() => {
+    const list = itemsOf(store.messages(), group(), previousItems);
+    previousItems = new Map(list.map((it) => [it.key, it]));
+    return list;
+  });
+  // ouverture : les derniers messages d'abord (une image), puis le reste par lots, une image
+  // chacun (la mise en page de longs messages coûte : l'écran n'en montre que quelques-uns)
+  const [shownCount, setShownCount] = createState(FIRST_ITEMS);
+  const items = createMemo(() => {
+    const all = allItems();
+    const n = shownCount();
+    return n >= all.length ? all : all.slice(all.length - n);
+  });
+  /** tous les messages chargés affichés (recherche, citation : message cherché dans la page) */
+  const showAll = (): void => setShownCount(Number.POSITIVE_INFINITY);
+  onCleanup(
+    store.current.subscribe(() => {
+      setShownCount(FIRST_ITEMS);
+    }),
+  );
   const loader = new MediaLoader(store.client);
   /** fenêtre défilante de la conversation (défilement vers un message cité) */
   let scroller: Gtk.ScrolledWindow | null = null;
   /** Message `id` à l'écran (s'il est chargé), brièvement mis en évidence. */
   const scrollToMessage = (box: Gtk.Box, id: string, flash = true): boolean => {
+    // affichage progressif en cours : tout afficher, puis viser le message une fois mis en page
+    if (Number.isFinite(shownCount.peek()) && store.messages.peek().some((m) => m.id === id)) {
+      showAll();
+      let frames = 0;
+      box.add_tick_callback(() => {
+        frames += 1;
+        if (frames < 3) return GLib.SOURCE_CONTINUE;
+        scrollToMessage(box, id, flash);
+        return GLib.SOURCE_REMOVE;
+      });
+      return true;
+    }
     let target: Gtk.Widget | null = null;
     for (let c = box.get_first_child(); c !== null; c = c.get_next_sibling()) if (c.name === `m:${id}`) target = c;
     if (target === null || scroller === null) return false;
@@ -1567,17 +1635,30 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
                   stick = adj.value + adj.pageSize >= adj.upper - 40;
                   // près du haut : page précédente
                   const settled = GLib.get_monotonic_time() - openedAt > 1_000_000;
-                  if (settled && adj.upper > adj.pageSize && adj.value < 400 && store.older.peek() === 'idle') void store.loadOlder();
+                  // messages chargés pas encore affichés (affichage progressif) : eux d'abord
+                  if (settled && adj.upper > adj.pageSize && adj.value < 400 && Number.isFinite(shownCount.peek())) showAll();
+                  else if (settled && adj.upper > adj.pageSize && adj.value < 400 && store.older.peek() === 'idle') void store.loadOlder();
                 });
-                // page ajoutée en tête : la position à l'écran reste la même
+                // page ajoutée en tête (ou lot de l'affichage progressif) : la position à l'écran reste la même
                 let firstId = '';
                 onCleanup(
-                  store.messages.subscribe(() => {
-                    const first = store.messages.peek()[0]?.id ?? '';
+                  items.subscribe(() => {
+                    const first = items.peek()[0]?.key ?? '';
                     if (firstId !== '' && first !== firstId && !stick) anchor = adj.upper - adj.value;
                     firstId = first;
                   }),
                 );
+                // mesure : images dessinées avec le dernier message sous le bas de la vue alors qu'elle
+                // y est collée (position réelle du contenu, pas celle de l'ajustement)
+                if (PERF) {
+                  self.connect('map', () => {
+                    self.get_frame_clock()?.connect('after-paint', () => {
+                      if (!stick || conversation === null) return;
+                      const [ok, bounds] = conversation.compute_bounds(self);
+                      if (ok && bounds.get_y() + bounds.get_height() > self.get_height() + 1) perfCount('décalée');
+                    });
+                  });
+                }
                 // `changed` : fin d'une reconfiguration (upper et page_size cohérents) ; position
                 // appliquée au tour suivant de la boucle, après l'allocation en cours
                 let pending = 0;
@@ -1660,7 +1741,63 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
                       conversation = self;
                       // glisser d'un message à l'autre : sélection (comme Telegram Desktop)
                       attachDragSelect(self, () => scroller, () => selection.peek(), setSelection);
+                      // lots suivants : à l'image d'après (la précédente est dessinée)
+                      // taille du lot adaptée à la durée de l'image précédente (longs messages : lots petits)
+                      let grow = 0;
+                      let step = FIRST_ITEMS;
+                      const scheduleGrow = (): void => {
+                        if (grow !== 0 || shownCount.peek() >= allItems.peek().length) {
+                          if (grow === 0 && Number.isFinite(shownCount.peek()) && allItems.peek().length > 0) {
+                            showAll();
+                            perfMark('complète');
+                          }
+                          return;
+                        }
+                        // lot précédent posé à l'instant : sa mise en page et son dessin se font dans
+                        // l'image en cours ; mesurés au début de la suivante
+                        const placedAt = GLib.get_monotonic_time();
+                        grow = self.add_tick_callback(() => {
+                          grow = 0;
+                          const spent = GLib.get_monotonic_time() - placedAt;
+                          // lot ajusté à la durée visée, au plus doublé d'une fois à l'autre
+                          step = Math.max(1, Math.min(step * 2, 50, Math.round((step * GROW_BUDGET) / Math.max(spent, 1))));
+                          setShownCount(shownCount.peek() + step);
+                          return GLib.SOURCE_REMOVE;
+                        });
+                      };
+                      onCleanup(
+                        store.current.subscribe(() => {
+                          step = FIRST_ITEMS;
+                        }),
+                      );
+                      onCleanup(items.subscribe(scheduleGrow));
+                      onCleanup(() => {
+                        if (grow !== 0) self.remove_tick_callback(grow);
+                      });
                       onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), pinned: () => new Set(store.pins.peek().map((p) => p.id)), pin: (m, duration) => pinMessage(m, duration), me: () => store.status.peek().me?.id ?? null, vote: (m, options) => void store.client.messageAction(m.chatId, m.id, { action: 'vote', options: [...options] }).catch((error: unknown) => toast(`Vote impossible : ${errorMessage(error)}`)), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      // éléments insérés au-dessus (lot de l'affichage progressif, page plus ancienne,
+                      // premier remplissage) : défilement décalé d'autant, dans la même image. Le contenu
+                      // affiché ne bouge pas (rattrapé après coup, une image serait dessinée décalée).
+                      // Après keyedBox : abonné ensuite, appelé après sa mise à jour des enfants.
+                      let top: Gtk.Widget | null = self.get_first_child();
+                      onCleanup(
+                        items.subscribe(() => {
+                          const before = top;
+                          top = self.get_first_child();
+                          const sw = scroller;
+                          // ancien premier retiré (message supprimé, autre discussion) : rien d'inséré au-dessus
+                          if (sw === null || top === before || !self.get_mapped() || (before !== null && before.get_parent() !== self)) return;
+                          let added = 0;
+                          const width = self.get_width();
+                          for (let c = top; c !== null && c !== before; c = c.get_next_sibling()) {
+                            if (!c.visible) continue;
+                            const [, natural] = c.measure(Gtk.Orientation.VERTICAL, width);
+                            added += natural + self.spacing;
+                          }
+                          const v = sw.vadjustment;
+                          if (added > 0) v.configure(v.value + added, v.lower, v.upper + added, v.stepIncrement, v.pageIncrement, v.pageSize);
+                        }),
+                      );
                     }}
                   />
                 </Gtk.Box>

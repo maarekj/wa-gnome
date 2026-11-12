@@ -1,5 +1,18 @@
 // Mise en forme WhatsApp → balisage Pango.
-import { emojiOnly, linkAt, markdownMarkup, mentionMarkup, mentionQuery, waMarkup } from '../src/shared/format.ts';
+import { emojiOnly, linkAt, markdownMarkup, mentionMarkup, mentionQuery, readMoreCut, waMarkup } from '../src/shared/format.ts';
+
+describe('« Lire la suite »', () => {
+  it('message court : en entier', () => {
+    expect(readMoreCut('bonjour', 10)).toBeNull();
+    expect(readMoreCut('a'.repeat(12), 10)).toBeNull();
+  });
+  it('long message : coupé à un espace', () => {
+    expect(readMoreCut('mot '.repeat(10), 20)).toBe('mot mot mot mot mot…');
+  });
+  it('sans espace : à la limite, sans couper un émoji', () => {
+    expect(readMoreCut('x'.repeat(9) + '😀'.repeat(5), 10)).toBe(`${'x'.repeat(9)}…`);
+  });
+});
 
 describe('waMarkup', () => {
   it('gras, italique, barré, code', () => {

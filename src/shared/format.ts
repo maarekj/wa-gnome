@@ -157,6 +157,24 @@ function line(l: string): string {
   return inline(l);
 }
 
+/** Longueur au-delà de laquelle un message n'est affiché qu'en partie (« Lire la suite »). */
+export const READ_MORE = 1000;
+
+/**
+ * Début d'un très long message (coupé à un espace, « … » ajouté), comme WhatsApp ; null s'il
+ * est assez court pour être affiché en entier.
+ */
+export function readMoreCut(text: string, limit = READ_MORE): string | null {
+  // un peu de marge : pas de « Lire la suite » pour quelques mots de plus
+  if (text.length <= limit * 1.2) return null;
+  const space = text.lastIndexOf(' ', limit);
+  const end = space > limit * 0.8 ? space : limit;
+  // pas au milieu d'une paire de substitution (émoji)
+  // caractère hors du plan de base (émoji) commençant juste avant la coupure : laissé entier hors du début
+  const safe = (text.codePointAt(end - 1) ?? 0) > 0xff_ff ? end - 1 : end;
+  return `${text.slice(0, safe).trimEnd()}…`;
+}
+
 /**
  * Texte d'un message → balisage Pango, avec la mise en forme de WhatsApp : `*gras*`, `_italique_`,
  * `~barré~`, `` `code` ``, bloc ```` ```code``` ````, `> citation`, listes `* ` / `- ` (puces) et
