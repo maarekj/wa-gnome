@@ -60,7 +60,9 @@ export async function runBench(store: Store, window: Gtk.Widget, quit: () => voi
   const chat = store.chats.peek().find((c) => c.name.toLowerCase().includes(name));
   if (chat === undefined) printerr(`PERF erreur discussion introuvable : ${name}`);
   else {
-    const runs = Number(GLib.getenv('WA_GNOME_PERF_RUNS') ?? '5') || 5;
+    // 0 : liste seule (lancements de `pnpm bench` hors du dernier)
+    const raw = Number(GLib.getenv('WA_GNOME_PERF_RUNS') ?? '5');
+    const runs = Number.isInteger(raw) && raw >= 0 && GLib.getenv('WA_GNOME_PERF_RUNS') !== '' ? raw : 5;
     /** une ouverture mesurée (discussion fermée, puis rouverte) */
     const measure = async (): Promise<void> => {
       store.open(null);

@@ -4,7 +4,6 @@ import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gdk from 'gi://Gdk?version=4.0';
-import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
 import { type Chat, type ChatAction, type ChatList, isMuted, MAX_PINNED } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
@@ -68,11 +67,14 @@ const CONFIRM: Readonly<Partial<Record<ChatAction['action'], { heading: string; 
   leave: { heading: 'Quitter le groupe ?', body: 'Vous ne recevrez plus les messages de « %s ».', label: 'Quitter' },
 };
 
+/** Menu contextuel d'une ligne : `row` sa ligne, `chatId` sa discussion (null : rien). */
+export type ChatMenuAt = (row: Gtk.Widget, chatId: string | null, x: number, y: number) => boolean;
+
 /**
- * Actions `chat.*` (paramètre : identifiant de la discussion) installées sur `widget`, et menu
- * contextuel ouvert par clic droit ou appui long sur une ligne de `list`.
+ * Actions `chat.*` (paramètre : identifiant de la discussion) installées sur `list` ; renvoie
+ * l'ouverture du menu contextuel d'une ligne (voir `attachRowMenu`).
  */
-export function attachChatMenu(list: Gtk.ListBox, store: Store, toast: (text: string) => void): void {
+export function chatMenuActions(list: Gtk.Widget, store: Store, toast: (text: string) => void): ChatMenuAt {
   const run = (id: string, action: ChatAction): void => {
     store.chatAction(id, action).catch((error: unknown) => toast(errorMessage(error)));
   };
@@ -121,36 +123,43 @@ export function attachChatMenu(list: Gtk.ListBox, store: Store, toast: (text: st
   }
   list.insert_action_group('chat', group);
 
-  const popup = (x: number, y: number): boolean => {
-    const row = list.get_row_at_y(y);
-    const chat = row === null ? undefined : store.chat(row.name);
-    if (row === null || chat === undefined) return false;
+  return (row, chatId, x, y) => {
+    const chat = chatId === null ? undefined : store.chat(chatId);
+    if (chat === undefined) return false;
     const pinned = store.chats.peek().filter((c) => c.pinned > 0).length;
     // sous-menus déroulés à côté (comme WhatsApp Web), pas en glissement
     const menu = Gtk.PopoverMenu.new_from_model_full(chatMenu(chat, pinned, store.lists.peek()), Gtk.PopoverMenuFlags.NESTED);
     menu.hasArrow = false;
     menu.halign = Gtk.Align.START;
     menu.set_parent(row);
-    const [, point] = list.compute_point(row, new Graphene.Point({ x, y }));
-    menu.set_pointing_to(new Gdk.Rectangle({ x: Math.round(point.x), y: Math.round(point.y), width: 1, height: 1 }));
+    menu.set_pointing_to(new Gdk.Rectangle({ x: Math.round(x), y: Math.round(y), width: 1, height: 1 }));
     // détaché après sa fermeture (l'action choisie est déjà lancée)
+    // ligne recyclée ou détruite pendant que le menu est ouvert
+    const gone = row.connect('unrealize', () => {
+      if (menu.get_parent() !== null) menu.unparent();
+    });
     menu.connect('closed', () => {
+      row.disconnect(gone);
       GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-        menu.unparent();
+        if (menu.get_parent() !== null) menu.unparent();
         return GLib.SOURCE_REMOVE;
       });
     });
     menu.popup();
     return true;
   };
+}
+
+/** Clic droit ou appui long sur `row` : menu de la discussion `chatId()`. */
+export function attachRowMenu(row: Gtk.Widget, open: ChatMenuAt, chatId: () => string | null): void {
   const click = new Gtk.GestureClick({ button: Gdk.BUTTON_SECONDARY });
   click.connect('pressed', (g: Gtk.GestureClick, _n: number, x: number, y: number) => {
-    if (popup(x, y)) g.set_state(Gtk.EventSequenceState.CLAIMED);
+    if (open(row, chatId(), x, y)) g.set_state(Gtk.EventSequenceState.CLAIMED);
   });
-  list.add_controller(click);
+  row.add_controller(click);
   const press = new Gtk.GestureLongPress({ touchOnly: true });
   press.connect('pressed', (g: Gtk.GestureLongPress, x: number, y: number) => {
-    if (popup(x, y)) g.set_state(Gtk.EventSequenceState.CLAIMED);
+    if (open(row, chatId(), x, y)) g.set_state(Gtk.EventSequenceState.CLAIMED);
   });
-  list.add_controller(press);
+  row.add_controller(press);
 }

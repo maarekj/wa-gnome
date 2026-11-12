@@ -4,83 +4,22 @@ import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
-import Pango from 'gi://Pango';
-import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { type Chat, type ChatList as WaList, isMuted, type SearchHit } from '../shared/api.ts';
+import { createMemo, createState, onCleanup } from 'gnim';
+import { type Chat, type ChatList as WaList, type SearchHit } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { esc, fmtShortDate, snippetMarkup } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
-import { attachChatMenu } from './ChatMenu.ts';
+import { chatMenuActions } from './ChatMenu.ts';
+import { chatListView, type EntryId, type SideRow } from './ChatListView.ts';
 import { openStatuses, statusEntryLabel } from './Statuses.ts';
-import { keyedListBox } from './KeyedBox.ts';
-import { bindAvatar, type Pictures } from './pictures.ts';
-import { asWidget } from './widgets.ts';
+import type { Pictures } from './pictures.ts';
 
 /** Recherche insensible à la casse et aux accents. */
 export const fold = (s: string): string => s.normalize('NFD').replaceAll(/\p{M}/gu, '').toLowerCase();
 
-/** Texte de l'avatar : sans le « ~ » des noms publics (initiales du nom). */
-export const avatarText = (name: string): string => name.replace(/^~ /u, '');
-
-/** Ligne d'un message trouvé : discussion, date, auteur et extrait (mots trouvés en gras). */
-function hitRow(hit: SearchHit): Gtk.Widget {
-  const who = hit.fromMe ? 'Vous : ' : hit.senderName === null ? '' : `${hit.senderName} : `;
-  return asWidget(
-    <Gtk.ListBoxRow name={`${hit.chatId}/${hit.id}`} cssClasses={['chat-row']}>
-      <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={2} marginTop={8} marginBottom={8} marginStart={12} marginEnd={8}>
-        <Gtk.Box spacing={6}>
-          <Gtk.Label label={hit.chatName} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
-          <Gtk.Label label={fmtShortDate(hit.timestamp)} cssClasses={['caption', 'dim-label']} />
-        </Gtk.Box>
-        <Gtk.Label useMarkup label={`${esc(who)}${snippetMarkup(hit.snippet)}`} xalign={0} ellipsize={Pango.EllipsizeMode.END} lines={2} wrap wrapMode={Pango.WrapMode.WORD_CHAR} cssClasses={['dim-label']} />
-      </Gtk.Box>
-    </Gtk.ListBoxRow>,
-  );
-}
+export { avatarText, previewMarkup } from './ChatListView.ts';
 
 /** Recherche dans les messages à partir de ce nombre de caractères. */
 const SEARCH_MIN = 2;
-
-function chatRow(pictures: Pictures, store: Store) {
-  return (chat: Chat, live: Accessor<Chat>): Gtk.Widget => ChatRow(chat, live, pictures, store);
-}
-
-function ChatRow(chat: Chat, live: Accessor<Chat>, pictures: Pictures, store: Store): Gtk.Widget {
-  return asWidget(
-    <Gtk.ListBoxRow name={chat.id} cssClasses={['chat-row']} tooltipText={live((c) => c.name)}>
-      <Gtk.Box spacing={12} marginTop={8} marginBottom={8} marginStart={8} marginEnd={8}>
-        <Adw.Avatar size={44} text={live((c) => avatarText(c.name))} showInitials={live((c) => /\p{L}/u.test(c.name))} $={(self: Adw.Avatar) => bindAvatar(self, pictures.texture(chat.id))} />
-        <Gtk.Box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand spacing={2}>
-          <Gtk.Box spacing={6}>
-            <Gtk.Label label={live((c) => c.name)} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} cssClasses={['heading']} />
-            <Gtk.Label label={live((c) => fmtShortDate(c.timestamp))} cssClasses={live((c) => (c.unread > 0 && !isMuted(c) ? ['caption', 'accent'] : ['caption', 'dim-label']))} />
-          </Gtk.Box>
-          <Gtk.Box spacing={6}>
-            {/* écrit… ; sinon brouillon (discussion non affichée) ; sinon dernier message */}
-            <Gtk.Label
-              useMarkup
-              label={createMemo(() => previewMarkup(live(), store.typing().get(live().id), store.current() === live().id ? undefined : store.drafts().get(live().id)))}
-              xalign={0}
-              hexpand
-              ellipsize={Pango.EllipsizeMode.END}
-              // brouillon : couleurs dans le balisage (pas d'atténuation de tout le libellé)
-              cssClasses={createMemo(() => (store.typing().has(live().id) ? ['accent'] : store.current() !== live().id && store.drafts().has(live().id) ? [] : ['dim-label']))}
-            />
-            <Gtk.Image iconName="notifications-disabled-symbolic" visible={live((c) => isMuted(c))} tooltipText="Mode silencieux" cssClasses={['dim-label']} />
-            <Gtk.Image iconName="view-pin-symbolic" visible={live((c) => c.pinned > 0)} tooltipText="Épinglée" cssClasses={['dim-label']} />
-            {/* nombre de non-lus, ou pastille vide pour « marquée comme non lue » */}
-            <Gtk.Label
-              label={live((c) => (c.unread > 0 ? String(c.unread) : ''))}
-              visible={live((c) => c.unread > 0 || c.markedUnread)}
-              valign={Gtk.Align.CENTER}
-              cssClasses={live((c) => ['unread-badge', ...(isMuted(c) ? ['muted'] : []), ...(c.unread > 0 ? [] : ['dot'])])}
-            />
-          </Gtk.Box>
-        </Gtk.Box>
-      </Gtk.Box>
-    </Gtk.ListBoxRow>,
-  );
-}
 
 /** Filtre de la liste principale : « all » (toutes) ou l'identifiant d'une liste de WhatsApp. */
 export type Filter = string;
@@ -105,13 +44,6 @@ export function inList(c: Chat, list: WaList): boolean {
 
 /** Listes proposées en filtres, dans l'ordre de WhatsApp. */
 export const filterLists = (lists: readonly WaList[]): WaList[] => lists.filter((l) => l.kind !== 'other');
-
-/** Aperçu d'une discussion dans la liste : « écrit… », « Brouillon : … » ou dernier message (balisage). */
-export function previewMarkup(c: Pick<Chat, 'preview'>, typing?: string, draft?: string): string {
-  if (typing !== undefined) return esc(typing);
-  if (draft !== undefined && draft.trim() !== '') return `<span foreground="#1fa855" weight="bold">Brouillon :</span> <span alpha="60%">${esc(draft.replaceAll('\n', ' '))}</span>`;
-  return esc(c.preview.replaceAll('\n', ' '));
-}
 
 /** Discussion voisine de `current` dans la liste affichée (`delta` : +1 suivante, -1 précédente). */
 export function neighbourChat(list: readonly Chat[], current: string | null, delta: number): string | null {
@@ -191,6 +123,29 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
   };
   onCleanup(archivedCount.subscribe(back));
   onCleanup(channelCount.subscribe(back));
+  // entrées (liste principale, hors recherche), discussions, puis messages trouvés
+  const entries = createMemo((): SideRow[] => {
+    if (archived() || query().trim() !== '') return [];
+    const out: SideRow[] = [];
+    if (archivedCount() > 0) out.push({ kind: 'entry', id: 'archived', count: String(archivedCount()), accent: false });
+    // statuts (« stories ») de moins de 24 h : fenêtre à part
+    const statuses = store.statuses();
+    if (statuses.some((g) => !g.me)) out.push({ kind: 'entry', id: 'statuses', count: statusEntryLabel(statuses), accent: statuses.some((g) => !g.me && g.items.some((i) => !i.seen)) });
+    // chaînes suivies : à part, comme l'onglet « Actus » du téléphone
+    if (channelCount() > 0) {
+      const unread = store.chats().filter((c) => isChannel(c.id) && c.unread > 0).length;
+      out.push({ kind: 'entry', id: 'channels', count: unread > 0 ? `${unread} non lue${unread > 1 ? 's' : ''}` : String(channelCount()), accent: false });
+    }
+    return out;
+  });
+  const rows = createMemo((): readonly SideRow[] => {
+    const found = hits();
+    return [...entries(), ...shown().map((chat): SideRow => ({ kind: 'chat', chat })), ...(found.length > 0 ? [{ kind: 'header' } as const, ...found.map((hit): SideRow => ({ kind: 'hit', hit }))] : [])];
+  });
+  const openEntry = (id: EntryId, button: Gtk.Button): void => {
+    if (id === 'statuses') openStatuses(button, store, pictures, toast);
+    else setView(id);
+  };
   return (
     <Adw.NavigationPage title={view((v) => (v === 'archived' ? 'Archivées' : v === 'channels' ? 'Chaînes' : 'Discussions'))} tag="chats">
       <Adw.ToolbarView>
@@ -306,94 +261,27 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
             onCleanup(store.lists.subscribe(build));
           }}
         />
-        <Gtk.Stack visibleChildName={createMemo(() => (shown().length === 0 && hits().length === 0 ? 'empty' : 'list'))}>
-          <Adw.StatusPage $type="named" name="empty" iconName="chat-message-new-symbolic" title={createMemo(() => (query() === '' ? (view() === 'channels' ? 'Aucune chaîne' : archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))} cssClasses={['compact']} />
-          <Gtk.ScrolledWindow $type="named" name="list" hscrollbarPolicy={Gtk.PolicyType.NEVER} vexpand>
-            <Gtk.Box orientation={Gtk.Orientation.VERTICAL}>
-            <Gtk.Button
-              visible={createMemo(() => !archived() && query().trim() === '' && archivedCount() > 0)}
-              cssClasses={['flat', 'archived-entry']}
-              marginStart={6}
-              marginEnd={6}
-              tooltipText="Discussions archivées"
-              onClicked={() => setArchived(true)}
-            >
-              <Gtk.Box spacing={12} marginStart={14} marginEnd={4}>
-                <Gtk.Image iconName="folder-symbolic" />
-                <Gtk.Label label="Archivées" xalign={0} hexpand cssClasses={['heading']} />
-                <Gtk.Label label={archivedCount(String)} cssClasses={['dim-label', 'caption']} />
-              </Gtk.Box>
-            </Gtk.Button>
-            {/* statuts (« stories ») de moins de 24 h : fenêtre à part */}
-            <Gtk.Button
-              visible={createMemo(() => !archived() && query().trim() === '' && store.statuses().some((g) => !g.me))}
-              cssClasses={['flat', 'archived-entry']}
-              marginStart={6}
-              marginEnd={6}
-              tooltipText="Statuts des contacts"
-              onClicked={(b: Gtk.Button) => openStatuses(b, store, pictures, toast)}
-            >
-              <Gtk.Box spacing={12} marginStart={14} marginEnd={4}>
-                <Gtk.Image iconName="camera-photo-symbolic" />
-                <Gtk.Label label="Statuts" xalign={0} hexpand cssClasses={['heading']} />
-                <Gtk.Label label={createMemo(() => statusEntryLabel(store.statuses()))} cssClasses={createMemo(() => (store.statuses().some((g) => !g.me && g.items.some((i) => !i.seen)) ? ['accent', 'caption'] : ['dim-label', 'caption']))} />
-              </Gtk.Box>
-            </Gtk.Button>
-            {/* chaînes suivies : à part, comme l'onglet « Actus » du téléphone */}
-            <Gtk.Button
-              visible={createMemo(() => !archived() && query().trim() === '' && channelCount() > 0)}
-              cssClasses={['flat', 'archived-entry']}
-              marginStart={6}
-              marginEnd={6}
-              tooltipText="Chaînes suivies"
-              onClicked={() => setView('channels')}
-            >
-              <Gtk.Box spacing={12} marginStart={14} marginEnd={4}>
-                <Gtk.Image iconName="microphone-sensitivity-high-symbolic" />
-                <Gtk.Label label="Chaînes" xalign={0} hexpand cssClasses={['heading']} />
-                <Gtk.Label
-                  label={createMemo(() => {
-                    const unread = store.chats().filter((c) => isChannel(c.id) && c.unread > 0).length;
-                    return unread > 0 ? `${unread} non lue${unread > 1 ? 's' : ''}` : String(channelCount());
-                  })}
-                  cssClasses={['dim-label', 'caption']}
-                />
-              </Gtk.Box>
-            </Gtk.Button>
-            <Gtk.ListBox
-              cssClasses={['navigation-sidebar']}
-              $={(self: Gtk.ListBox) => {
-                onCleanup(keyedListBox(self, shown, (c) => c.id, chatRow(pictures, store)));
-                self.connect('row-activated', (_l: Gtk.ListBox, row: Gtk.ListBoxRow) => store.open(row.name));
-                // sélection suivie depuis le store (ouverture par notification, déconnexion)
-                const select = (): void => {
-                  const id = store.current.peek();
-                  let row: Gtk.ListBoxRow | null = null;
-                  for (let c = self.get_first_child(); c !== null; c = c.get_next_sibling()) if (c instanceof Gtk.ListBoxRow && c.name === id) row = c;
-                  if (row === null) self.unselect_all();
-                  else if (self.get_selected_row() !== row) self.select_row(row);
-                };
-                onCleanup(store.current.subscribe(select));
-                onCleanup(shown.subscribe(select));
-                attachChatMenu(self, store, toast);
-              }}
-            />
-            {/* messages trouvés par la recherche */}
-            <Gtk.Label label="Messages" visible={hits((h) => h.length > 0)} xalign={0} marginStart={18} marginTop={12} marginBottom={4} cssClasses={['heading', 'dim-label']} />
-            <Gtk.ListBox
-              visible={hits((h) => h.length > 0)}
-              cssClasses={['navigation-sidebar']}
-              $={(self: Gtk.ListBox) => {
-                onCleanup(keyedListBox(self, hits, (h) => `${h.chatId}/${h.id}`, hitRow));
-                self.connect('row-activated', (_l: Gtk.ListBox, row: Gtk.ListBoxRow) => {
-                  const hit = hits.peek().find((h) => `${h.chatId}/${h.id}` === row.name);
-                  if (hit !== undefined) store.openAt(hit.chatId, hit.id, hit.timestamp);
-                });
-              }}
-            />
-            </Gtk.Box>
-          </Gtk.ScrolledWindow>
-        </Gtk.Stack>
+        {/* liste toujours en place (dimensionnée dès le lancement : seules les lignes visibles sont
+            créées), message « aucune discussion » par-dessus quand elle est vide */}
+        <Gtk.Overlay>
+          {/* liste virtuelle : enfant direct de la zone défilante (sinon toutes les lignes existent) */}
+          <Gtk.ScrolledWindow
+            hscrollbarPolicy={Gtk.PolicyType.NEVER}
+            vexpand
+            $={(self: Gtk.ScrolledWindow) => {
+              const { view: list, dispose } = chatListView({ store, pictures, rows, openEntry, menu: (w) => chatMenuActions(w, store, toast) });
+              self.child = list;
+              onCleanup(dispose);
+            }}
+          />
+          <Adw.StatusPage
+            $type="overlay"
+            visible={createMemo(() => rows().length === 0)}
+            iconName="chat-message-new-symbolic"
+            title={createMemo(() => (query() === '' ? (view() === 'channels' ? 'Aucune chaîne' : archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))}
+            cssClasses={['compact']}
+          />
+        </Gtk.Overlay>
       </Adw.ToolbarView>
     </Adw.NavigationPage>
   );

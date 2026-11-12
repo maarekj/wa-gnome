@@ -3,7 +3,8 @@ import GLib from 'gi://GLib';
 import type { Chat, Message } from '../src/shared/api.ts';
 import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
-import { mergeMessage, prependPage, sortChats, Store, typingText } from '../src/shared/store.ts';
+import { mergeMessage, prependPage, sameChat, sortChats, Store, typingText } from '../src/shared/store.ts';
+import { moveOf, spliceOf } from '../src/app/ChatListView.ts';
 import { bigEmoji, itemsOf, myReaction, presenceLine, senderColor } from '../src/app/ConversationPage.tsx';
 import { fold, inList, neighbourChat, previewMarkup, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
@@ -111,6 +112,31 @@ describe('sortChats', () => {
 
   it('épinglées en tête, la dernière épinglée d’abord', () => {
     expect(sortChats([chat('x', 9), chat('p1', 1, 'p1', { pinned: 100 }), chat('p2', 2, 'p2', { pinned: 200 })]).map((c) => c.id)).toEqual(['p2', 'p1', 'x']);
+  });
+});
+
+describe('liste virtuelle des discussions', () => {
+  it('modification minimale : discussion remontée en tête', () => {
+    expect(spliceOf(['e', 'a', 'b', 'c', 'd'], ['e', 'c', 'a', 'b', 'd'])).toEqual({ at: 1, remove: 3, insert: 3 });
+    expect(spliceOf(['a', 'b'], ['a', 'b'])).toBeNull();
+    expect(spliceOf([], ['a', 'b'])).toEqual({ at: 0, remove: 0, insert: 2 });
+    expect(spliceOf(['a', 'b', 'c'], ['a', 'c'])).toEqual({ at: 1, remove: 1, insert: 0 });
+    expect(spliceOf(['a', 'a2'], [])).toEqual({ at: 0, remove: 2, insert: 0 });
+  });
+
+  it('un seul déplacement : retrait et insertion', () => {
+    expect(moveOf(['e', 'a', 'b', 'c', 'd'], ['e', 'd', 'a', 'b', 'c'])).toEqual({ from: 4, to: 1 });
+    expect(moveOf(['a', 'b', 'c'], ['b', 'c', 'a'])).toEqual({ from: 0, to: 2 });
+    expect(moveOf(['a', 'b', 'c'], ['c', 'b', 'a'])).toBeNull();
+    expect(moveOf(['a', 'b'], ['a', 'b'])).toBeNull();
+  });
+
+  it('discussion inchangée : même objet gardé', () => {
+    const a = chat('a', 1);
+    expect(sameChat(a, { ...a })).toBe(a);
+    const b = { ...a, unread: 3 };
+    expect(sameChat(a, b)).toBe(b);
+    expect(sameChat(undefined, b)).toBe(b);
   });
 });
 

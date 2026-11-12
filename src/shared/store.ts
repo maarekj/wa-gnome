@@ -9,6 +9,11 @@ import { errorMessage } from './errors.ts';
 /** Nombre de messages chargés à l'ouverture d'une discussion. */
 const PAGE = 60;
 
+/** `next`, ou `prev` s'il a le même contenu (objets identiques : liaisons non réveillées). */
+export function sameChat(prev: Chat | undefined, next: Chat): Chat {
+  return prev !== undefined && JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
 /** Discussions triées : épinglées d'abord (la dernière épinglée en tête), puis la plus récente d'abord. */
 export const sortChats = (chats: Iterable<Chat>): Chat[] =>
   [...chats].toSorted((a, b) => Number(b.pinned > 0) - Number(a.pinned > 0) || b.pinned - a.pinned || b.timestamp - a.timestamp || a.name.localeCompare(b.name));
@@ -105,7 +110,7 @@ export class Store {
   #phoneTimer = 0;
   /** réponse du téléphone reçue : s'il n'a rien apporté de nouveau, pas de nouvelle demande */
   #afterPhone = false;
-  readonly #byId = new Map<string, Chat>();
+  #byId = new Map<string, Chat>();
   #cancellable: Gio.Cancellable | null = null;
 
   constructor(client: WaClient) {
@@ -153,7 +158,34 @@ export class Store {
     this.#cancellable = null;
   }
 
-  async reload(): Promise<void> {
+  /** rechargement en cours */
+  #reloading: Promise<void> | null = null;
+  /** demandé pendant un rechargement : un autre, une fois celui-ci fini */
+  #reloadAgain = false;
+
+  /**
+   * État complet relu du démon, un seul à la fois. Une demande pendant un rechargement en
+   * relance un seul ensuite (l'état a pu changer depuis sa lecture).
+   */
+  reload(): Promise<void> {
+    if (this.#reloading !== null) {
+      this.#reloadAgain = true;
+      return this.#reloading;
+    }
+    const run = async (): Promise<void> => {
+      do {
+        this.#reloadAgain = false;
+        // oxlint-disable-next-line no-await-in-loop -- rechargements successifs, jamais simultanés
+        await this.#reload();
+      } while (this.#reloadAgain);
+    };
+    this.#reloading = run().finally(() => {
+      this.#reloading = null;
+    });
+    return this.#reloading;
+  }
+
+  async #reload(): Promise<void> {
     try {
       this.#replaceChats(await this.client.chats());
       this.#setLists(await this.client.lists());
@@ -169,8 +201,10 @@ export class Store {
   }
 
   #replaceChats(chats: readonly Chat[]): void {
-    this.#byId.clear();
-    for (const c of chats) this.#byId.set(c.id, c);
+    const before = this.#byId;
+    this.#byId = new Map();
+    // discussion inchangée : même objet (rien à redessiner)
+    for (const c of chats) this.#byId.set(c.id, sameChat(before.get(c.id), c));
     this.#setChats(sortChats(this.#byId.values()));
   }
 
@@ -188,7 +222,7 @@ export class Store {
         break;
       }
       case 'chats':
-        for (const c of e.chats) this.#byId.set(c.id, c);
+        for (const c of e.chats) this.#byId.set(c.id, sameChat(this.#byId.get(c.id), c));
         this.#setChats(sortChats(this.#byId.values()));
         break;
       case 'chats.delete':
