@@ -7,6 +7,7 @@
 // « sh: commande » exécute une commande shell, ex. xclip pour remplir le presse-papier, ou
 // curl -XPOST localhost:$WA_GNOME_CONTROL/call pour piloter le faux démon).
 import { execFileSync, spawn } from 'node:child_process';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -17,9 +18,19 @@ const { values, positionals } = parseArgs({ allowPositionals: true, options: { s
 const out = path.resolve(positionals[0] ?? path.join(root, 'dist', 'screenshot.png'));
 const delay = process.env['SCREENSHOT_DELAY'] ?? '4';
 const [w = '1100', h = '720'] = (process.env['SCREENSHOT_SIZE'] ?? '1100x720').split('x');
-const port = '4797';
-/** pilotage du faux démon (« sh: curl localhost:4796/incoming… ») : variable WA_GNOME_CONTROL */
-const control = '4796';
+/** Port libre (attribué par le système), en texte. */
+const freePort = (): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      srv.close(() => resolve(typeof addr === 'object' && addr !== null ? String(addr.port) : '4797'));
+    });
+  });
+const port = await freePort();
+/** pilotage du faux démon (« sh: curl localhost:$WA_GNOME_CONTROL/incoming… ») */
+const control = await freePort();
 const dir = path.join(os.tmpdir(), 'wa-gnome-screenshot');
 
 await buildApp();

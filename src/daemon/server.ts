@@ -37,7 +37,7 @@ const MAX_BODY = 1024 * 1024;
 /** Connexion WhatsApp vue par l'API (le vrai Baileys, ou un faux pour les tests et captures). */
 export interface Backend {
   readonly status: Status;
-  send: (chatId: string, text: string, replyTo?: string) => Promise<void>;
+  send: (chatId: string, text: string, replyTo?: string, mentions?: readonly string[]) => Promise<void>;
   markRead: (chatId: string) => Promise<void>;
   chatAction: (chatId: string, action: ChatAction) => Promise<void>;
   /** photo de profil, null sans photo */
@@ -215,7 +215,7 @@ export function startServer(opts: { host: string; port: number; token: string; a
       case 'POST /chats/:id/messages': {
         const body = SendBody.safeParse(await readBody(req));
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
-        await wa.send(chatId, body.data.text, body.data.replyTo);
+        await wa.send(chatId, body.data.text, body.data.replyTo, body.data.mentions);
         json(res, 200, {});
         return;
       }

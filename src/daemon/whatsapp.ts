@@ -22,6 +22,7 @@ import {
   type PresenceData,
   type SignalKeyStore,
   type WACallEvent,
+  WAMessageAddressingMode,
   type WAMessage,
   type AnyMessageContent,
   type WAMessageKey,
@@ -29,7 +30,7 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { callText, type CallOutcome, type ChatAction, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { callText, type CallOutcome, type ChatAction, replaceMention, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
 import { type Change, changeOf, pinOf, type RawPin, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
@@ -808,8 +809,30 @@ export class WhatsApp {
     return this.#sock;
   }
 
-  async send(chatId: string, text: string, replyTo?: string): Promise<void> {
-    this.#sent(await this.#open().sendMessage(chatId, { text }, this.#quoteOptions(chatId, replyTo)));
+  async send(chatId: string, text: string, replyTo?: string, mentions?: readonly string[]): Promise<void> {
+    const sock = this.#open();
+    if (mentions === undefined || mentions.length === 0) {
+      this.#sent(await sock.sendMessage(chatId, { text }, this.#quoteOptions(chatId, replyTo)));
+      return;
+    }
+    // groupe adressé par lid (cas courant) : mentions par lid, comme le téléphone (`@lid` dans le texte)
+    let body = text;
+    let jids = [...mentions];
+    if (chatId.endsWith('@g.us')) {
+      const lidGroup = await sock
+        .groupMetadata(chatId)
+        .then((g) => g.addressingMode === WAMessageAddressingMode.LID)
+        .catch(() => false);
+      if (lidGroup) {
+        jids = mentions.map((jid) => {
+          const lid = this.#store.lidOf(jid);
+          if (lid === null) return jid;
+          body = replaceMention(body, jid.split('@')[0] ?? '', lid.split('@')[0] ?? '');
+          return lid;
+        });
+      }
+    }
+    this.#sent(await sock.sendMessage(chatId, { text: body, mentions: jids }, this.#quoteOptions(chatId, replyTo)));
   }
 
   /** Option d'envoi « en réponse à » : message cité tel qu'il est stocké (brut). */

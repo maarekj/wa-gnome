@@ -118,14 +118,19 @@ export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
-export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded' | 'viewOnce'> & {
+export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded' | 'viewOnce' | 'mentions'> & {
   quoted: RawQuoted | null;
   deleted?: boolean;
   forwarded?: number;
   viewOnce?: boolean;
   /** messages éphémères : durée annoncée par le message (secondes, 0 : non éphémère) */
   expiration?: number;
+  /** personnes mentionnées (identifiants tels que reçus) */
+  mentions?: string[];
 };
+
+/** Personnes mentionnées par le message (`contextInfo.mentionedJid`). */
+export const mentionsOf = (content: proto.IMessage): string[] => (contextOf(content)?.mentionedJid ?? []).filter((j) => j !== '');
 
 /** Contexte (`contextInfo`) du contenu principal, ou null. */
 function contextOf(content: proto.IMessage): proto.IContextInfo | null {
@@ -339,6 +344,7 @@ export function toMessage(wa: WAMessage): Converted | null {
     quoted: quotedOf(content),
     forwarded: forwardedOf(content),
     viewOnce: viewOnceOf(wa.message, content),
+    mentions: mentionsOf(content),
     // gardé dans la discussion (« garder ») : ne disparaît pas
     expiration: isKept(wa.keepInChat?.keepType) ? 0 : expirationOf(content),
     // « en attente » : seulement pour un envoi de l'app (voir WhatsApp.#sent) ; un message envoyé

@@ -42,6 +42,7 @@ const SettingsFile = z.object({
   account: z.optional(z.string()),
   rejectMessage: z.optional(z.string()),
   sidePanelWidth: z.optional(z.number()),
+  notifyMentions: z.optional(z.boolean()),
 });
 
 /** Outil de traduction : CLI installée par l'utilisateur (ses identifiants). */
@@ -97,12 +98,14 @@ export interface Settings {
   readonly rejectMessage: string;
   /** largeur du panneau de droite (recherche, résumés), réglée en le tirant */
   readonly sidePanelWidth: number;
+  /** notifié des mentions même dans une discussion en mode silencieux */
+  readonly notifyMentions: boolean;
 }
 /** Panneau de droite : largeur par défaut et bornes (pixels). */
 export const SIDE_PANEL_DEFAULT = 340;
 export const sidePanelWidth = (w: number): number => Math.round(Math.min(Math.max(Number.isFinite(w) ? w : SIDE_PANEL_DEFAULT, 280), 600));
 
-const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT, rejectMessage: 'Je ne peux pas répondre, je te rappelle', sidePanelWidth: SIDE_PANEL_DEFAULT };
+const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT, rejectMessage: 'Je ne peux pas répondre, je te rappelle', sidePanelWidth: SIDE_PANEL_DEFAULT, notifyMentions: true };
 const asAccent = (id: string | undefined): AccentId => ACCENTS.find((a) => a.id === id)?.id ?? 'system';
 
 /** Texte sans espaces autour, ou null s'il est absent ou vide. */
@@ -131,6 +134,7 @@ export function parseSettings(text: string | null): Settings {
       account: nonEmpty(raw.account) ?? DEFAULT_ACCOUNT,
       rejectMessage: nonEmpty(raw.rejectMessage) ?? DEFAULTS.rejectMessage,
       sidePanelWidth: sidePanelWidth(raw.sidePanelWidth ?? SIDE_PANEL_DEFAULT),
+      notifyMentions: raw.notifyMentions ?? true,
     };
   } catch {
     return DEFAULTS;
@@ -510,6 +514,7 @@ export function openPreferences(parent: Gtk.Widget): void {
     }),
   );
   notifications.add(preview);
+  notifications.add(switchRow('Mentions dans les discussions silencieuses', 'Notifié quand on vous mentionne (@vous), même en mode silencieux', current.notifyMentions, (on) => update({ notifyMentions: on })));
   const reject = new Adw.EntryRow({ title: 'Message de refus d’un appel', text: current.rejectMessage });
   reject.connect('changed', () => update({ rejectMessage: nonEmpty(reject.text) ?? DEFAULTS.rejectMessage }));
   notifications.add(reject);

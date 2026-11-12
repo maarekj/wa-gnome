@@ -150,8 +150,8 @@ export class WaClient {
     }
   }
 
-  async send(chatId: string, text: string, replyTo?: string): Promise<void> {
-    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/messages`, z.unknown(), replyTo === undefined ? { text } : { text, replyTo });
+  async send(chatId: string, text: string, replyTo?: string, mentions?: readonly string[]): Promise<void> {
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/messages`, z.unknown(), { text, ...(replyTo === undefined ? {} : { replyTo }), ...(mentions === undefined || mentions.length === 0 ? {} : { mentions }) });
   }
 
   async chatAction(chatId: string, action: ChatAction): Promise<void> {

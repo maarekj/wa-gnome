@@ -1,5 +1,5 @@
 // Mise en forme WhatsApp → balisage Pango.
-import { emojiOnly, linkAt, markdownMarkup, waMarkup } from '../src/shared/format.ts';
+import { emojiOnly, linkAt, markdownMarkup, mentionMarkup, mentionQuery, waMarkup } from '../src/shared/format.ts';
 
 describe('waMarkup', () => {
   it('gras, italique, barré, code', () => {
@@ -77,5 +77,18 @@ describe('markdownMarkup', () => {
     expect(markdownMarkup('a < b & <b>c</b>')).toBe('a &lt; b &amp; &lt;b&gt;c&lt;/b&gt;');
     expect(markdownMarkup('3 * 4 * 5 et nom_de_fichier_test')).toBe('3 * 4 * 5 et nom_de_fichier_test');
     expect(markdownMarkup('```\n<x>\n```')).toBe('<tt>&lt;x&gt;</tt>');
+  });
+});
+
+describe('mentions', () => {
+  it('saisie en cours après @, nom affiché à la place du numéro', () => {
+    expect(mentionQuery('salut @al')).toEqual({ query: 'al', at: 6 });
+    expect(mentionQuery('@')).toEqual({ query: '', at: 0 });
+    expect(mentionQuery('mail@exemple')).toBeNull();
+    expect(mentionMarkup('@336 &amp; @99', [{ token: '336', name: '~ Bob <b>', me: false }])).toBe('<span weight="bold" foreground="#1c71d8">@Bob &lt;b&gt;</span> &amp; @99');
+    // ni dans un lien, ni un numéro plus long
+    const link = waMarkup('https://x.fr/@336 @3361 <b>');
+    expect(mentionMarkup(link, [{ token: '336', name: 'Bob', me: false }])).toBe(link);
+    expect(mentionMarkup('<b>@336</b>', [{ token: '336', name: 'Bob', me: true }])).toBe('<b><span weight="bold" foreground="#e66100">@Bob</span></b>');
   });
 });

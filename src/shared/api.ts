@@ -204,6 +204,32 @@ export type Receipt = z.infer<typeof Receipt>;
 export const MessageInfo = z.object({ receipts: z.array(Receipt) });
 export type MessageInfo = z.infer<typeof MessageInfo>;
 
+/** Mention d'une personne dans un texte (`@token`, partie utilisateur de son identifiant). */
+export const Mention = z.object({ token: z.string(), name: z.string(), me: z.boolean() });
+export type Mention = z.infer<typeof Mention>;
+
+/** Échappe un texte pour une expression régulière. */
+const reEscape = (s: string): string => s.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+
+/**
+ * Remplace la mention `@token` par `@by` : seulement en début de texte ou après un espace (pas
+ * dans une adresse, un lien ou un courriel) et pas au milieu d'un nombre plus long.
+ */
+export function replaceMention(text: string, token: string, by: string): string {
+  if (token === '') return text;
+  return text.replaceAll(new RegExp(`(^|\\s)@${reEscape(token)}(?![\\p{L}\\p{N}])`, 'gu'), (_all, space: string) => `${space}@${by}`);
+}
+
+/** Texte avec les mentions par leur nom (`@33612…` → `@Alice`), pour les aperçus et notifications. */
+export function withMentionNames(text: string, mentions: readonly Mention[]): string {
+  let out = text;
+  for (const m of mentions) out = replaceMention(out, m.token, m.name.replace(/^~\s*/u, ''));
+  return out;
+}
+
+/** Je suis mentionné dans ce message. */
+export const mentionsMe = (m: { mentions?: readonly Mention[] }): boolean => (m.mentions ?? []).some((x) => x.me);
+
 export const Message = z.object({
   id: z.string(),
   chatId: z.string(),
@@ -230,6 +256,8 @@ export const Message = z.object({
   forwarded: z.number(),
   /** photo, vidéo ou vocal à vue unique : contenu inaccessible ici (à ouvrir sur le téléphone) */
   viewOnce: z.boolean(),
+  /** personnes mentionnées : `@token` du texte, nom affiché, moi ou non */
+  mentions: z.array(Mention),
 });
 
 /** Texte affiché à la place d'un message supprimé pour tous. */
@@ -355,6 +383,8 @@ export const SendBody = z.object({
   text: z.string().check(z.minLength(1)),
   /** réponse à ce message (identifiant dans la même discussion) */
   replyTo: z.optional(z.string()),
+  /** personnes mentionnées (identifiants ; `@partie-utilisateur` dans le texte) */
+  mentions: z.optional(z.array(z.string())),
 });
 
 /** Taille maximale d'un fichier envoyé (limite de WhatsApp pour les documents : 2 Go ; ici raisonnable). */
@@ -502,7 +532,7 @@ export function formatPhone(digits: string): string {
 export const viewOnceLabel = (kind: MessageKind): string => (kind === 'video' ? 'Vidéo à vue unique' : kind === 'audio' ? 'Message vocal à vue unique' : 'Photo à vue unique');
 
 /** Texte court d'un message pour la liste des discussions. */
-export function previewOf(m: Pick<Message, 'kind' | 'text'> & { viewOnce?: boolean }): string {
+export function previewOf(m: Pick<Message, 'kind' | 'text'> & { viewOnce?: boolean; mentions?: readonly Mention[] }): string {
   const label: Record<MessageKind, string> = {
     text: '',
     image: 'Photo',
@@ -518,6 +548,7 @@ export function previewOf(m: Pick<Message, 'kind' | 'text'> & { viewOnce?: boole
   };
   if (m.kind === 'call') return m.text === '' ? label.call : m.text;
   if (m.viewOnce === true) return viewOnceLabel(m.kind);
+  if (m.mentions !== undefined && m.mentions.length > 0) return previewOf({ kind: m.kind, text: withMentionNames(m.text, m.mentions) });
   if (m.text !== '') return m.kind === 'text' ? m.text : `${label[m.kind]} · ${m.text}`;
   return label[m.kind];
 }

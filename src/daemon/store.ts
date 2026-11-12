@@ -4,7 +4,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
+import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS messages (
   view_once INTEGER NOT NULL DEFAULT 0,
   -- message éphémère : durée en secondes après laquelle il disparaît, 0 sinon
   expiration INTEGER NOT NULL DEFAULT 0,
+  -- personnes mentionnées (identifiants, JSON), null : aucune
+  mentions TEXT,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -155,6 +157,7 @@ const ChatRow = z.object({
   last_text: z.nullable(z.string()),
   last_deleted: z.nullable(z.number()),
   last_view_once: z.nullable(z.number()),
+  last_mentions: z.nullable(z.string()),
   ephemeral: z.number(),
 });
 
@@ -181,6 +184,19 @@ export function forwardScoreIn(value: unknown, depth = 0): number {
   return 0;
 }
 
+/** Personnes mentionnées dans un message brut (premier `mentionedJid` trouvé). */
+export function mentionsIn(value: unknown, depth = 0): string[] {
+  if (typeof value !== 'object' || value === null || depth > 8) return [];
+  if ('mentionedJid' in value && Array.isArray(value.mentionedJid)) return value.mentionedJid.filter((j): j is string => typeof j === 'string' && j !== '');
+  for (const [k, v] of Object.entries(value)) {
+    // message cité : ses mentions ne sont pas celles de la réponse
+    if (k === 'quotedMessage') continue;
+    const found = mentionsIn(v, depth + 1);
+    if (found.length > 0) return found;
+  }
+  return [];
+}
+
 /** Statuts (« stories ») : hors périmètre, jamais une discussion. */
 const STATUS = 'status@broadcast';
 
@@ -200,6 +216,7 @@ const MessageRow = z.object({
   deleted: z.number(),
   forwarded: z.number(),
   view_once: z.number(),
+  mentions: z.nullable(z.string()),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
@@ -231,7 +248,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 15;
+const VERSION = 16;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -356,6 +373,18 @@ export class Store {
           FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
           WHERE push <> '' GROUP BY who
         ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
+    }
+    if (!fresh && version < 16) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN mentions TEXT');
+      // mentions des messages existants : relues dans les messages bruts
+      const rows = this.#db.prepare(`SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%mentionedJid%'`).all();
+      const upd = this.#db.prepare('UPDATE messages SET mentions = ? WHERE chat_id = ? AND id = ?');
+      this.transaction(() => {
+        for (const r of rows) {
+          const ids = mentionsIn(parseJson(String(r['raw'])));
+          if (ids.length > 0) upd.run(JSON.stringify(ids), String(r['chat_id']), String(r['id']));
+        }
+      });
     }
     if (!fresh && version < 15) {
       // épinglages de l'historique (messages techniques jusqu'ici affichés « Message ») : relus
@@ -625,8 +654,8 @@ export class Store {
     if (this.#db.prepare('SELECT 1 FROM deleted_for_me WHERE chat_id = ? AND id = ?').get(m.chatId, m.id) !== undefined) return;
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, view_once, expiration, edited, deleted, status)
-         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted, :forwarded, :view_once, :expiration,
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, view_once, expiration, mentions, edited, deleted, status)
+         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted, :forwarded, :view_once, :expiration, :mentions,
            -- modification et suppression déjà appliquées (message rejoué par l'historique) : conservées
            coalesce((SELECT edited FROM messages WHERE chat_id = :chat_id AND id = :id), 0),
            max(:deleted, coalesce((SELECT deleted FROM messages WHERE chat_id = :chat_id AND id = :id), 0)),
@@ -650,6 +679,7 @@ export class Store {
         forwarded: m.forwarded ?? 0,
         view_once: m.viewOnce === true ? 1 : 0,
         expiration: m.expiration ?? 0,
+        mentions: m.mentions === undefined || m.mentions.length === 0 ? null : JSON.stringify(m.mentions),
       });
     // modification ou suppression arrivée avant (ou rejouée après) le message d'origine : appliquée
     const edit = this.meta(`edit:${m.chatId}/${m.id}`);
@@ -710,7 +740,7 @@ export class Store {
                 (SELECT group_concat(label_id, ',') FROM chat_labels cl WHERE cl.chat_id = c.id) AS labels,
                 EXISTS (SELECT 1 FROM favorites f WHERE f.chat_id = c.id) AS favorite,
                 ct.name AS contact, ct.notify,
-                m.kind AS last_kind, m.text AS last_text, m.deleted AS last_deleted, m.view_once AS last_view_once
+                m.kind AS last_kind, m.text AS last_text, m.deleted AS last_deleted, m.view_once AS last_view_once, m.mentions AS last_mentions
          FROM chats c
          LEFT JOIN contacts ct ON ct.id = c.id
          LEFT JOIN messages m ON m.rowid = (
@@ -726,7 +756,7 @@ export class Store {
       group: r.id.endsWith('@g.us'),
       unread: r.unread,
       timestamp: r.timestamp,
-      preview: r.last_kind === null ? '' : r.last_deleted === 1 ? DELETED_TEXT : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '', viewOnce: r.last_view_once === 1 }),
+      preview: r.last_kind === null ? '' : r.last_deleted === 1 ? DELETED_TEXT : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '', viewOnce: r.last_view_once === 1, mentions: this.#mentions(r.last_mentions) }),
       archived: r.archived !== 0,
       mutedUntil: r.muted_until,
       pinned: r.pinned,
@@ -871,6 +901,7 @@ export class Store {
       deleted: r.deleted !== 0,
       forwarded: r.deleted === 0 ? r.forwarded : 0,
       viewOnce: r.view_once !== 0,
+      mentions: this.#mentions(r.mentions),
       status: r.from_me === 1 ? effectiveStatus(MessageStatus.safeParse(r.status).data ?? 'sent', r.timestamp) : null,
     }));
   }
@@ -1142,6 +1173,18 @@ export class Store {
       this.#me = new Set(parsed.success ? parsed.data : []);
     }
     return this.#me;
+  }
+
+  /** Mentions d'un message (JSON des identifiants) : `@token` du texte, nom, moi. */
+  #mentions(json: string | null): Mention[] {
+    if (json === null) return [];
+    const ids = z.array(z.string()).safeParse(parseJson(json));
+    if (!ids.success) return [];
+    return ids.data.map((jid) => {
+      const who = this.canonical(jid);
+      const me = this.isMe(jid);
+      return { token: jid.split('@')[0]?.split(':')[0] ?? jid, name: me ? 'Vous' : this.displayName(who), me };
+    });
   }
 
   /** Nom affiché d'une personne : carnet, sinon nom public, sinon numéro. */

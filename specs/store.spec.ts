@@ -24,8 +24,9 @@ import { bars } from '../src/app/Waveform.ts';
 import { languageName, opencodeText, parseAnswer, parsePick, parseWhisper, pickPrompt, summaryPrompt, translatePrompt } from '../src/app/Translate.ts';
 import { summaryLines } from '../src/app/Summary.ts';
 import { fromLanguage } from '../src/app/ConversationPage.tsx';
+import { matchMembers, resolveMentions } from '../src/app/MentionPicker.ts';
 
-const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, viewOnce: false, ...extra });
+const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, viewOnce: false, mentions: [], ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ephemeral: 0, ...extra });
 
 describe('mergeMessage', () => {
@@ -311,7 +312,7 @@ describe('préférences', () => {
     expect(parseSettings('{"accent":"fuchsia"}').accent).toBe('system');
     expect(parseSettings('pas du json').accent).toBe('system');
     expect(parseSettings(null).notify).toBeTrue();
-    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false, wallpaper: 'pattern', translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: 'default', rejectMessage: 'Je ne peux pas répondre, je te rappelle', sidePanelWidth: 340 });
+    expect(parseSettings('{"accent":"red","preview":false}')).toEqual({ accent: 'red', notify: true, preview: false, wallpaper: 'pattern', translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: 'default', rejectMessage: 'Je ne peux pas répondre, je te rappelle', sidePanelWidth: 340, notifyMentions: true });
     expect(parseSettings('{"translator":"opencode","whisperModel":"huge","translateTo":""}')).toEqual(jasmine.objectContaining({ translator: 'opencode', whisperModel: 'small', translateTo: 'français' }));
     expect(parseSettings('{"wallpaper":"color:menthe"}').wallpaper).toBe('color:menthe');
     expect(parseSettings('{"wallpaper":"color:fuchsia"}').wallpaper).toBe('pattern');
@@ -456,6 +457,22 @@ describe('forme d’onde', () => {
     expect(bars([0, 100, 50, 20], 2)).toEqual([1, 0.5]);
     expect(bars([40], 3)).toEqual([0.4, 0.4, 0.4]);
     expect(bars([], 5)).toEqual([]);
+  });
+});
+
+const member = (id: string, name: string, me = false): { id: string; name: string; admin: null; me: boolean } => ({ id, name, admin: null, me });
+
+describe('mentions (saisie)', () => {
+  it('membres filtrés par mot du nom, moi exclu ; envoi avec numéros', () => {
+    const members = [member('1@s.whatsapp.net', 'Vous', true), member('2@s.whatsapp.net', 'Alice Martin'), member('3@s.whatsapp.net', '~ Bob')];
+    expect(matchMembers(members, 'mar').map((m) => m.id)).toEqual(['2@s.whatsapp.net']);
+    expect(matchMembers(members, 'bo').map((m) => m.id)).toEqual(['3@s.whatsapp.net']);
+    expect(matchMembers(members, '').length).toBe(2);
+    const chosen = new Map([['Alice Martin', '2@s.whatsapp.net'], ['Alice', '9@s.whatsapp.net']]);
+    expect(resolveMentions('@Alice Martin et @Alice', chosen)).toEqual({ text: '@2 et @9', mentions: ['2@s.whatsapp.net', '9@s.whatsapp.net'] });
+    expect(resolveMentions('rien', chosen)).toEqual({ text: 'rien', mentions: [] });
+    // nom plus long que la mention choisie : laissé
+    expect(resolveMentions('@Alicette', new Map([['Alice', '9@s.whatsapp.net']]))).toEqual({ text: '@Alicette', mentions: [] });
   });
 });
 

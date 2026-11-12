@@ -400,3 +400,22 @@ def test_messages_epingles(run_app):
     assert call['args'][2] == {'action': 'pin', 'value': True, 'duration': 604800}
     app.find(None, 'Message épinglé : Vidéo · Le chat du voisin')
     assert app.text_visible('Message épinglé 1/2')
+
+
+def test_mentions_dans_un_groupe(run_app):
+    fake, app = run_app()
+    app.open_chat('Famille')
+    # mention reçue : par le nom (« @Vous », « @~ Bob » sans le ~)
+    assert app.text_visible('@Vous tu prends le pain ? Et @Bob les boissons')
+    # « @bo » : liste des membres, Tab insère « @Bob »
+    app.point(app.composer())
+    app.type('@bo')
+    app.find(None, 'Mentionner Bob')
+    app.key('Tab')
+    wait_until(lambda: app.composer().text == '@Bob ', 5, 'mention insérée')
+    app.type('ok')
+    app.click('button', 'Envoyer')
+    call = fake.wait_call('send')
+    assert call['args'][0] == GROUP
+    assert call['args'][1] == '@33600000002 ok'
+    assert call['args'][3] == ['33600000002@s.whatsapp.net']

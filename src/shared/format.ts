@@ -255,3 +255,23 @@ export function markdownMarkup(text: string): string {
   if (code !== null) out.push(`<tt>${esc(code.join('\n'))}</tt>`);
   return out.join('\n');
 }
+
+/** Mentions dans un texte déjà balisé (`@33612…` → `@Alice` en évidence ; moi : accentué). */
+export function mentionMarkup(markup: string, mentions: readonly { token: string; name: string; me: boolean }[]): string {
+  let out = markup;
+  for (const m of mentions) {
+    const name = esc(m.name.replace(/^~\s*/u, ''));
+    const token = esc(m.token).replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+    // après un espace ou une balise seulement (jamais dans un lien ni un attribut), nombre entier
+    out = out.replaceAll(new RegExp(`(^|[\\s>])@${token}(?![\\p{L}\\p{N}])`, 'gu'), (_all, before: string) => `${before}<span weight="bold" foreground="${m.me ? '#e66100' : '#1c71d8'}">@${name}</span>`);
+  }
+  return out;
+}
+
+/** Mention en cours de saisie juste avant le curseur (`… @al`) : texte cherché et position du `@`. */
+export function mentionQuery(before: string): { query: string; at: number } | null {
+  const m = /(?:^|\s)@([\p{L}\p{N}._-]{0,30})$/u.exec(before);
+  if (m === null) return null;
+  const query = m[1] ?? '';
+  return { query, at: before.length - query.length - 1 };
+}

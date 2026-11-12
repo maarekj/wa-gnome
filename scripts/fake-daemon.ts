@@ -171,11 +171,12 @@ const add = (
   attached: { kind: MessageKind; media: Media; data: Buffer } | null = null,
   replyTo?: string,
   forwarded = 0,
+  mentions: readonly string[] = [],
 ): Message => {
   seq += 1;
   const id = `fake${seq}`;
   if (attached !== null) media.set(id, { mimetype: attached.media.mimetype, data: attached.data });
-  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo), status: fromMe ? (ago === 0 ? 'pending' : 'read') : null, forwarded }, '{}');
+  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo), status: fromMe ? (ago === 0 ? 'pending' : 'read') : null, forwarded, mentions: [...mentions] }, '{}');
   const m = store.message(chatId, id);
   if (m === null) throw new Error('message de démonstration introuvable');
   return m;
@@ -209,6 +210,8 @@ store.applyEdit(GROUP, dimanche.id, 'Qui vient dimanche midi ?');
 const oups = add(GROUP, false, 'Message envoyé par erreur', 3 * H + 20, BOB, 'Bob');
 store.applyRevoke(GROUP, oups.id);
 const dessert = add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
+// mention de moi (et de Bob) dans le groupe
+add(GROUP, false, '@33600000000 tu prends le pain ? Et @33600000002 les boissons', 45 * 60, ALICE, 'Alice', null, undefined, 0, [ME, BOB]);
 // message épinglé dans le groupe (bandeau en haut de la discussion)
 store.setPin(GROUP, dimanche.id, true, now - 3 * H, now + 7 * 24 * H);
 // réactions de démonstration
@@ -311,8 +314,8 @@ const backend: Backend = {
   get status() {
     return status;
   },
-  send: (chatId, text, replyTo) => {
-    const m = add(chatId, true, text, 0, null, null, null, replyTo);
+  send: (chatId, text, replyTo, mentions) => {
+    const m = add(chatId, true, text, 0, null, null, null, replyTo, 0, mentions);
     progress(chatId, m.id);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });

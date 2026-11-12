@@ -5,7 +5,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createRoot } from 'gnim';
-import { DEFAULT_ACCOUNT, isMissedCall, isMuted, previewOf } from '../shared/api.ts';
+import { DEFAULT_ACCOUNT, isMissedCall, isMuted, mentionsMe, previewOf } from '../shared/api.ts';
 import { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Store } from '../shared/store.ts';
@@ -68,7 +68,9 @@ function watch(store: Store): void {
       return;
     }
     // mode silencieux ou notifications coupées dans les préférences : rien
-    if ((chat !== undefined && isMuted(chat)) || !settings().notify) return;
+    // silencieuse : notifiée quand même si l'on me mentionne (préférences)
+    const mentioned = mentionsMe(m) && settings().notifyMentions;
+    if ((chat !== undefined && isMuted(chat) && !mentioned) || !settings().notify) return;
     const n = new Gio.Notification();
     const name = chat?.name ?? m.senderName ?? m.chatId.split('@')[0] ?? '';
     // plusieurs comptes : celui qui a reçu le message
@@ -77,7 +79,7 @@ function watch(store: Store): void {
     if (settings().preview) {
       const title = chat?.group === true && m.senderName !== null ? `${m.senderName} · ${name}` : name;
       n.set_title(several ? `${title} (${accountName(store)})` : title);
-      n.set_body(previewOf(m));
+      n.set_body(`${mentioned ? 'Vous a mentionné : ' : ''}${previewOf(m)}`);
     } else {
       n.set_title(several ? `WhatsApp (${accountName(store)})` : 'WhatsApp');
       n.set_body('Nouveau message');

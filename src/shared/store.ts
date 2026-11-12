@@ -416,7 +416,7 @@ export class Store {
     return this.client.chatAction(chatId, action);
   }
 
-  send(chatId: string, text: string, replyTo?: string): Promise<void> {
-    return this.client.send(chatId, text, replyTo);
+  send(chatId: string, text: string, replyTo?: string, mentions?: readonly string[]): Promise<void> {
+    return this.client.send(chatId, text, replyTo, mentions);
   }
 }

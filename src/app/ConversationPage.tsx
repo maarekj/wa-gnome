@@ -9,7 +9,7 @@ import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
 import { DELETED_TEXT, editability, PIN_DURATIONS, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { dayKey, emojiOnly, esc, fmtDay, fmtTime, waMarkup } from '../shared/format.ts';
+import { dayKey, emojiOnly, esc, fmtDay, fmtTime, mentionMarkup, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText, isChannel } from './ChatList.tsx';
@@ -17,6 +17,7 @@ import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
 import { rememberSidePanelWidth, setChatVoiceLanguage, settings, sidePanelWidth, WHISPER_MODELS, type WhisperModel } from './Preferences.ts';
 import { DownloadCancelled } from './Whisper.ts';
+import { mentionPicker, type MentionPicker, resolveMentions } from './MentionPicker.ts';
 import { startSummary, SummaryPanel, summaries, summaryKey } from './Summary.ts';
 import { downloadWhisper, hideTranslation, languageName, MissingModel, translateMessage, translationOf, translations } from './Translate.ts';
 import { fmtRecording, Recorder } from './Recorder.ts';
@@ -644,7 +645,7 @@ function bubble(ctx: BubbleContext) {
             visible={live(() => picture === null || msg().text !== '')}
             // mise en forme WhatsApp (gras, italique, code, citations, listes)
             useMarkup
-            label={live(() => (msg().kind === 'text' || picture !== null ? waMarkup(msg().text) : esc(previewOf(msg()))))}
+            label={live(() => (msg().kind === 'text' || picture !== null ? mentionMarkup(waMarkup(msg().text), msg().mentions) : esc(previewOf(msg()))))}
             cssClasses={live(() => (msg().kind === 'text' || picture !== null ? ['body', ...emojiClasses()] : ['body', 'dim-label']))}
             wrap
             wrapMode={Pango.WrapMode.WORD_CHAR}
@@ -699,7 +700,9 @@ function confirmRemove(parent: Gtk.Widget, store: Store, m: Message, action: 're
 }
 
 /** Composer : `register` reçoit la fonction d'ajout de fichiers (dépôt sur toute la conversation). */
-function Composer({ store, chatId, toast, register }: { store: Store; chatId: Accessor<string | null>; toast: (text: string) => void; register: (add: (files: Gio.File[]) => void) => void }): JSX.Element {
+function Composer({ store, chatId, toast, register, pictures }: { store: Store; chatId: Accessor<string | null>; toast: (text: string) => void; register: (add: (files: Gio.File[]) => void) => void; pictures: Pictures }): JSX.Element {
+  /** mentions (@) de la zone de saisie, créée avec elle */
+  let mentions: MentionPicker | null = null;
   const [sending, setSending] = createState(false);
   const [attachments, setAttachments] = createState<readonly Attachment[]>([]);
   // « document » : fichiers envoyés tels quels (pas de compression des photos par WhatsApp)
@@ -877,7 +880,12 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
         await store.client.sendFile(id, { bytes: f.bytes, mimetype: f.mimetype, name: f.name, caption: i === 0 ? text : '', asDocument: asDocument.peek(), ...(i === 0 && replyTo !== undefined ? { replyTo } : {}) });
         setAttachments(attachments.peek().filter((x) => x.id !== f.id));
       }
-      if (files.length === 0) await store.send(id, text, replyTo);
+      if (files.length === 0) {
+        // « @Nom » choisis : « @numéro » et personnes mentionnées
+        const out = resolveMentions(text, mentions?.chosen(id) ?? new Map<string, string>());
+        await store.send(id, out.text, replyTo, out.mentions);
+        mentions?.sent(id);
+      }
       // envoyé : brouillon vidé (autre discussion affichée entre-temps : la saisie n'est pas touchée)
       store.setDraft(id, '');
       if (chatId.peek() === id) buffer.set_text('', -1);
@@ -1039,6 +1047,15 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
             tooltipText="Message (Entrée : envoyer, Maj+Entrée : nouvelle ligne)"
             $={(self: Gtk.TextView) => {
               view = self;
+              const picker = mentionPicker(self, store, pictures, () => chatId.peek());
+              mentions = picker;
+              self.buffer.connect('changed', () => {
+                if (!restoring) picker.update();
+              });
+              // liste des membres ouverte : flèches, Entrée, Tab et Échap pour elle (avant la zone)
+              const pickerKeys = new Gtk.EventControllerKey({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
+              pickerKeys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number) => picker.key(keyval));
+              self.add_controller(pickerKeys);
               const keys = new Gtk.EventControllerKey();
               keys.connect('key-pressed', (_c: Gtk.EventControllerKey, keyval: number, _code: number, state: Gdk.ModifierType) => {
                 if (keyval === Gdk.KEY_Escape && store.editing.peek() !== null) {
@@ -1078,6 +1095,7 @@ function Composer({ store, chatId, toast, register }: { store: Store; chatId: Ac
               onCleanup(
                 chatId.subscribe(() => {
                   shown = chatId.peek();
+                  picker.close();
                   // brouillon remis sans annoncer « écrit… » au contact
                   setText(shown === null ? '' : (store.drafts.peek().get(shown) ?? ''));
                   self.grab_focus();
@@ -1569,6 +1587,7 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
                 <Gtk.Box $type="named" name="compose" orientation={Gtk.Orientation.VERTICAL}>
               <Composer
                 store={store}
+                pictures={pictures}
                 chatId={store.current}
                 toast={toast}
                 register={(add) => {

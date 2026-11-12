@@ -6,7 +6,7 @@ import type { Converted } from './convert.ts';
 import { proto } from 'baileys';
 import { forwardedOf, mediaOf, pinOf, quotedOf, toMessage } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
-import { forwardScoreIn, Store } from './store.ts';
+import { forwardScoreIn, mentionsIn, Store } from './store.ts';
 
 const LID = '111@lid';
 const PN = '33600000001@s.whatsapp.net';
@@ -280,6 +280,18 @@ void describe('statuts et diffusions', () => {
     const wa = { key: { remoteJid: '123@broadcast', id: 'x', fromMe: false, participant: PN }, message: { conversation: 'bonjour' }, messageTimestamp: 10 };
     assert.equal(toMessage(wa)?.chatId, PN);
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
+  });
+  void it('mentions : relues du message, noms et moi ; citées ignorées', () => {
+    const wa = { key: { remoteJid: '1@g.us', id: 'mm', fromMe: false, participant: PN }, message: { extendedTextMessage: { text: '@33611 et @99', contextInfo: { mentionedJid: ['33611@s.whatsapp.net', '99@lid'], quotedMessage: { extendedTextMessage: { text: 'x', contextInfo: { mentionedJid: ['autre@s.whatsapp.net'] } } } } } }, messageTimestamp: 10 };
+    const m = toMessage(wa);
+    assert.deepEqual(m?.mentions, ['33611@s.whatsapp.net', '99@lid']);
+    assert.deepEqual(mentionsIn({ message: { a: { contextInfo: { quotedMessage: { contextInfo: { mentionedJid: ['q'] } } } } } }), []);
+    const store = new Store(':memory:');
+    store.setMe(['33611@s.whatsapp.net']);
+    store.upsertContact('99@lid', { name: 'Zoé' });
+    if (m !== null) store.upsertMessage(m, '{}');
+    assert.deepEqual(store.message('1@g.us', 'mm')?.mentions, [{ token: '33611', name: 'Vous', me: true }, { token: '99', name: 'Zoé', me: false }]);
+    assert.equal(store.chats()[0]?.preview, '@Vous et @Zoé');
   });
   void it('épinglage : message technique, état de l’historique, ordre et expiration', () => {
     const action = { key: { remoteJid: PN, id: 'p1', fromMe: true }, message: { pinInChatMessage: { key: { id: 'cible' }, type: proto.Message.PinInChatMessage.Type.PIN_FOR_ALL, senderTimestampMs: 50_000 }, messageContextInfo: { messageAddOnDurationInSecs: 86_400 } }, messageTimestamp: 50 };
