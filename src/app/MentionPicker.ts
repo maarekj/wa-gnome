@@ -3,6 +3,7 @@
 // mentionnée (notifiée par WhatsApp), comme sur le téléphone.
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import Graphene from 'gi://Graphene';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { type Participant, replaceMention } from '../shared/api.ts';
@@ -69,8 +70,19 @@ export function mentionPicker(view: Gtk.TextView, store: Store, pictures: Pictur
   };
   const list = new Gtk.ListBox({ selectionMode: Gtk.SelectionMode.SINGLE, cssClasses: ['navigation-sidebar'] });
   const popover = new Gtk.Popover({ child: list, autohide: false, hasArrow: false, position: Gtk.PositionType.TOP, halign: Gtk.Align.START, canFocus: false, widthRequest: 260 });
-  popover.set_parent(view);
-  view.connect('destroy', () => popover.unparent());
+  // pas un enfant de la zone de texte : GtkTextView ne sait pas retirer un enfant qui n'est pas
+  // le sien (boucle d'avertissements sans fin à la fermeture de la fenêtre, processus jamais
+  // terminé) ; rattachée au conteneur de la zone, dès qu'elle est placée
+  const attach = (): void => {
+    const host = view.get_parent()?.get_parent() ?? null;
+    if (host !== null && popover.get_parent() === null) popover.set_parent(host);
+  };
+  const detach = (): void => {
+    if (popover.get_parent() !== null) popover.unparent();
+  };
+  view.connect('realize', attach);
+  view.connect('unrealize', detach);
+  attach();
   let shown: Participant[] = [];
   let at = -1;
 
@@ -152,7 +164,12 @@ export function mentionPicker(view: Gtk.TextView, store: Store, pictures: Pictur
     // sous le « @ » tapé
     const rect = view.get_iter_location(buffer.get_iter_at_offset(at));
     const [x, y] = view.buffer_to_window_coords(Gtk.TextWindowType.WIDGET, rect.x, rect.y);
-    popover.set_pointing_to(new Gdk.Rectangle({ x, y, width: 1, height: rect.height }));
+    attach();
+    const host = popover.get_parent();
+    if (host === null) return;
+    // coordonnées de la zone de texte → celles du conteneur
+    const [ok, point] = view.compute_point(host, new Graphene.Point({ x, y }));
+    popover.set_pointing_to(new Gdk.Rectangle({ x: ok ? Math.round(point.x) : x, y: ok ? Math.round(point.y) : y, width: 1, height: rect.height }));
     popover.popup();
   };
 

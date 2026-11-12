@@ -1159,6 +1159,7 @@ function Composer({ store, chatId, toast, register, pictures }: { store: Store; 
               .catch((error: unknown) => toast(errorMessage(error)));
           }}
         />
+        {/* zone de saisie : la liste des mentions (@) est rattachée au parent de ce ScrolledWindow */}
         <Gtk.ScrolledWindow hexpand propagateNaturalHeight maxContentHeight={160} hscrollbarPolicy={Gtk.PolicyType.NEVER} cssClasses={['composer-entry']}>
           <Gtk.TextView
             wrapMode={Gtk.WrapMode.WORD_CHAR}

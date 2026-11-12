@@ -406,6 +406,14 @@ app.connect('shutdown', () => {
   accounts.stop();
 });
 
-app.runAsync([imports.system.programInvocationName, ...ARGV]).catch((error: unknown) => {
-  console.error(error);
-});
+// application terminée (dernière fenêtre fermée) : le processus aussi, même s'il reste des
+// sources en cours (sinon il survit hors du bus, et son icône de la barre du haut avec lui)
+void (async (): Promise<void> => {
+  let status = 1;
+  try {
+    status = await app.runAsync([imports.system.programInvocationName, ...ARGV]);
+  } catch (error) {
+    console.error(error);
+  }
+  imports.system.exit(status);
+})();
