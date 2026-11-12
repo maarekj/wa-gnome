@@ -27,7 +27,7 @@ import { fromLanguage } from '../src/app/ConversationPage.tsx';
 import { matchMembers, resolveMentions } from '../src/app/MentionPicker.ts';
 import { scheduleChoices } from '../src/app/Schedule.ts';
 
-const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, viewOnce: false, mentions: [], ...extra });
+const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, viewOnce: false, mentions: [], poll: null, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ephemeral: 0, ...extra });
 
 describe('mergeMessage', () => {

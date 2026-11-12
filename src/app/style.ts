@@ -260,6 +260,14 @@ export const STYLESHEET = `
   font-size: 22pt;
   font-weight: bold;
 }
+/* sondage dans une bulle */
+.poll-option {
+  padding: 4px 6px;
+}
+.poll-bar trough,
+.poll-bar progress {
+  min-height: 4px;
+}
 /* messages programmés, au-dessus de la saisie */
 .scheduled-bar {
   padding: 4px 10px;

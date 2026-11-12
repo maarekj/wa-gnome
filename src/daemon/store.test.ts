@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import type { Converted } from './convert.ts';
-import { proto } from 'baileys';
-import { forwardedOf, mediaOf, pinOf, quotedOf, toMessage } from './convert.ts';
+import { decryptPollVote, proto } from 'baileys';
+import { encryptPollVote, forwardedOf, mediaOf, optionHash, pinOf, quotedOf, toMessage } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
 import { forwardScoreIn, mentionsIn, Store } from './store.ts';
 import { STATUS_TTL } from '../shared/api.ts';
@@ -283,6 +283,33 @@ void describe('statuts et diffusions', () => {
     const wa = { key: { remoteJid: '123@broadcast', id: 'x', fromMe: false, participant: PN }, message: { conversation: 'bonjour' }, messageTimestamp: 10 };
     assert.equal(toMessage(wa)?.chatId, PN);
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
+  });
+  void it('sondages : définition, votes (dernier par personne), chiffrement des votes', () => {
+    const wa = { key: { remoteJid: '1@g.us', id: 'p1', fromMe: false, participant: PN }, message: { pollCreationMessageV3: { name: 'Pizza ?', options: [{ optionName: 'Oui' }, { optionName: 'Non' }] } }, messageTimestamp: 10 };
+    const m = toMessage(wa);
+    assert.deepEqual([m?.kind, m?.text, m?.poll], ['poll', 'Pizza ?', { options: ['Oui', 'Non'], multiple: false }]);
+    const store = new Store(':memory:');
+    store.setMe(['me@s.whatsapp.net']);
+    if (m !== null) store.upsertMessage(m, '{}');
+    store.setVote('1@g.us', 'p1', PN, [optionHash('Oui')], 100);
+    store.setVote('1@g.us', 'p1', 'me', [optionHash('Non')], 100);
+    // vote plus ancien : ignoré ; plus récent : remplace
+    assert.equal(store.setVote('1@g.us', 'p1', PN, [optionHash('Non')], 50), false);
+    store.setVote('1@g.us', 'p1', 'me', [optionHash('Oui')], 200);
+    const poll = store.message('1@g.us', 'p1')?.poll;
+    assert.deepEqual(poll?.options.map((o) => [o.name, o.count, o.mine]), [['Oui', 2, true], ['Non', 0, false]]);
+    assert.equal(poll?.voters, 2);
+    // même personne connue ensuite par son lid : un seul vote (le plus récent)
+    store.addMappings([{ lid: '9@lid', pn: PN }]);
+    store.setVote('1@g.us', 'p1', '9@lid', [optionHash('Non')], 300);
+    assert.deepEqual(store.message('1@g.us', 'p1')?.poll?.options.map((o) => o.count), [1, 1]);
+    assert.equal(store.chats()[0]?.preview, 'Sondage · Pizza ?');
+    // chiffré puis déchiffré par Baileys : mêmes options
+    const secret = new Uint8Array(32).fill(7);
+    const ctx = { pollEncKey: secret, pollCreatorJid: 'a@lid', pollMsgId: 'p1', voterJid: 'b@lid' };
+    const enc = encryptPollVote(proto.Message.PollVoteMessage.encode({ selectedOptions: [Buffer.from(optionHash('Oui'), 'base64')] }).finish(), ctx);
+    const dec = decryptPollVote(enc, ctx);
+    assert.equal(Buffer.from(dec.selectedOptions?.[0] ?? []).toString('base64'), optionHash('Oui'));
   });
   void it('messages programmés : ordre, erreur, retrait', () => {
     const store = new Store(':memory:');

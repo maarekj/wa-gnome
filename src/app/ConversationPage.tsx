@@ -7,7 +7,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
-import { DELETED_TEXT, editability, PIN_DURATIONS, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
+import { DELETED_TEXT, editability, PIN_DURATIONS, type Poll, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, emojiOnly, esc, fmtDateTime, fmtDay, fmtTime, mentionMarkup, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
@@ -224,6 +224,8 @@ interface BubbleContext {
   readonly pinned: () => ReadonlySet<string>;
   /** épingler pour `duration` secondes, ou désépingler (null) */
   readonly pin: (m: Message, duration: number | null) => void;
+  /** voter à un sondage (options choisies ; vide : vote retiré) */
+  readonly vote: (m: Message, options: readonly string[]) => void;
 }
 
 /** Messages transférables (pas ceux supprimés pour tous). */
@@ -585,6 +587,58 @@ function PinnedBar(store: Store, go: (m: Message) => void): Gtk.Widget {
   return bar;
 }
 
+/** Nouvelle sélection après un clic sur une option (une seule réponse : remplacée, ou retirée). */
+export function toggleVote(poll: Poll, option: string): string[] {
+  const mine = poll.options.filter((o) => o.mine).map((o) => o.name);
+  if (!poll.multiple) return mine.includes(option) ? [] : [option];
+  return mine.includes(option) ? mine.filter((o) => o !== option) : [...mine, option];
+}
+
+/** Sondage : question, options (case ou bouton radio, barre, nombre, votants), mis à jour en direct. */
+function PollView(ctx: BubbleContext, msg: () => Message, live: Accessor<Item>): Gtk.Widget {
+  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6, widthRequest: 280, cssClasses: ['poll'] });
+  const render = (): void => {
+    for (let c = box.get_first_child(); c !== null; c = box.get_first_child()) box.remove(c);
+    const m = msg();
+    const poll = m.poll;
+    if (poll === null) return;
+    box.append(new Gtk.Label({ label: m.text, xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, cssClasses: ['heading'] }));
+    box.append(new Gtk.Label({ label: poll.multiple ? 'Choisissez une ou plusieurs options' : 'Choisissez une option', xalign: 0, cssClasses: ['caption', 'dim-label'] }));
+    const max = Math.max(1, ...poll.options.map((o) => o.count));
+    for (const o of poll.options) {
+      const row = new Gtk.Button({ cssClasses: ['flat', 'poll-option'] });
+      const lines = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4 });
+      const top = new Gtk.Box({ spacing: 8 });
+      top.append(new Gtk.Image({ iconName: o.mine ? (poll.multiple ? 'checkbox-checked-symbolic' : 'radio-checked-symbolic') : poll.multiple ? 'checkbox-symbolic' : 'radio-symbolic', cssClasses: o.mine ? ['accent'] : [] }));
+      top.append(new Gtk.Label({ label: o.name, xalign: 0, hexpand: true, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR }));
+      top.append(new Gtk.Label({ label: String(o.count), cssClasses: ['caption', 'numeric'] }));
+      lines.append(top);
+      lines.append(new Gtk.ProgressBar({ fraction: o.count / max, cssClasses: ['poll-bar'] }));
+      row.child = lines;
+      row.tooltipText = o.voters.length === 0 ? 'Voter' : `${o.voters.join(', ')}${o.mine ? '' : ' — cliquer pour voter'}`;
+      row.update_property([Gtk.AccessibleProperty.LABEL], [`${o.name} : ${o.count} vote${o.count > 1 ? 's' : ''}${o.mine ? ' (le vôtre)' : ''}`]);
+      // sélection relue au clic (vote précédent pas encore revenu : pas écrasé)
+      row.connect('clicked', () => {
+        const current = msg();
+        if (current.poll !== null) ctx.vote(current, toggleVote(current.poll, o.name));
+      });
+      box.append(row);
+    }
+    box.append(new Gtk.Label({ label: poll.voters === 0 ? 'Aucun vote' : poll.voters === 1 ? '1 personne a voté' : `${poll.voters} personnes ont voté`, xalign: 0, cssClasses: ['caption', 'dim-label'] }));
+  };
+  // redessiné seulement si le sondage change (pas pour un accusé ou une réaction)
+  let shown = '';
+  const update = (): void => {
+    const next = JSON.stringify([msg().text, msg().poll]);
+    if (next === shown) return;
+    shown = next;
+    render();
+  };
+  update();
+  onCleanup(live.subscribe(update));
+  return box;
+}
+
 /** Ligne d'un appel (manqué, refusé…), centrée comme un séparateur de jour. */
 function CallLine(m: Message): Gtk.Widget {
   const missed = isMissedCall(m);
@@ -607,7 +661,7 @@ function bubble(ctx: BubbleContext) {
     const author = (w: Gtk.Widget): Gtk.Widget => (item.group && !m.fromMe ? withAuthor(ctx, w, m, live) : w);
     if (m.deleted) return selectableRow(ctx, author(DeletedBubble(ctx, m, msg, live)), m.id, msg);
     if (m.kind === 'call') return CallLine(m);
-    const picture = m.viewOnce ? ViewOnceView(m) : isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
+    const picture = m.viewOnce ? ViewOnceView(m) : m.kind === 'poll' && m.poll !== null ? PollView(ctx, msg, live) : isPicture(m) ? MessagePicture(ctx, m) : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
     // émojis seuls (sans citation ni « Transféré ») : en grand, sans fond de bulle, comme WhatsApp
@@ -643,7 +697,7 @@ function bubble(ctx: BubbleContext) {
           {m.quoted === null ? null : QuoteBlock(ctx, m.quoted)}
           {picture}
           <Gtk.Label
-            visible={live(() => picture === null || msg().text !== '')}
+            visible={live(() => (picture === null || msg().text !== '') && msg().kind !== 'poll')}
             // mise en forme WhatsApp (gras, italique, code, citations, listes)
             useMarkup
             label={live(() => (msg().kind === 'text' || picture !== null ? mentionMarkup(waMarkup(msg().text), msg().mentions) : esc(previewOf(msg()))))}
@@ -1565,7 +1619,7 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
                       conversation = self;
                       // glisser d'un message à l'autre : sélection (comme Telegram Desktop)
                       attachDragSelect(self, () => scroller, () => selection.peek(), setSelection);
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), pinned: () => new Set(store.pins.peek().map((p) => p.id)), pin: (m, duration) => pinMessage(m, duration), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), pinned: () => new Set(store.pins.peek().map((p) => p.id)), pin: (m, duration) => pinMessage(m, duration), vote: (m, options) => void store.client.messageAction(m.chatId, m.id, { action: 'vote', options: [...options] }).catch((error: unknown) => toast(`Vote impossible : ${errorMessage(error)}`)), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

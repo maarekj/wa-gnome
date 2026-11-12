@@ -1,10 +1,11 @@
 // Stockage local des discussions, contacts et messages (SQLite intégré à Node : node:sqlite).
 // Baileys ne garde rien en mémoire : l'historique reçu à l'appairage et les nouveaux messages
 // sont écrits ici, l'app ne lit que cette base (via l'API HTTP).
+import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, type Scheduled, STATUS_TTL, type StatusGroup, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
+import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, type Poll, type Scheduled, STATUS_TTL, type StatusGroup, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -56,6 +57,8 @@ CREATE TABLE IF NOT EXISTS messages (
   expiration INTEGER NOT NULL DEFAULT 0,
   -- personnes mentionnées (identifiants, JSON), null : aucune
   mentions TEXT,
+  -- sondage : options et réponses multiples (RawPoll, JSON), null sinon
+  poll TEXT,
   PRIMARY KEY (chat_id, id)
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (chat_id, timestamp);
@@ -89,6 +92,15 @@ CREATE TABLE IF NOT EXISTS pins (
   at INTEGER NOT NULL,
   expires INTEGER NOT NULL,
   PRIMARY KEY (chat_id, message_id)
+);
+-- votes aux sondages : dernier vote de chaque personne (options : empreintes SHA-256 en base64)
+CREATE TABLE IF NOT EXISTS poll_votes (
+  chat_id TEXT NOT NULL,
+  poll_id TEXT NOT NULL,
+  voter TEXT NOT NULL,
+  options TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, poll_id, voter)
 );
 -- messages programmés (envoyés par le démon à l'heure dite)
 CREATE TABLE IF NOT EXISTS scheduled (
@@ -242,6 +254,7 @@ const MessageRow = z.object({
   forwarded: z.number(),
   view_once: z.number(),
   mentions: z.nullable(z.string()),
+  poll: z.nullable(z.string()),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
@@ -273,7 +286,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 16;
+const VERSION = 17;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -398,6 +411,11 @@ export class Store {
           FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
           WHERE push <> '' GROUP BY who
         ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
+    }
+    if (!fresh && version < 17) {
+      this.#db.exec('ALTER TABLE messages ADD COLUMN poll TEXT');
+      // sondages et leurs votes (historique) : relus dans les messages bruts au démarrage
+      this.setFlag('backfill-polls', true);
     }
     if (!fresh && version < 16) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN mentions TEXT');
@@ -679,8 +697,8 @@ export class Store {
     if (this.#db.prepare('SELECT 1 FROM deleted_for_me WHERE chat_id = ? AND id = ?').get(m.chatId, m.id) !== undefined) return;
     this.#db
       .prepare(
-        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, view_once, expiration, mentions, edited, deleted, status)
-         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted, :forwarded, :view_once, :expiration, :mentions,
+        `INSERT OR REPLACE INTO messages (chat_id, id, from_me, sender, sender_name, timestamp, kind, text, raw, media, quoted, forwarded, view_once, expiration, mentions, poll, edited, deleted, status)
+         VALUES (:chat_id, :id, :from_me, :sender, :sender_name, :timestamp, :kind, :text, :raw, :media, :quoted, :forwarded, :view_once, :expiration, :mentions, :poll,
            -- modification et suppression déjà appliquées (message rejoué par l'historique) : conservées
            coalesce((SELECT edited FROM messages WHERE chat_id = :chat_id AND id = :id), 0),
            max(:deleted, coalesce((SELECT deleted FROM messages WHERE chat_id = :chat_id AND id = :id), 0)),
@@ -705,6 +723,7 @@ export class Store {
         view_once: m.viewOnce === true ? 1 : 0,
         expiration: m.expiration ?? 0,
         mentions: m.mentions === undefined || m.mentions.length === 0 ? null : JSON.stringify(m.mentions),
+        poll: m.poll === undefined || m.poll === null ? null : JSON.stringify(m.poll),
       });
     // modification ou suppression arrivée avant (ou rejouée après) le message d'origine : appliquée
     const edit = this.meta(`edit:${m.chatId}/${m.id}`);
@@ -927,6 +946,7 @@ export class Store {
       forwarded: r.deleted === 0 ? r.forwarded : 0,
       viewOnce: r.view_once !== 0,
       mentions: this.#mentions(r.mentions),
+      poll: r.poll === null || r.deleted !== 0 ? null : this.#poll(r.chat_id, r.id, r.poll),
       status: r.from_me === 1 ? effectiveStatus(MessageStatus.safeParse(r.status).data ?? 'sent', r.timestamp) : null,
     }));
   }
@@ -1280,6 +1300,63 @@ export class Store {
       this.#me = new Set(parsed.success ? parsed.data : []);
     }
     return this.#me;
+  }
+
+  // ------------------------------------------------------------------ sondages
+
+  /** Vote enregistré (s'il est plus récent que le précédent de la même personne) ; true s'il a changé. */
+  setVote(chatId: string, pollId: string, voter: string, options: readonly string[], at: number): boolean {
+    return (
+      this.#db
+        .prepare(
+          `INSERT INTO poll_votes (chat_id, poll_id, voter, options, at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (chat_id, poll_id, voter) DO UPDATE SET options = excluded.options, at = excluded.at WHERE excluded.at >= poll_votes.at`,
+        )
+        .run(chatId, pollId, voter, JSON.stringify(options), at).changes > 0
+    );
+  }
+
+  /** Définition d'un sondage enregistrée (rattrapage de l'historique). */
+  setPollDefinition(chatId: string, id: string, question: string, poll: { options: readonly string[]; multiple: boolean }): void {
+    this.#db.prepare("UPDATE messages SET poll = ?, kind = 'poll', text = ? WHERE chat_id = ? AND id = ?").run(JSON.stringify(poll), question, chatId, id);
+  }
+
+  /** Sondages existants (rattrapage) : messages bruts contenant un sondage. */
+  pollsToBackfill(): { chatId: string; id: string; raw: string }[] {
+    return this.#db
+      .prepare("SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%pollCreationMessage%'")
+      .all()
+      .map((r) => ({ chatId: String(r['chat_id']), id: String(r['id']), raw: String(r['raw']) }));
+  }
+
+  /** Sondage d'un message : options, nombre de votes, les miens, votants. */
+  #poll(chatId: string, id: string, json: string): Poll | null {
+    const def = z.object({ options: z.array(z.string()), multiple: z.boolean() }).safeParse(parseJson(json));
+    if (!def.success) return null;
+    const hashes = def.data.options.map((o) => createHash('sha256').update(o).digest('base64'));
+    // dernier vote de chaque personne (une même personne peut figurer sous son lid et son numéro)
+    const latest = new Map<string, string[]>();
+    for (const v of this.#db.prepare('SELECT voter, options FROM poll_votes WHERE chat_id = ? AND poll_id = ? ORDER BY at').all(chatId, id)) {
+      const voter = String(v['voter']);
+      const who = voter === 'me' || this.isMe(voter) ? 'me' : this.canonical(voter);
+      latest.set(who, z.array(z.string()).safeParse(parseJson(String(v['options']))).data ?? []);
+    }
+    const by = def.data.options.map(() => [] as { voter: string }[]);
+    let voters = 0;
+    for (const [voter, picked] of latest) {
+      if (picked.length === 0) continue;
+      voters += 1;
+      for (const h of picked) by[hashes.indexOf(h)]?.push({ voter });
+    }
+    return {
+      multiple: def.data.multiple,
+      voters,
+      options: def.data.options.map((name, i) => {
+        const list = by[i] ?? [];
+        const isMe = (v: string): boolean => v === 'me' || this.isMe(v);
+        return { name, count: list.length, mine: list.some((x) => isMe(x.voter)), voters: list.map((x) => (isMe(x.voter) ? 'Vous' : this.displayName(this.canonical(x.voter)))) };
+      }),
+    };
   }
 
   /** Mentions d'un message (JSON des identifiants) : `@token` du texte, nom, moi. */

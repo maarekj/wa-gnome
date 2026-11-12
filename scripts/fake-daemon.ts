@@ -17,7 +17,7 @@ import { parseArgs } from 'node:util';
 import { deflateSync } from 'node:zlib';
 import { callText, type CallOutcome, ConnectionState, DEFAULT_ACCOUNT, type Event, type Media, type Message, type MessageKind, type Presence, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
 import { type Account, type Backend, type Server, startServer } from '../src/daemon/server.ts';
-import type { Converted } from '../src/daemon/convert.ts';
+import { type Converted, optionHash } from '../src/daemon/convert.ts';
 import { Store } from '../src/daemon/store.ts';
 
 const { values } = parseArgs({
@@ -210,6 +210,11 @@ store.applyEdit(GROUP, dimanche.id, 'Qui vient dimanche midi ?');
 const oups = add(GROUP, false, 'Message envoyé par erreur', 3 * H + 20, BOB, 'Bob');
 store.applyRevoke(GROUP, oups.id);
 const dessert = add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alice', null, moi.id);
+// sondage du groupe : Bob a voté « Samedi »
+seq += 1;
+const SONDAGE = `fake${seq}`;
+store.upsertMessage({ id: SONDAGE, chatId: GROUP, fromMe: false, sender: ALICE, senderName: 'Alice', timestamp: now - 48 * 60, kind: 'poll', text: 'Quel jour pour le pique-nique ?', media: null, quoted: null, status: null, poll: { options: ['Samedi', 'Dimanche'], multiple: false } }, '{}');
+store.setVote(GROUP, SONDAGE, BOB, [optionHash('Samedi')], Date.now() - 60_000);
 // mention de moi (et de Bob) dans le groupe
 add(GROUP, false, '@33600000000 tu prends le pain ? Et @33600000002 les boissons', 45 * 60, ALICE, 'Alice', null, undefined, 0, [ME, BOB]);
 // message épinglé dans le groupe (bandeau en haut de la discussion)
@@ -430,6 +435,12 @@ const backend: Backend = {
   lookup: (digits) => Promise.resolve(digits.startsWith('0') ? null : `${digits}@s.whatsapp.net`),
   typing: () => Promise.resolve(),
   messageAction: (chatId, messageId, a) => {
+    if (a.action === 'vote') {
+      store.setVote(chatId, messageId, 'me', a.options.map((o) => optionHash(o)), Date.now());
+      const m = store.message(chatId, messageId);
+      if (m !== null) emit({ type: 'message.update', message: m });
+      return Promise.resolve();
+    }
     if (a.action === 'forward') {
       const m = store.message(chatId, messageId);
       if (m === null) return Promise.reject(new Error('message introuvable'));

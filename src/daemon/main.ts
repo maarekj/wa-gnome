@@ -50,6 +50,7 @@ function load(id: string): WhatsApp {
   wa.moveBroadcasts();
   wa.backfillEphemeral();
   wa.backfillPins();
+  wa.backfillPolls();
   wa.purgeExpired();
   live.set(id, { store, wa });
   return wa;

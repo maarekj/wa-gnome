@@ -464,3 +464,15 @@ def test_messages_programmes(run_app):
     urllib.request.urlopen(req, timeout=5).read()
     wait_until(lambda: any(c['args'][1] == 'Rappel automatique' for c in fake.calls('send')), 10, 'envoi à l’heure')
     assert app.text_visible('Rappel automatique')
+
+
+def test_sondage_voter(run_app):
+    fake, app = run_app()
+    app.open_chat('Famille')
+    assert app.text_visible('Quel jour pour le pique-nique ?')
+    assert app.text_visible('1 personne a voté')
+    app.click('button', 'Dimanche : 0 vote')
+    call = fake.wait_call('messageAction')
+    assert call['args'][2] == {'action': 'vote', 'options': ['Dimanche']}
+    app.find('button', 'Dimanche : 1 vote (le vôtre)')
+    assert app.text_visible('2 personnes ont voté')

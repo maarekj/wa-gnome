@@ -1,5 +1,6 @@
 // Conversion des messages Baileys (protobuf) vers le format de l'API.
-import { getContentType, isJidGroup, jidNormalizedUser, normalizeMessageContent, proto, type WAMessage } from 'baileys';
+import { createHash, randomBytes } from 'node:crypto';
+import { aesEncryptGCM, getContentType, hmacSign, isJidGroup, jidNormalizedUser, normalizeMessageContent, proto, type WAMessage } from 'baileys';
 import { callText, type Media, type Message, type MessageKind, type Quoted, statusOf } from '../shared/api.ts';
 
 /** Horodatage protobuf (number ou Long) en secondes. */
@@ -28,6 +29,10 @@ const EXTRACT: Partial<Record<keyof proto.IMessage, Extract>> = {
   liveLocationMessage: (c) => ({ kind: 'location', text: c.liveLocationMessage?.caption ?? '' }),
   contactMessage: (c) => ({ kind: 'contact', text: c.contactMessage?.displayName ?? '' }),
   reactionMessage: (c) => ({ kind: 'reaction', text: c.reactionMessage?.text ?? '' }),
+  // sondages (V2 : groupes d'annonces d'une communauté, V3 : une seule réponse)
+  pollCreationMessage: (c) => ({ kind: 'poll', text: c.pollCreationMessage?.name ?? '' }),
+  pollCreationMessageV2: (c) => ({ kind: 'poll', text: c.pollCreationMessageV2?.name ?? '' }),
+  pollCreationMessageV3: (c) => ({ kind: 'poll', text: c.pollCreationMessageV3?.name ?? '' }),
   // journal d'appel (historique d'un autre appareil)
   callLogMesssage: (c) => {
     const log = c.callLogMesssage;
@@ -118,7 +123,7 @@ export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
-export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded' | 'viewOnce' | 'mentions'> & {
+export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded' | 'viewOnce' | 'mentions' | 'poll'> & {
   quoted: RawQuoted | null;
   deleted?: boolean;
   forwarded?: number;
@@ -127,7 +132,51 @@ export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'delet
   expiration?: number;
   /** personnes mentionnées (identifiants tels que reçus) */
   mentions?: string[];
+  /** sondage : options et nombre de réponses possibles */
+  poll?: RawPoll | null;
 };
+
+/** Définition d'un sondage (question : texte du message). */
+export interface RawPoll {
+  options: string[];
+  multiple: boolean;
+}
+
+/** Sondage porté par le contenu, ou null. */
+export function pollOf(content: proto.IMessage): RawPoll | null {
+  const p = content.pollCreationMessage ?? content.pollCreationMessageV2 ?? content.pollCreationMessageV3 ?? null;
+  if (p === null) return null;
+  // V3 : une seule réponse ; sinon nombre choisi par l'auteur (0 : autant que voulu)
+  const single = content.pollCreationMessageV3 !== null && content.pollCreationMessageV3 !== undefined ? true : p.selectableOptionsCount === 1;
+  return { options: (p.options ?? []).map((o) => o.optionName ?? ''), multiple: !single };
+}
+
+/** Empreinte d'une option de sondage (SHA-256 de son nom, base64), comme dans les votes. */
+export const optionHash = (name: string): string => createHash('sha256').update(name).digest('base64');
+
+/** Un vote : sondage visé, votant (identifiant tel que reçu ou « me »), options (empreintes), date (ms). */
+export interface RawVote {
+  pollId: string;
+  voter: string;
+  options: string[];
+  at: number;
+}
+
+/** Empreinte reçue (octets ou base64 de l'historique) → base64. */
+const asBase64 = (v: unknown): string => (typeof v === 'string' ? v : v instanceof Uint8Array ? Buffer.from(v).toString('base64') : '');
+
+/** Votes déjà déchiffrés portés par un sondage de l'historique (`pollUpdates`). */
+export function votesOf(wa: WAMessage): RawVote[] {
+  const id = wa.key.id;
+  if (id === null || id === undefined) return [];
+  return (wa.pollUpdates ?? []).flatMap((u) => {
+    const k = u.pollUpdateMessageKey;
+    if (k === null || k === undefined) return [];
+    const voter = k.fromMe === true ? 'me' : jidNormalizedUser(k.participant ?? k.remoteJid ?? '');
+    if (voter === '') return [];
+    return [{ pollId: id, voter, options: (u.vote?.selectedOptions ?? []).map((h) => asBase64(h)).filter((h) => h !== ''), at: toNum(u.senderTimestampMs) }];
+  });
+}
 
 /** Personnes mentionnées par le message (`contextInfo.mentionedJid`). */
 export const mentionsOf = (content: proto.IMessage): string[] => (contextOf(content)?.mentionedJid ?? []).filter((j) => j !== '');
@@ -344,10 +393,20 @@ export function toMessage(wa: WAMessage): Converted | null {
     forwarded: forwardedOf(content),
     viewOnce: viewOnceOf(wa.message, content),
     mentions: mentionsOf(content),
+    poll: pollOf(content),
     // gardé dans la discussion (« garder ») : ne disparaît pas
     expiration: isKept(wa.keepInChat?.keepType) ? 0 : expirationOf(content),
     // « en attente » : seulement pour un envoi de l'app (voir WhatsApp.#sent) ; un message envoyé
     // depuis un autre appareil est déjà parti
     status: fromMe ? (statusOf(wa.status) === 'pending' || statusOf(wa.status) === null ? 'sent' : statusOf(wa.status)) : null,
   };
+}
+
+/** Chiffre un vote (inverse de `decryptPollVote` de Baileys). */
+export function encryptPollVote(vote: Uint8Array, ctx: { pollEncKey: Uint8Array; pollCreatorJid: string; pollMsgId: string; voterJid: string }): { encPayload: Uint8Array; encIv: Uint8Array } {
+  const sign = Buffer.concat([Buffer.from(ctx.pollMsgId), Buffer.from(ctx.pollCreatorJid), Buffer.from(ctx.voterJid), Buffer.from('Poll Vote'), new Uint8Array([1])]);
+  const key0 = hmacSign(ctx.pollEncKey, new Uint8Array(32), 'sha256');
+  const decKey = hmacSign(sign, key0, 'sha256');
+  const iv = randomBytes(12);
+  return { encPayload: aesEncryptGCM(vote, decKey, iv, Buffer.from(`${ctx.pollMsgId}\u0000${ctx.voterJid}`)), encIv: iv };
 }

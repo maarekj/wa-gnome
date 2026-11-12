@@ -118,7 +118,7 @@ export const ChatAction = z.discriminatedUnion('action', [
 export type ChatAction = z.infer<typeof ChatAction>;
 
 /** `call` : ligne d'appel (manqué, refusé…), texte déjà rédigé (callText) */
-export const MessageKind = z.enum(['text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contact', 'reaction', 'call', 'other']);
+export const MessageKind = z.enum(['text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contact', 'reaction', 'call', 'poll', 'other']);
 export type MessageKind = z.infer<typeof MessageKind>;
 
 /** Média joint à un message (contenu téléchargé à la demande : `GET …/messages/:mid/media`). */
@@ -204,6 +204,16 @@ export type Receipt = z.infer<typeof Receipt>;
 export const MessageInfo = z.object({ receipts: z.array(Receipt) });
 export type MessageInfo = z.infer<typeof MessageInfo>;
 
+/** Sondage : question (texte du message), options et votes (dernier vote de chaque personne). */
+export const Poll = z.object({
+  /** plusieurs réponses possibles */
+  multiple: z.boolean(),
+  options: z.array(z.object({ name: z.string(), count: z.number(), mine: z.boolean(), voters: z.array(z.string()) })),
+  /** personnes ayant voté */
+  voters: z.number(),
+});
+export type Poll = z.infer<typeof Poll>;
+
 /** Mention d'une personne dans un texte (`@token`, partie utilisateur de son identifiant). */
 export const Mention = z.object({ token: z.string(), name: z.string(), me: z.boolean() });
 export type Mention = z.infer<typeof Mention>;
@@ -258,6 +268,8 @@ export const Message = z.object({
   viewOnce: z.boolean(),
   /** personnes mentionnées : `@token` du texte, nom affiché, moi ou non */
   mentions: z.array(Mention),
+  /** sondage (genre `poll`), sinon null */
+  poll: z.nullable(Poll),
 });
 
 /** Texte affiché à la place d'un message supprimé pour tous. */
@@ -290,6 +302,8 @@ export const MessageAction = z.discriminatedUnion('action', [
   z.object({ action: z.literal('forward'), to: z.array(z.string()).check(z.minLength(1)) }),
   /** épingler (pour la durée choisie) ou désépingler, pour tous */
   z.object({ action: z.literal('pin'), value: z.boolean(), duration: z.optional(z.number()) }),
+  /** voter à un sondage (noms des options choisies ; vide : vote retiré) */
+  z.object({ action: z.literal('vote'), options: z.array(z.string()) }),
 ]);
 
 /** Durées d'épinglage proposées par WhatsApp (secondes). */
@@ -574,6 +588,7 @@ export function previewOf(m: Pick<Message, 'kind' | 'text'> & { viewOnce?: boole
     contact: 'Contact',
     reaction: 'Réaction',
     call: 'Appel',
+    poll: 'Sondage',
     other: 'Message',
   };
   if (m.kind === 'call') return m.text === '' ? label.call : m.text;

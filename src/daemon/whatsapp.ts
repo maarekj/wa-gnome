@@ -12,6 +12,7 @@ import {
   generateMessageIDV2,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
+  decryptPollVote,
   makeWASocket,
   normalizeMessageContent,
   useMultiFileAuthState,
@@ -33,7 +34,7 @@ import * as z from 'zod/mini';
 import { callText, type CallOutcome, type ChatAction, replaceMention, STATUS_CHAT, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
-import { type Change, changeOf, pinOf, type RawPin, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
+import { type Change, changeOf, encryptPollVote, pinOf, pollOf, type RawPin, votesOf, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
@@ -64,6 +65,13 @@ const statusCode = (e: unknown): number | undefined => {
   if (typeof output !== 'object' || output === null || !('statusCode' in output)) return undefined;
   return typeof output.statusCode === 'number' ? output.statusCode : undefined;
 };
+
+/** Identifiants d'un auteur dans une clé, avec le secondaire (participantAlt, remoteJidAlt) : lien lid ↔ numéro pas encore connu. */
+const keyAuthors = (k: WAMessageKey): (string | null | undefined)[] => [k.participant ?? k.remoteJid, k.participantAlt, k.remoteJidAlt];
+
+/** Clé d'un message d'un groupe adressé par lid (auteur en lid). */
+const isLidGroupKey = (key: proto.IMessageKey): boolean => (key.participant ?? '').endsWith('@lid') || (key.remoteJid ?? '').endsWith('@lid');
+
 
 /** Durée maximale d'une sonnerie (WhatsApp : environ 45 s). */
 const RING_MAX_MS = 90_000;
@@ -268,6 +276,11 @@ export class WhatsApp {
           this.#keep(this.#jid(wa.key.remoteJid), keep.id, keep.kept);
           continue;
         }
+        // vote à un sondage (chiffré) : rattaché au sondage, pas de bulle ni de notification
+        if (normalizeContent(wa)?.pollUpdateMessage !== null && normalizeContent(wa)?.pollUpdateMessage !== undefined) {
+          this.#receiveVote(wa);
+          continue;
+        }
         // réaction : rattachée au message visé, pas de bulle ni de notification
         const reaction = reactionOf(wa);
         if (reaction !== null) {
@@ -456,6 +469,28 @@ export class WhatsApp {
         this.#emit({ type: 'message.delete', chatId, id });
         this.#emitChats([chatId]);
         break;
+      case 'vote': {
+        const poll = this.#pollKey(target);
+        if (poll === null) throw new Error('sondage introuvable');
+        const hashes = a.options.map((o) => createHash('sha256').update(o).digest());
+        // chiffré comme le téléphone : clé tirée du secret du sondage, de son auteur et de moi ;
+        // identifiants sous la forme du groupe (adressé par lid ou par numéro)
+        const lid = chatId.endsWith('@g.us')
+          ? await sock
+              .groupMetadata(chatId)
+              .then((g) => g.addressingMode === WAMessageAddressingMode.LID)
+              .catch(() => isLidGroupKey(target.key))
+          : isLidGroupKey(target.key);
+        const me = this.#myJid(lid);
+        const creator = target.key.fromMe === true ? me : this.#authorJid(target.key, lid);
+        const enc = encryptPollVote(proto.Message.PollVoteMessage.encode({ selectedOptions: hashes }).finish(), { pollEncKey: poll.secret, pollCreatorJid: creator, pollMsgId: id, voterJid: me });
+        await sock.relayMessage(jid, { pollUpdateMessage: { pollCreationMessageKey: target.key, vote: enc, senderTimestampMs: Date.now() } }, { messageId: generateMessageIDV2(sock.user?.id) });
+        if (this.#store.setVote(chatId, id, 'me', hashes.map((h) => h.toString('base64')), Date.now())) {
+          const m = this.#store.message(chatId, id);
+          if (m !== null) this.#emit({ type: 'message.update', message: m });
+        }
+        break;
+      }
       case 'pin': {
         // durées de WhatsApp seulement (7 jours sinon) : même valeur ici et chez les autres
         const duration = a.duration === 86_400 || a.duration === 2_592_000 ? a.duration : 604_800;
@@ -562,6 +597,8 @@ export class WhatsApp {
     for (const r of wa.userReceipt ?? []) this.#saveReceipt(wa.key, r);
     // réactions de l'historique portées par le message lui-même
     for (const r of reactionsOf(wa)) this.#react(r, false);
+    // votes déjà déchiffrés portés par un sondage de l'historique
+    if (wa.key.remoteJid !== null && wa.key.remoteJid !== undefined) for (const v of votesOf(wa)) this.#store.setVote(this.#jid(wa.key.remoteJid), v.pollId, v.voter === 'me' ? 'me' : this.#jid(v.voter), v.options, v.at);
     if (converted === null) return null;
     // discussion et auteurs (message, citation) rangés sous le numéro quand il est connu
     const q = converted.quoted;
@@ -877,6 +914,88 @@ export class WhatsApp {
     });
     this.#store.setFlag('backfill-ephemeral', false);
     logger.info(`messages éphémères et à vue unique : ${rows.length} message(s) relus`);
+  }
+
+  // ------------------------------------------------------------------ sondages
+
+  /** Secret de chiffrement des votes d'un sondage (message de création), ou null. */
+  #pollKey(poll: WAMessage): { secret: Uint8Array } | null {
+    const secret = poll.message?.messageContextInfo?.messageSecret;
+    return secret === null || secret === undefined || secret.length === 0 ? null : { secret };
+  }
+
+  /** Mon identifiant pour un sondage (lid dans un groupe adressé par lid). */
+  #myJid(lid: boolean): string {
+    const me = this.#sock?.user;
+    const id = lid && me?.lid !== undefined && me.lid !== null ? me.lid : (me?.id ?? '');
+    return jidNormalizedUser(id);
+  }
+
+  /** Auteur d'un message tel qu'il apparaît dans sa clé (lid ou numéro), forme demandée si connue. */
+  #authorJid(key: proto.IMessageKey, lid: boolean): string {
+    const raw = jidNormalizedUser(key.participant ?? key.remoteJid ?? '');
+    if (lid && raw.endsWith('@s.whatsapp.net')) return this.#store.lidOf(raw) ?? raw;
+    if (!lid && raw.endsWith('@lid')) return this.#store.canonical(raw);
+    return raw;
+  }
+
+  /** Vote reçu (chiffré) : déchiffré avec le secret du sondage, enregistré, app prévenue. */
+  #receiveVote(wa: WAMessage): void {
+    const u = normalizeContent(wa)?.pollUpdateMessage;
+    const key = u?.pollCreationMessageKey;
+    const vote = u?.vote;
+    const remote = wa.key.remoteJid;
+    if (key?.id === null || key?.id === undefined || vote === null || vote === undefined || remote === null || remote === undefined) return;
+    const chatId = this.#jid(remote);
+    const raw = this.#store.raw(chatId, key.id);
+    const poll = raw === null ? null : this.#parseRaw(raw);
+    const secret = poll === null ? null : this.#pollKey(poll);
+    if (poll === null || secret === null) {
+      logger.info(`vote à un sondage inconnu ${key.id}`);
+      return;
+    }
+    // identifiants possibles (lid ou numéro) de l'auteur du sondage et du votant : le bon déchiffre
+    const forms = (...js: (string | null | undefined)[]): string[] => [...new Set(js.flatMap((j) => (j === null || j === undefined || j === '' ? [] : [j, this.#store.canonical(j), this.#store.lidOf(j) ?? j])).map((x) => jidNormalizedUser(x)))];
+    const mine = (): string[] => [this.#myJid(true), this.#myJid(false)];
+    const creators = poll.key.fromMe === true ? mine() : forms(...keyAuthors(poll.key));
+    const voters = wa.key.fromMe === true ? mine() : forms(...keyAuthors(wa.key));
+    for (const pollCreatorJid of creators) {
+      for (const voterJid of voters) {
+        try {
+          const decoded = decryptPollVote({ encPayload: vote.encPayload ?? new Uint8Array(), encIv: vote.encIv ?? new Uint8Array() }, { pollCreatorJid, pollMsgId: key.id, pollEncKey: secret.secret, voterJid });
+          const options = (decoded.selectedOptions ?? []).map((h) => Buffer.from(h).toString('base64'));
+          const voter = wa.key.fromMe === true ? 'me' : this.#jid(voterJid);
+          const at = Number(u?.senderTimestampMs ?? 0) || seconds(wa.messageTimestamp) * 1000;
+          if (this.#store.setVote(chatId, key.id, voter, options, at)) {
+            const m = this.#store.message(chatId, key.id);
+            if (m !== null) this.#emit({ type: 'message.update', message: m });
+          }
+          return;
+        } catch {
+          // mauvaise combinaison d'identifiants : suivante
+        }
+      }
+    }
+    logger.warn(`vote indéchiffrable pour le sondage ${key.id}`);
+  }
+
+  /** Sondages et votes de l'historique (migration v17). */
+  backfillPolls(): void {
+    if (!this.#store.flag('backfill-polls')) return;
+    const rows = this.#store.pollsToBackfill();
+    this.#store.transaction(() => {
+      for (const r of rows) {
+        const wa = this.#parseRaw(r.raw);
+        const content = normalizeContent(wa);
+        const def = content === undefined ? null : pollOf(content);
+        if (wa === null || content === undefined || def === null) continue;
+        const question = content.pollCreationMessage?.name ?? content.pollCreationMessageV2?.name ?? content.pollCreationMessageV3?.name ?? '';
+        this.#store.setPollDefinition(r.chatId, r.id, question, def);
+        for (const v of votesOf(wa)) this.#store.setVote(r.chatId, v.pollId, v.voter === 'me' ? 'me' : this.#jid(v.voter), v.options, v.at);
+      }
+    });
+    this.#store.setFlag('backfill-polls', false);
+    logger.info(`sondages : ${rows.length} relus`);
   }
 
   /** Épinglage appliqué (s'il est plus récent que l'état connu), app prévenue. */
