@@ -480,3 +480,16 @@ def test_sondage_voter(run_app):
     app.click('button', 'Voir les votes')
     assert app.text_visible('Votes du sondage')
     assert app.text_visible('Votre vote')
+
+
+def test_diagnostic(run_app):
+    _, app = run_app()
+    # menu principal › Diagnostic (Préférences, Raccourcis, Déconnecter, Diagnostic)
+    app.point(app.find(None, 'Menu principal'))
+    for _ in range(3):
+        app.key('Down')
+    app.key('Return')
+    assert app.text_visible('Version web annoncée')
+    assert app.text_visible('faux démon')
+    app.click('button', 'Copier le diagnostic')
+    assert app.text_visible('Diagnostic copié')

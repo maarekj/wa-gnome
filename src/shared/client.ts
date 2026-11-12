@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Account, AccountCreated, accountPath, Chat, Scheduled, StatusGroup, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_ACCOUNT, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
+import { Account, AccountCreated, accountPath, Chat, Diagnostics, Scheduled, StatusGroup, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_ACCOUNT, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -170,6 +170,11 @@ export class WaClient {
 
   async cancelScheduled(id: string): Promise<void> {
     await this.request('DELETE', `/scheduled/${encodeURIComponent(id)}`, z.unknown());
+  }
+
+  /** Diagnostic du démon : versions, comptes, journal récent. */
+  diagnostics(): Promise<Diagnostics> {
+    return this.request('GET', '/diagnostics', Diagnostics, undefined, true);
   }
 
   /** Statuts de moins de 24 h, par personne. */

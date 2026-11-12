@@ -26,6 +26,7 @@ import { summaryLines } from '../src/app/Summary.ts';
 import { fromLanguage } from '../src/app/ConversationPage.tsx';
 import { matchMembers, resolveMentions } from '../src/app/MentionPicker.ts';
 import { scheduleChoices } from '../src/app/Schedule.ts';
+import { diagnosticsText, fmtBytes } from '../src/app/Diagnostics.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, viewOnce: false, mentions: [], poll: null, ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ephemeral: 0, ...extra });
@@ -549,5 +550,23 @@ describe('messages programmés', () => {
     const sunEvening = GLib.DateTime.new_local(2026, 11, 15, 21, 0, 0);
     if (sunEvening === null) throw new Error('date');
     expect(scheduleChoices(sunEvening).map((c) => c.label)).toEqual(['Dans 1 heure', 'Demain à 09:00']);
+  });
+});
+
+describe('diagnostic', () => {
+  it('tailles et rapport texte', () => {
+    expect([fmtBytes(512), fmtBytes(117_440_512), fmtBytes(1_717_986_918)]).toEqual(['512 o', '112 Mo', '1,6 Go']);
+    const text = diagnosticsText(
+      {
+        daemon: { version: '0.1.0', baileys: '7.0.0', node: '24', startedAt: 0, dataDir: '/d' },
+        accounts: [{ id: 'default', status: { state: 'closed', qr: null, me: { id: '1@s.whatsapp.net', name: 'Moi' }, error: 'Connection Failure' }, webVersion: [2, 3000, 1], connectedAt: null, disconnectedAt: null, disconnects: 3, dbSize: 2048, mediaSize: 0, chats: 4, messages: 10 }],
+        logs: [{ time: 0, level: 'erreur', msg: 'boum' }],
+      },
+      [['Application', '0.1.0']],
+    );
+    expect(text).toContain('Compte default (Moi) : connexion perdue');
+    expect(text).toContain('dernière erreur : Connection Failure');
+    expect(text).toContain('coupures : 3');
+    expect(text).toContain('[erreur] boum');
   });
 });

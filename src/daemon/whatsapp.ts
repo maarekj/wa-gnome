@@ -29,12 +29,12 @@ import {
   type WAMessageKey,
   type WASocket,
 } from 'baileys';
-import pino from 'pino';
 import * as z from 'zod/mini';
-import { callText, type CallOutcome, type ChatAction, replaceMention, STATUS_CHAT, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { type AccountDiagnostics, callText, type CallOutcome, type ChatAction, replaceMention, STATUS_CHAT, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
 import { type Change, changeOf, encryptPollVote, pinOf, pollOf, type RawPin, votesOf, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
+import { logger } from './log.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
 
@@ -46,7 +46,6 @@ function voiceContent(f: Upload): AnyMessageContent {
   return content;
 }
 
-const logger = pino({ level: process.env['WA_GNOME_LOG'] ?? 'warn' });
 
 /** Délai avant reconnexion après une coupure (ms). */
 const RECONNECT_MS = 3000;
@@ -79,6 +78,15 @@ const keyAuthor = (k: proto.IMessageKey): string => (k.participant !== null && k
 const isLidGroupKey = (key: WAMessageKey): boolean => key.addressingMode === 'lid' || keyAuthor(key).endsWith('@lid');
 
 
+/** Taille des fichiers d'un dossier (octets), 0 s'il n'existe pas. */
+function dirSize(dir: string): number {
+  try {
+    return fs.readdirSync(dir).reduce((n, f) => n + fs.statSync(path.join(dir, f)).size, 0);
+  } catch {
+    return 0;
+  }
+}
+
 /** Durée maximale d'une sonnerie (WhatsApp : environ 45 s). */
 const RING_MAX_MS = 90_000;
 
@@ -109,6 +117,11 @@ export class WhatsApp {
   #online = false;
   #status: Status = { state: 'starting', qr: null, me: null, error: null };
   #stopped = false;
+  /** diagnostic : version web annoncée, dernière connexion et coupure, nombre de coupures */
+  #webVersion: number[] | null = null;
+  #connectedAt: number | null = null;
+  #disconnectedAt: number | null = null;
+  #disconnects = 0;
   /** appels qui sonnent */
   readonly #calls = new Map<string, RingingCall>();
   /** reconnexion programmée (annulée par stop) */
@@ -140,6 +153,7 @@ export class WhatsApp {
     this.#keys = state.keys;
     // version du client web annoncée : la plus récente connue, sinon celle de Baileys
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+    this.#webVersion = version === undefined ? null : [...version];
     if (this.#stopped) return;
     const sock = makeWASocket({
       ...(version === undefined ? {} : { version }),
@@ -164,6 +178,7 @@ export class WhatsApp {
         const me = sock.user;
         // mes identifiants : citations de mes propres messages reconnues
         if (me !== undefined) this.#store.setMe([jidNormalizedUser(me.id), ...(me.lid === undefined || me.lid === null ? [] : [jidNormalizedUser(me.lid)])]);
+        this.#connectedAt = Math.floor(Date.now() / 1000);
         this.#setStatus({ state: 'open', qr: null, error: null, me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null } });
         void this.#resolveLids(sock);
         // reconnexion pendant que l'app est au premier plan : de nouveau en ligne
@@ -182,6 +197,11 @@ export class WhatsApp {
           // nouvel appairage : QR code suivant
           if (!this.#stopped) this.#restart(0);
           return;
+        }
+        // 515 (redémarrage demandé) juste après l'appairage : pas une coupure
+        if (code !== DisconnectReason.restartRequired) {
+          this.#disconnectedAt = Math.floor(Date.now() / 1000);
+          this.#disconnects += 1;
         }
         this.#setStatus({ state: 'closed', error: u.lastDisconnect?.error === undefined ? null : errorText(u.lastDisconnect.error) });
         // 515 (restartRequired) : normal juste après l'appairage
@@ -1089,6 +1109,11 @@ export class WhatsApp {
     } finally {
       this.#sendingDue = false;
     }
+  }
+
+  /** Diagnostic de la connexion et des données du compte. */
+  diagnostics(id: string): AccountDiagnostics {
+    return { id, status: this.#status, webVersion: this.#webVersion, connectedAt: this.#connectedAt, disconnectedAt: this.#disconnectedAt, disconnects: this.#disconnects, ...this.#store.sizes(), mediaSize: dirSize(this.#mediaDir) };
   }
 
   /** Statut vu : noté ici, et accusé de lecture à son auteur (comme le téléphone). */

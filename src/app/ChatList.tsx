@@ -227,6 +227,7 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
               menu.append('Déconnecter ce poste…', 'app.logout');
               // compte ajouté : retirable (le premier se déconnecte seulement)
               if (removable) menu.append('Retirer ce compte…', 'app.remove-account');
+              menu.append('Diagnostic', 'app.diagnostics');
               menu.append('À propos de WhatsApp pour GNOME', 'app.about');
               self.menuModel = menu;
             }}

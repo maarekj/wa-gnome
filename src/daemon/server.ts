@@ -20,6 +20,7 @@
 //   POST /chats/:id/typing          ma saisie { state }
 //   POST /presence                  ma présence { online }
 //   POST /logout                    déconnexion du compte
+//   GET  /diagnostics               versions, état de chaque compte, journal récent
 //   GET  /statuses                  statuts de moins de 24 h, par personne ; POST /statuses/:id/seen : vu
 //   POST /calls/:id/reject          refuse un appel qui sonne { message? : envoyé à l'appelant }
 //   GET  /events                    flux SSE des événements (voir shared/api.ts)
@@ -30,7 +31,8 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, MAX_PINNED_MESSAGES, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, ScheduleBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
+import { type AccountDiagnostics, type Diagnostics, type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, MAX_PINNED_MESSAGES, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, ScheduleBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
+import { recentLogs } from './log.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -62,6 +64,8 @@ export interface Backend {
   typing: (chatId: string, state: 'composing' | 'recording' | 'paused') => Promise<void>;
   /** refuse un appel qui sonne ; `message` envoyé à l'appelant */
   rejectCall: (callId: string, message?: string) => Promise<void>;
+  /** diagnostic de la connexion et des données du compte */
+  diagnostics: (id: string) => AccountDiagnostics;
   /** statut vu (accusé à son auteur) */
   seeStatus: (id: string) => Promise<void>;
   /** message programmé ; identifiant */
@@ -90,6 +94,8 @@ export interface Account {
 
 /** Comptes du démon (le vrai, ou le faux démon). */
 export interface Accounts {
+  /** informations du démon (versions, démarrage, dossier) pour le diagnostic */
+  daemon: Diagnostics['daemon'];
   get: (id: string) => Account | undefined;
   ids: () => string[];
   /** nouveau compte (en attente d'appairage) ; son identifiant */
@@ -160,6 +166,17 @@ export function startServer(opts: { host: string; port: number; token: string; a
     if (!authorized(req)) throw new HttpError(401, 'jeton invalide');
     const url = new URL(req.url ?? '/', 'http://localhost');
     const all = url.pathname.split('/').filter((p) => p !== '').map((p) => decodeURIComponent(p));
+    if (all.length === 1 && all[0] === 'diagnostics' && req.method === 'GET') {
+      json(res, 200, {
+        daemon: opts.accounts.daemon,
+        accounts: opts.accounts.ids().flatMap((id) => {
+          const a = opts.accounts.get(id);
+          return a === undefined ? [] : [a.wa.diagnostics(id)];
+        }),
+        logs: recentLogs(),
+      } satisfies Diagnostics);
+      return;
+    }
     if (all[0] === 'accounts' && all.length === 1) {
       if (req.method === 'POST') {
         json(res, 200, { id: await opts.accounts.add() });

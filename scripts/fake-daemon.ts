@@ -329,6 +329,7 @@ const backend: Backend = {
     const chatId = store.removeScheduled(id);
     if (chatId !== null) emit({ type: 'scheduled', chatId });
   },
+  diagnostics: (id) => ({ id, status, webVersion: [2, 3000, 1], connectedAt: now - 2 * H, disconnectedAt: null, disconnects: 0, ...store.sizes(), mediaSize: 0 }),
   seeStatus: (id) => {
     if (store.setStatusSeen(id)) emit({ type: 'statuses' });
     return Promise.resolve();
@@ -557,6 +558,7 @@ function extraAccount(id: string): Account & { pair: () => void; incoming: (chat
     typing: resolved,
     rejectCall: resolved,
     seeStatus: resolved,
+    diagnostics: (aid) => ({ id: aid, status: st, webVersion: null, connectedAt: null, disconnectedAt: null, disconnects: 0, ...db.sizes(), mediaSize: 0 }),
     schedule: (chatId, text, at, replyTo, mentions = []) => {
       const sid = `${id}-prog-${Date.now()}`;
       db.addScheduled({ id: sid, chatId, text, at, replyTo: replyTo ?? null, mentions });
@@ -687,6 +689,7 @@ server = await startServer({
   port: Number(values.port),
   token,
   accounts: {
+    daemon: { version: '0.1.0', baileys: 'faux démon', node: process.versions.node, startedAt: now, dataDir: dir },
     get: (id) => (id === DEFAULT_ACCOUNT ? { store, wa: recorded } : extras.get(id)),
     ids: () => [DEFAULT_ACCOUNT, ...extras.keys()],
     add: () => {

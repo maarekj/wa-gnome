@@ -12,6 +12,7 @@ import path from 'node:path';
 import { DEFAULT_ACCOUNT, DEFAULT_PORT, TOKEN_FILE } from '../shared/api.ts';
 import { type Account, type Accounts, type Server, startServer } from './server.ts';
 import { Store } from './store.ts';
+import { logger } from './log.ts';
 import { WhatsApp } from './whatsapp.ts';
 
 const dataDir = process.env['WA_GNOME_DATA_DIR'] ?? path.join(process.env['XDG_DATA_HOME'] ?? path.join(os.homedir(), '.local', 'share'), 'wa-gnome');
@@ -74,14 +75,32 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+/** Version d'un paquet (package.json), « ? » si illisible. */
+function packageVersion(file: string): string {
+  try {
+    const v: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return typeof v === 'object' && v !== null && 'version' in v && typeof v.version === 'string' ? v.version : '?';
+  } catch {
+    return '?';
+  }
+}
+const root = path.resolve(import.meta.dirname, '..', '..');
+
 const accounts: Accounts = {
+  daemon: {
+    version: packageVersion(path.join(root, 'package.json')),
+    baileys: packageVersion(path.join(root, 'node_modules', 'baileys', 'package.json')),
+    node: process.versions.node,
+    startedAt: Math.floor(Date.now() / 1000),
+    dataDir,
+  },
   get: (id) => live.get(id),
   ids: () => [...live.keys()],
   add: () => {
     // identifiant croissant : les comptes restent dans l'ordre d'ajout
     const id = Date.now().toString(36);
     const wa = load(id);
-    wa.start().catch((error: unknown) => console.error(`compte ${id} :`, error));
+    wa.start().catch((error: unknown) => logger.error({ error }, `compte ${id}`));
     return Promise.resolve(id);
   },
   remove: async (id) => {
@@ -93,7 +112,7 @@ const accounts: Accounts = {
     live.delete(id);
     a.wa.retire();
     if (a.wa.status.state === 'open') {
-      await a.wa.logout().catch((error: unknown) => console.error(`déconnexion du compte ${id} :`, error));
+      await a.wa.logout().catch((error: unknown) => logger.error({ error }, `déconnexion du compte ${id}`));
       // fermeture de la session (effacement par Baileys) avant de fermer la base
       for (let i = 0; i < 25 && a.wa.status.state === 'open'; i += 1) await sleep(200); // oxlint-disable-line no-await-in-loop -- attente bornée de la fermeture
     }
@@ -121,7 +140,7 @@ server = await startServer({
   accounts,
 });
 console.log(`wa-gnome : démon prêt (${dataDir}, ${live.size} compte(s))`);
-await Promise.all([...live].map(([id, a]) => a.wa.start().catch((error: unknown) => console.error(`compte ${id} :`, error))));
+await Promise.all([...live].map(([id, a]) => a.wa.start().catch((error: unknown) => logger.error({ error }, `compte ${id}`))));
 
 const shutdown = (): void => {
   for (const a of live.values()) a.wa.stop();

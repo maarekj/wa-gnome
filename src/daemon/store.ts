@@ -1210,6 +1210,12 @@ export class Store {
     this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id);
   }
 
+  /** Taille de la base (octets) et nombre de discussions et de messages (diagnostic). */
+  sizes(): { dbSize: number; chats: number; messages: number } {
+    const n = (sql: string): number => Number(this.#db.prepare(sql).get()?.['n'] ?? 0);
+    return { dbSize: n('SELECT page_count * page_size AS n FROM pragma_page_count(), pragma_page_size()'), chats: n('SELECT count(*) AS n FROM chats'), messages: n('SELECT count(*) AS n FROM messages') };
+  }
+
   // ------------------------------------------------------------------ messages programmés
 
   addScheduled(s: { id: string; chatId: string; text: string; at: number; replyTo: string | null; mentions: readonly string[] }): void {

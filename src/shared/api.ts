@@ -506,6 +506,36 @@ export const Scheduled = z.object({
 export type Scheduled = z.infer<typeof Scheduled>;
 export const ScheduleBody = z.object({ text: z.string().check(z.minLength(1)), at: z.number(), replyTo: z.optional(z.string()), mentions: z.optional(z.array(z.string())) });
 
+/** État de la connexion d'un compte (écran de diagnostic). */
+export const AccountDiagnostics = z.object({
+  id: z.string(),
+  status: Status,
+  /** version du client web annoncée à WhatsApp ([majeure, mineure, révision]) */
+  webVersion: z.nullable(z.array(z.number())),
+  /** dernière connexion établie, dernière coupure (secondes), coupures depuis le démarrage */
+  connectedAt: z.nullable(z.number()),
+  disconnectedAt: z.nullable(z.number()),
+  disconnects: z.number(),
+  /** base de données (octets), médias en cache (octets) */
+  dbSize: z.number(),
+  mediaSize: z.number(),
+  chats: z.number(),
+  messages: z.number(),
+});
+export type AccountDiagnostics = z.infer<typeof AccountDiagnostics>;
+
+/** Journal récent du démon (avertissements et erreurs). */
+export const LogLine = z.object({ time: z.number(), level: z.string(), msg: z.string() });
+export type LogLine = z.infer<typeof LogLine>;
+
+/** Diagnostic du démon (`GET /diagnostics`). */
+export const Diagnostics = z.object({
+  daemon: z.object({ version: z.string(), baileys: z.string(), node: z.string(), startedAt: z.number(), dataDir: z.string() }),
+  accounts: z.array(AccountDiagnostics),
+  logs: z.array(LogLine),
+});
+export type Diagnostics = z.infer<typeof Diagnostics>;
+
 /** Pseudo-discussion des statuts (« stories ») : messages de 24 h, jamais dans la liste. */
 export const STATUS_CHAT = 'status@broadcast';
 /** Durée de vie d'un statut (secondes). */

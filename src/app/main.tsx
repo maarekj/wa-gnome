@@ -11,6 +11,7 @@ import { errorMessage } from '../shared/errors.ts';
 import type { Store } from '../shared/store.ts';
 import { Accounts, accountName, unreadChats } from './Accounts.ts';
 import { Badge } from './Badge.ts';
+import { openDiagnostics } from './Diagnostics.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { openNewChat } from './NewChat.ts';
 import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
@@ -262,12 +263,22 @@ removeAccount.connect('activate', () => {
 });
 app.add_action(removeAccount);
 
+/** Version de l'application (fenêtre « À propos », diagnostic). */
+const VERSION = '0.1.0';
+
+/** app.diagnostics : versions, état des comptes, journal du démon */
+const diagnostics = new Gio.SimpleAction({ name: 'diagnostics' });
+diagnostics.connect('activate', () => {
+  if (mainWindow !== null) openDiagnostics(mainWindow, accounts.main.client, VERSION, (t) => api?.toast(t));
+});
+app.add_action(diagnostics);
+
 const about = new Gio.SimpleAction({ name: 'about' });
 about.connect('activate', () => {
   const dialog = new Adw.AboutDialog({
     applicationName: 'WhatsApp pour GNOME',
     applicationIcon: APP_ID,
-    version: '0.1.0',
+    version: VERSION,
     developerName: 'maarekj',
     licenseType: Gtk.License.UNKNOWN,
     comments: 'Client WhatsApp non officiel (protocole multi-appareils, via Baileys).',
