@@ -16,7 +16,8 @@
     "test": "node scripts/test.ts",
     "screenshot": "node scripts/screenshot.ts",
     "fake-daemon": "node scripts/fake-daemon.ts",
-    "e2e": "node scripts/e2e.ts"
+    "e2e": "node scripts/e2e.ts",
+    "bench": "node scripts/bench.ts"
   },
   "dependencies": {
     "baileys": "7.0.0-rc14",

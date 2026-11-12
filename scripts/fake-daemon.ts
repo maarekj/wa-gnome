@@ -7,6 +7,8 @@
 //   {account} : compte ajouté, appairé sous le nom « Travail » avec une discussion).
 //   POST /call {chatId, video?} : appel qui sonne (renvoie son id) ; POST /call/end {id} : raccroché (manqué).
 //   [--no-replies] : pas de réponse automatique ni de « écrit… » après un envoi.
+//   [--db fichier] : part d'une copie de cette base (mesures sur des données réelles, `pnpm bench`)
+//   au lieu d'une base vide ; les discussions de démonstration s'y ajoutent.
 // Le jeton est écrit dans <dir>/token : lancer l'app avec WA_GNOME_DATA_DIR=<dir> WA_GNOME_URL=….
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -27,6 +29,7 @@ const { values } = parseArgs({
     dir: { type: 'string', default: path.join(os.tmpdir(), 'wa-gnome-fake') },
     control: { type: 'string' },
     'no-replies': { type: 'boolean', default: false },
+    db: { type: 'string' },
   },
 });
 const dir = values.dir;
@@ -35,6 +38,7 @@ fs.mkdirSync(dir, { recursive: true });
 const token = 'fake-token';
 fs.writeFileSync(path.join(dir, TOKEN_FILE), token);
 
+if (values.db !== undefined) fs.copyFileSync(values.db, path.join(dir, 'wa.db'));
 const store = new Store(path.join(dir, 'wa.db'));
 const now = Math.floor(Date.now() / 1000);
 const H = 3600;

@@ -14,6 +14,7 @@ import { Badge } from './Badge.ts';
 import { openDiagnostics } from './Diagnostics.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { openNewChat } from './NewChat.ts';
+import { PERF, runBench } from './Perf.ts';
 import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
 import { openShortcuts } from './Shortcuts.ts';
 import { STYLESHEET } from './style.ts';
@@ -398,6 +399,7 @@ app.connect('activate', () => {
       return false;
     });
     win.present();
+    if (PERF) void runBench(active(), win, () => app.quit());
   });
 });
 

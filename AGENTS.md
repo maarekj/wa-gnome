@@ -48,6 +48,11 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   Interactions : `SCREENSHOT_XDOTOOL="mousemove 150 125 click 1; sleep 1; type bonjour; key Return; sleep 2"`
   (`sh: commande` pour une commande shell, ex. `xclip` pour remplir le presse-papier ; faux démon
   pilotable par `curl localhost:$WA_GNOME_CONTROL/…`).
+- `pnpm bench [--chat "nom"] [--runs 5] [--db fichier | --demo]` : mesures de performance (≈ 1 min)
+  sur une copie de la vraie base (lecture seule, effacée ensuite), servie par le faux démon, app
+  sur écran virtuel : temps jusqu'à l'affichage de la liste, puis de chaque ouverture de la
+  discussion (défaut « ERETZ HEMDA », la plus lente). Chronos dans `src/app/Perf.ts`
+  (`WA_GNOME_PERF=1`). À lancer avant et après toute optimisation ; donner les médianes.
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `node scripts/install.ts` : installe le démon (systemd), le lanceur `wa-gnome`, le .desktop, le
   service D-Bus et les icônes.
