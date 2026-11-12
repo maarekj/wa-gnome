@@ -4,7 +4,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, STATUS_TTL, type StatusGroup, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
+import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, type Scheduled, STATUS_TTL, type StatusGroup, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -89,6 +89,19 @@ CREATE TABLE IF NOT EXISTS pins (
   at INTEGER NOT NULL,
   expires INTEGER NOT NULL,
   PRIMARY KEY (chat_id, message_id)
+);
+-- messages programmés (envoyés par le démon à l'heure dite)
+CREATE TABLE IF NOT EXISTS scheduled (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  reply_to TEXT,
+  mentions TEXT,
+  error TEXT,
+  -- prochain essai après un échec (secondes)
+  retry_at INTEGER NOT NULL DEFAULT 0,
+  tries INTEGER NOT NULL DEFAULT 0
 );
 -- statuts vus sur cet ordinateur
 CREATE TABLE IF NOT EXISTS status_seen (id TEXT PRIMARY KEY);
@@ -1156,6 +1169,50 @@ export class Store {
   /** Message retiré de la base (message technique enregistré à tort). */
   dropMessage(chatId: string, id: string): void {
     this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id);
+  }
+
+  // ------------------------------------------------------------------ messages programmés
+
+  addScheduled(s: { id: string; chatId: string; text: string; at: number; replyTo: string | null; mentions: readonly string[] }): void {
+    this.#db.prepare('INSERT INTO scheduled (id, chat_id, text, at, reply_to, mentions) VALUES (?, ?, ?, ?, ?, ?)').run(s.id, s.chatId, s.text, s.at, s.replyTo, s.mentions.length === 0 ? null : JSON.stringify(s.mentions));
+  }
+
+  /** Messages programmés d'une discussion (ou tous), les plus proches d'abord. */
+  scheduled(chatId?: string): (Scheduled & { mentions: string[] })[] {
+    return this.#db
+      .prepare(`SELECT * FROM scheduled ${chatId === undefined ? '' : 'WHERE chat_id = ?'} ORDER BY at, id`)
+      .all(...(chatId === undefined ? [] : [chatId]))
+      .map((r) => ({
+        id: String(r['id']),
+        chatId: String(r['chat_id']),
+        text: String(r['text']),
+        at: Number(r['at']),
+        replyTo: typeof r['reply_to'] === 'string' ? r['reply_to'] : null,
+        error: typeof r['error'] === 'string' ? r['error'] : null,
+        mentions: z.array(z.string()).safeParse(parseJson(String(r['mentions'] ?? '[]'))).data ?? [],
+      }));
+  }
+
+  /** Message programmé retiré (envoyé ou annulé) ; sa discussion, ou null s'il n'existait pas. */
+  removeScheduled(id: string): string | null {
+    const row = this.#db.prepare('DELETE FROM scheduled WHERE id = ? RETURNING chat_id').get(id);
+    return typeof row?.['chat_id'] === 'string' ? row['chat_id'] : null;
+  }
+
+  /** Échec d'envoi : erreur notée, nouvel essai plus tard (1, 2, 4… minutes, au plus 1 h). */
+  setScheduledError(id: string, error: string, now: number): void {
+    this.#db.prepare('UPDATE scheduled SET error = ?, tries = tries + 1, retry_at = ? + min(3600, 60 * (1 << min(tries, 6))) WHERE id = ?').run(error, now, id);
+  }
+
+  /** Messages à envoyer maintenant (heure passée, pas en attente d'un nouvel essai). */
+  dueScheduled(now: number): (Scheduled & { mentions: string[] })[] {
+    const ids = new Set(this.#db.prepare('SELECT id FROM scheduled WHERE at <= ? AND retry_at <= ?').all(now, now).map((r) => String(r['id'])));
+    return this.scheduled().filter((s) => ids.has(s.id));
+  }
+
+  /** Message programmé encore là (pas annulé entre-temps). */
+  hasScheduled(id: string): boolean {
+    return this.#db.prepare('SELECT 1 FROM scheduled WHERE id = ?').get(id) !== undefined;
   }
 
   // ------------------------------------------------------------------ statuts

@@ -9,7 +9,7 @@ import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup, type Accessor } from 'gnim';
 import { DELETED_TEXT, editability, PIN_DURATIONS, ephemeralText, viewOnceLabel, isMissedCall, isVideoCall, type Media, type Presence, type MessageStatus, previewOf, type Message, QUICK_REACTIONS, REVOKE_WINDOW_S, type Quoted, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { dayKey, emojiOnly, esc, fmtDay, fmtTime, mentionMarkup, waMarkup } from '../shared/format.ts';
+import { dayKey, emojiOnly, esc, fmtDateTime, fmtDay, fmtTime, mentionMarkup, waMarkup } from '../shared/format.ts';
 import { type Store, typingText } from '../shared/store.ts';
 import { type Attachment, attachDrop, attachmentChip, fromFile, fromTexture, pasteAttachments, pickFiles } from './Attachments.ts';
 import { avatarText, isChannel } from './ChatList.tsx';
@@ -17,6 +17,7 @@ import { openMessageInfo } from './MessageInfo.ts';
 import { ChatSearch } from './ChatSearch.ts';
 import { rememberSidePanelWidth, setChatVoiceLanguage, settings, sidePanelWidth, WHISPER_MODELS, type WhisperModel } from './Preferences.ts';
 import { DownloadCancelled } from './Whisper.ts';
+import { ScheduledBar, scheduleButton } from './Schedule.ts';
 import { mentionPicker, type MentionPicker, resolveMentions } from './MentionPicker.ts';
 import { startSummary, SummaryPanel, summaries, summaryKey } from './Summary.ts';
 import { downloadWhisper, hideTranslation, languageName, MissingModel, translateMessage, translationOf, translations } from './Translate.ts';
@@ -838,6 +839,32 @@ function Composer({ store, chatId, toast, register, pictures }: { store: Store; 
     }
   };
 
+  /** Programme le texte saisi pour `at` (secondes) ; la saisie est vidée. */
+  const scheduleText = (at: number): void => {
+    const id = chatId.peek();
+    const buffer = view?.buffer;
+    if (id === null || buffer === undefined) return;
+    const text = buffer.text.trim();
+    if (text === '') return;
+    if (at <= Date.now() / 1000 + 30) {
+      toast('Choisissez une heure à venir');
+      return;
+    }
+    const replyTo = store.replyTo.peek()?.id;
+    const out = resolveMentions(text, mentions?.chosen(id) ?? new Map<string, string>());
+    void (async (): Promise<void> => {
+      try {
+        await store.client.schedule(id, out.text, at, replyTo, out.mentions);
+        mentions?.sent(id);
+        store.setDraft(id, '');
+        if (chatId.peek() === id) buffer.set_text('', -1);
+        store.setReplyTo(null);
+        toast(`Message programmé pour ${fmtDateTime(at)}`);
+      } catch (error) {
+        toast(`Programmation impossible : ${errorMessage(error)}`);
+      }
+    })();
+  };
   const send = (): void => {
     const id = chatId.peek();
     const buffer = view?.buffer;
@@ -976,6 +1003,8 @@ function Composer({ store, chatId, toast, register, pictures }: { store: Store; 
         </Gtk.Box>
         <Gtk.Button iconName="window-close-symbolic" tooltipText="Annuler la réponse (Échap)" valign={Gtk.Align.CENTER} cssClasses={['flat', 'circular']} onClicked={() => store.setReplyTo(null)} />
       </Gtk.Box>
+      {/* messages programmés de la discussion (annulables) */}
+      {ScheduledBar(store, toast)}
       <Gtk.Box spacing={6} visible={attachments((l) => l.length > 0)}>
         <Gtk.ScrolledWindow hexpand vscrollbarPolicy={Gtk.PolicyType.NEVER} propagateNaturalHeight>
           <Gtk.Box
@@ -1105,6 +1134,14 @@ function Composer({ store, chatId, toast, register, pictures }: { store: Store; 
           />
         </Gtk.ScrolledWindow>
         {/* zone vide sans pièce jointe : micro (message vocal) ; sinon Envoyer */}
+        {/* programmer l'envoi du texte saisi (pas de pièce jointe, pas pendant une modification) */}
+        <Gtk.Box
+          valign={Gtk.Align.END}
+          visible={createMemo(() => !empty() && attachments().length === 0 && store.editing() === null)}
+          $={(self: Gtk.Box) => {
+            self.append(scheduleButton(scheduleText));
+          }}
+        />
         <Gtk.Stack valign={Gtk.Align.END} visibleChildName={createMemo(() => (empty() && attachments().length === 0 && store.editing() === null ? 'mic' : 'send'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Gtk.Button $type="named" name="send" iconName="mail-send-symbolic" tooltipText="Envoyer" sensitive={sending((s) => !s)} cssClasses={['circular', 'suggested-action']} onClicked={send} />
           <Gtk.Button $type="named" name="mic" iconName="audio-input-microphone-symbolic" tooltipText="Enregistrer un message vocal" sensitive={sending((s) => !s)} cssClasses={['circular', 'suggested-action']} onClicked={startRecording} />

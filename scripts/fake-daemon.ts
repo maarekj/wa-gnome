@@ -313,6 +313,17 @@ const endCall = (id: string, outcome: CallOutcome): void => {
 };
 
 const backend: Backend = {
+  schedule: (chatId, text, at, replyTo, mentions = []) => {
+    seq += 1;
+    const id = `prog${seq}`;
+    store.addScheduled({ id, chatId, text, at, replyTo: replyTo ?? null, mentions });
+    emit({ type: 'scheduled', chatId });
+    return id;
+  },
+  cancelScheduled: (id) => {
+    const chatId = store.removeScheduled(id);
+    if (chatId !== null) emit({ type: 'scheduled', chatId });
+  },
   seeStatus: (id) => {
     if (store.setStatusSeen(id)) emit({ type: 'statuses' });
     return Promise.resolve();
@@ -535,6 +546,16 @@ function extraAccount(id: string): Account & { pair: () => void; incoming: (chat
     typing: resolved,
     rejectCall: resolved,
     seeStatus: resolved,
+    schedule: (chatId, text, at, replyTo, mentions = []) => {
+      const sid = `${id}-prog-${Date.now()}`;
+      db.addScheduled({ id: sid, chatId, text, at, replyTo: replyTo ?? null, mentions });
+      send({ type: 'scheduled', chatId });
+      return sid;
+    },
+    cancelScheduled: (sid) => {
+      const chatId = db.removeScheduled(sid);
+      if (chatId !== null) send({ type: 'scheduled', chatId });
+    },
   };
   return {
     store: db,
@@ -557,6 +578,16 @@ function extraAccount(id: string): Account & { pair: () => void; incoming: (chat
 const COLLEAGUE = '33600000101@s.whatsapp.net';
 const extras = new Map<string, ReturnType<typeof extraAccount>>();
 let accountSeq = 0;
+
+// messages programmés : envoyés à l'heure (vérifiés chaque seconde), comme le vrai démon
+setInterval(() => {
+  const t = Math.floor(Date.now() / 1000);
+  for (const s of store.scheduled().filter((x) => x.at <= t)) {
+    store.removeScheduled(s.id);
+    void recorded.send(s.chatId, s.text, s.replyTo ?? undefined, s.mentions);
+    emit({ type: 'scheduled', chatId: s.chatId });
+  }
+}, 1000);
 
 // ---------------------------------------------------------------- pilotage des tests (--control)
 

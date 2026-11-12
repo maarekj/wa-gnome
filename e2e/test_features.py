@@ -2,6 +2,8 @@
 
 import json
 import subprocess
+import time
+import urllib.request
 
 import conftest
 from conftest import GROUP, Atspi, wait_until
@@ -437,3 +439,28 @@ def test_statuts(run_app):
     assert bob['items'][0]['seen'] is True
     app.key('Escape')
     app.text_gone('Allez l’équipe', 5)
+
+
+def test_messages_programmes(run_app):
+    fake, app = run_app()
+    app.open_chat('Alice Martin')
+    composer = app.composer()
+    composer.text = 'On se voit demain ?'
+    wait_until(lambda: composer.text == 'On se voit demain ?', 5, 'texte saisi')
+    # « Programmer l'envoi » › « Dans 1 heure » : bandeau, saisie vidée
+    app.point(app.find(None, 'Programmer l’envoi'))
+    app.click('button', 'Dans 1 heure')
+    call = fake.wait_call('schedule')
+    assert call['args'][:2] == [conftest.ALICE, 'On se voit demain ?']
+    assert app.text_visible('Programmé ·')
+    wait_until(lambda: app.composer().text == '', 5, 'saisie vidée')
+    # annulé : bandeau retiré
+    app.click('button', 'Annuler le message programmé')
+    fake.wait_call('cancelScheduled')
+    app.text_gone('Programmé ·', 5)
+    # heure atteinte : envoyé par le démon (programmé par l'API, dans 2 s)
+    body = json.dumps({'text': 'Rappel automatique', 'at': time.time() + 2}).encode()
+    req = urllib.request.Request(f'{fake.url}/chats/{conftest.ALICE}/scheduled', data=body, method='POST', headers={'Authorization': 'Bearer fake-token', 'content-type': 'application/json'})
+    urllib.request.urlopen(req, timeout=5).read()
+    wait_until(lambda: any(c['args'][1] == 'Rappel automatique' for c in fake.calls('send')), 10, 'envoi à l’heure')
+    assert app.text_visible('Rappel automatique')

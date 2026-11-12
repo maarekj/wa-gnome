@@ -55,6 +55,11 @@ function load(id: string): WhatsApp {
   return wa;
 }
 
+// messages programmés : envoyés à l'heure (vérifiés toutes les 15 s)
+setInterval(() => {
+  for (const a of live.values()) void a.wa.sendDue();
+}, 15_000);
+
 // messages éphémères expirés : retirés toutes les 10 minutes
 setInterval(
   () => {

@@ -284,6 +284,23 @@ void describe('statuts et diffusions', () => {
     assert.equal(toMessage(wa)?.chatId, PN);
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
   });
+  void it('messages programmés : ordre, erreur, retrait', () => {
+    const store = new Store(':memory:');
+    store.addScheduled({ id: 'b', chatId: PN, text: 'deux', at: 200, replyTo: null, mentions: [] });
+    store.addScheduled({ id: 'a', chatId: PN, text: 'un', at: 100, replyTo: 'm1', mentions: ['x@s.whatsapp.net'] });
+    store.addScheduled({ id: 'c', chatId: 'autre@s.whatsapp.net', text: 'trois', at: 50, replyTo: null, mentions: [] });
+    assert.deepEqual(store.scheduled(PN).map((s) => s.id), ['a', 'b']);
+    assert.deepEqual(store.scheduled()[1]?.mentions, ['x@s.whatsapp.net']);
+    assert.deepEqual(store.dueScheduled(150).map((s) => s.id), ['c', 'a']);
+    store.setScheduledError('a', 'hors ligne', 150);
+    assert.equal(store.scheduled(PN)[0]?.error, 'hors ligne');
+    // nouvel essai une minute plus tard seulement
+    assert.deepEqual(store.dueScheduled(160).map((s) => s.id), ['c']);
+    assert.deepEqual(store.dueScheduled(211).map((s) => s.id), ['c', 'a', 'b']);
+    assert.equal(store.removeScheduled('a'), PN);
+    assert.equal(store.removeScheduled('a'), null);
+    assert.deepEqual(store.scheduled().map((s) => s.id), ['c', 'b']);
+  });
   void it('statuts : par personne, 24 h, vus, fond des statuts texte', () => {
     const store = new Store(':memory:');
     store.upsertMessage(statusMsg('a', 1000, PN), JSON.stringify({ message: { extendedTextMessage: { text: 'a', backgroundArgb: -14_913_064 } } }));

@@ -6,6 +6,8 @@
 //   POST /chats/:id/messages        envoi d'un texte { text }
 //   GET  /chats/:id/messages/:mid/media  contenu d'un média (octets, Content-Type du média)
 //   POST /chats/:id/media           envoi d'un fichier (corps brut, voir shared/api.ts)
+//   GET  /chats/:id/scheduled       messages programmés ; POST { text, at, replyTo? } : programmer
+//   DELETE /scheduled/:id           annuler un message programmé
 //   GET  /chats/:id/pins            messages épinglés, le plus récent d'abord
 //   GET  /chats/:id/picture         photo de profil (JPEG), 404 sans photo
 //   GET  /chats/:id/messages/:mid/info   infos d'un message envoyé (accusés par destinataire)
@@ -28,7 +30,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, MAX_PINNED_MESSAGES, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
+import { type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, MAX_PINNED_MESSAGES, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, ScheduleBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
 import type { Store } from './store.ts';
 
 /** Commentaire SSE périodique : garde la connexion ouverte, détecte un client parti. */
@@ -62,6 +64,9 @@ export interface Backend {
   rejectCall: (callId: string, message?: string) => Promise<void>;
   /** statut vu (accusé à son auteur) */
   seeStatus: (id: string) => Promise<void>;
+  /** message programmé ; identifiant */
+  schedule: (chatId: string, text: string, at: number, replyTo?: string, mentions?: readonly string[]) => string;
+  cancelScheduled: (id: string) => void;
 }
 
 /** Fichier à envoyer. */
@@ -181,7 +186,7 @@ export function startServer(opts: { host: string; port: number; token: string; a
     const store = account.store;
     const wa = account.wa;
     // segments variables : /chats/:id/messages/:mid
-    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => ((parts[0] === 'chats' || parts[0] === 'calls' || parts[0] === 'statuses') && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
+    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => ((parts[0] === 'chats' || parts[0] === 'calls' || parts[0] === 'statuses' || parts[0] === 'scheduled') && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
     const chatId = parts[1] ?? '';
     const messageId = parts[3] ?? '';
     switch (route) {
@@ -309,6 +314,20 @@ export function startServer(opts: { host: string; port: number; token: string; a
         json(res, 200, {});
         return;
       }
+      case 'GET /chats/:id/scheduled':
+        json(res, 200, store.scheduled(chatId).map(({ mentions: _m, ...s }) => s));
+        return;
+      case 'POST /chats/:id/scheduled': {
+        const body = ScheduleBody.safeParse(await readBody(req));
+        if (!body.success) throw new HttpError(400, z.prettifyError(body.error));
+        if (body.data.at < Date.now() / 1000) throw new HttpError(400, 'heure déjà passée');
+        json(res, 200, { id: wa.schedule(chatId, body.data.text, Math.floor(body.data.at), body.data.replyTo, body.data.mentions) });
+        return;
+      }
+      case 'DELETE /scheduled/:id':
+        wa.cancelScheduled(chatId);
+        json(res, 200, {});
+        return;
       case 'GET /statuses':
         json(res, 200, store.statuses(Math.floor(Date.now() / 1000)));
         return;

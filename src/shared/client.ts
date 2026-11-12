@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Account, AccountCreated, accountPath, Chat, StatusGroup, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_ACCOUNT, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
+import { Account, AccountCreated, accountPath, Chat, Scheduled, StatusGroup, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_ACCOUNT, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -156,6 +156,20 @@ export class WaClient {
 
   async chatAction(chatId: string, action: ChatAction): Promise<void> {
     await this.request('POST', `/chats/${encodeURIComponent(chatId)}/action`, z.unknown(), action);
+  }
+
+  /** Messages programmés d'une discussion, les plus proches d'abord. */
+  scheduled(chatId: string): Promise<Scheduled[]> {
+    return this.request('GET', `/chats/${encodeURIComponent(chatId)}/scheduled`, z.array(Scheduled));
+  }
+
+  /** Programme un texte pour `at` (secondes). */
+  async schedule(chatId: string, text: string, at: number, replyTo?: string, mentions?: readonly string[]): Promise<void> {
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/scheduled`, z.unknown(), { text, at, ...(replyTo === undefined ? {} : { replyTo }), ...(mentions === undefined || mentions.length === 0 ? {} : { mentions }) });
+  }
+
+  async cancelScheduled(id: string): Promise<void> {
+    await this.request('DELETE', `/scheduled/${encodeURIComponent(id)}`, z.unknown());
   }
 
   /** Statuts de moins de 24 h, par personne. */

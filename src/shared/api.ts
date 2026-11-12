@@ -477,6 +477,20 @@ export type Call = z.infer<typeof Call>;
 /** Refus d'un appel (`POST /calls/:id/reject`), avec un message envoyé à l'appelant. */
 export const RejectBody = z.object({ message: z.optional(z.string()) });
 
+/** Message programmé (texte), envoyé par le démon à l'heure dite, même app fermée. */
+export const Scheduled = z.object({
+  id: z.string(),
+  chatId: z.string(),
+  text: z.string(),
+  /** heure d'envoi (secondes) */
+  at: z.number(),
+  replyTo: z.nullable(z.string()),
+  /** dernière erreur d'envoi (nouvel essai plus tard : 1, 2, 4… minutes, au plus 1 h) */
+  error: z.nullable(z.string()),
+});
+export type Scheduled = z.infer<typeof Scheduled>;
+export const ScheduleBody = z.object({ text: z.string().check(z.minLength(1)), at: z.number(), replyTo: z.optional(z.string()), mentions: z.optional(z.array(z.string())) });
+
 /** Pseudo-discussion des statuts (« stories ») : messages de 24 h, jamais dans la liste. */
 export const STATUS_CHAT = 'status@broadcast';
 /** Durée de vie d'un statut (secondes). */
@@ -511,6 +525,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('message'), message: Message }),
   /** messages épinglés d'une discussion changés : à relire (`GET /chats/:id/pins`) */
   z.object({ type: z.literal('pins'), chatId: z.string() }),
+  /** messages programmés d'une discussion changés (ajout, envoi, annulation) */
+  z.object({ type: z.literal('scheduled'), chatId: z.string() }),
   /** statuts publiés, vus ou expirés : à relire (`GET /statuses`) */
   z.object({ type: z.literal('statuses') }),
   /** appel reçu : sonne, ou terminé */

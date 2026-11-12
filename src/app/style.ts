@@ -260,6 +260,12 @@ export const STYLESHEET = `
   font-size: 22pt;
   font-weight: bold;
 }
+/* messages programmés, au-dessus de la saisie */
+.scheduled-bar {
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: alpha(var(--accent-bg-color), 0.08);
+}
 /* bandeau des messages épinglés */
 .pinned-bar {
   border-radius: 0;

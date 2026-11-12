@@ -1,6 +1,6 @@
 // Connexion WhatsApp (Baileys, protocole multi-appareils) : appairage, reconnexion, et
 // recopie des discussions et messages reçus dans le Store.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -155,6 +155,8 @@ export class WhatsApp {
         // reconnexion pendant que l'app est au premier plan : de nouveau en ligne
         if (this.#online) void sock.sendPresenceUpdate('available').catch((error: unknown) => logger.warn({ error }, 'présence'));
         void this.#fetchGroups(sock);
+        // messages programmés pendant une coupure : envoyés à la reconnexion
+        void this.sendDue();
         void this.#resyncChatState(sock);
       }
       if (u.connection === 'close') {
@@ -899,6 +901,51 @@ export class WhatsApp {
     });
     this.#store.setFlag('backfill-pins', false);
     logger.info(`messages épinglés : ${rows.length} message(s) relus`);
+  }
+
+  // ------------------------------------------------------------------ messages programmés
+
+  /** Message programmé ; identifiant. */
+  schedule(chatId: string, text: string, at: number, replyTo?: string, mentions: readonly string[] = []): string {
+    const id = randomUUID();
+    this.#store.addScheduled({ id, chatId, text, at, replyTo: replyTo ?? null, mentions });
+    this.#emit({ type: 'scheduled', chatId });
+    return id;
+  }
+
+  cancelScheduled(id: string): void {
+    const chatId = this.#store.removeScheduled(id);
+    if (chatId !== null) this.#emit({ type: 'scheduled', chatId });
+  }
+
+  #sendingDue = false;
+
+  /** Messages dont l'heure est passée : envoyés (connecté seulement), un échec est retenté plus tard. */
+  async sendDue(): Promise<void> {
+    if (this.#sendingDue || this.#status.state !== 'open') return;
+    this.#sendingDue = true;
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      for (const s of this.#store.dueScheduled(now)) {
+        // annulé pendant l'envoi des précédents, ou compte retiré : pas envoyé
+        if (this.#stopped || !this.#store.hasScheduled(s.id)) continue;
+        try {
+          // message cité disparu (supprimé) : envoyé sans citation plutôt que jamais
+          const replyTo = s.replyTo !== null && this.#store.raw(s.chatId, s.replyTo) !== null ? s.replyTo : undefined;
+          // oxlint-disable-next-line no-await-in-loop -- envois dans l'ordre prévu
+          await this.send(s.chatId, s.text, replyTo, s.mentions);
+          this.#store.removeScheduled(s.id);
+        } catch (error) {
+          logger.warn({ error }, `message programmé ${s.id}`);
+          if (!this.#stopped) this.#store.setScheduledError(s.id, errorText(error), now);
+        }
+        if (!this.#stopped) this.#emit({ type: 'scheduled', chatId: s.chatId });
+      }
+    } catch (error) {
+      logger.warn({ error }, 'messages programmés');
+    } finally {
+      this.#sendingDue = false;
+    }
   }
 
   /** Statut vu : noté ici, et accusé de lecture à son auteur (comme le téléphone). */

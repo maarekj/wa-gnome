@@ -25,6 +25,7 @@ import { languageName, opencodeText, parseAnswer, parsePick, parseWhisper, pickP
 import { summaryLines } from '../src/app/Summary.ts';
 import { fromLanguage } from '../src/app/ConversationPage.tsx';
 import { matchMembers, resolveMentions } from '../src/app/MentionPicker.ts';
+import { scheduleChoices } from '../src/app/Schedule.ts';
 
 const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Message => ({ id, chatId: 'a@s.whatsapp.net', fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, reactions: [], status: null, edited: false, deleted: false, forwarded: 0, viewOnce: false, mentions: [], ...extra });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({ id, name, group: false, unread: 0, timestamp, preview: '', archived: false, mutedUntil: 0, pinned: 0, markedUnread: false, labels: [], favorite: false, ephemeral: 0, ...extra });
@@ -535,5 +536,18 @@ describe('transcription', () => {
   it('noms des langues', () => {
     expect(languageName('he')).toBe('hébreu');
     expect(languageName('hy')).toBe('hy');
+  });
+});
+
+describe('messages programmés', () => {
+  it('raccourcis selon l’heure : ce soir seulement avant 19 h, lundi jamais demain', () => {
+    // mercredi 11 novembre 2026, 10:30
+    const wed = GLib.DateTime.new_local(2026, 11, 11, 10, 30, 0);
+    if (wed === null) throw new Error('date');
+    expect(scheduleChoices(wed).map((c) => c.label)).toEqual(['Dans 1 heure', 'Ce soir à 20:00', 'Demain à 09:00', 'Lundi à 09:00']);
+    expect(scheduleChoices(wed)[3]?.at).toBe(GLib.DateTime.new_local(2026, 11, 16, 9, 0, 0)?.to_unix());
+    const sunEvening = GLib.DateTime.new_local(2026, 11, 15, 21, 0, 0);
+    if (sunEvening === null) throw new Error('date');
+    expect(scheduleChoices(sunEvening).map((c) => c.label)).toEqual(['Dans 1 heure', 'Demain à 09:00']);
   });
 });
