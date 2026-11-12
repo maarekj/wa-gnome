@@ -477,6 +477,18 @@ export type Call = z.infer<typeof Call>;
 /** Refus d'un appel (`POST /calls/:id/reject`), avec un message envoyé à l'appelant. */
 export const RejectBody = z.object({ message: z.optional(z.string()) });
 
+/** Pseudo-discussion des statuts (« stories ») : messages de 24 h, jamais dans la liste. */
+export const STATUS_CHAT = 'status@broadcast';
+/** Durée de vie d'un statut (secondes). */
+export const STATUS_TTL = 24 * 3600;
+
+/** Un statut : message (photo, vidéo, texte), fond d'un statut texte, déjà vu ici. */
+export const StatusItem = z.object({ message: Message, background: z.nullable(z.string()), seen: z.boolean() });
+export type StatusItem = z.infer<typeof StatusItem>;
+/** Statuts d'une personne (les plus anciens d'abord), comme l'onglet « Actus » du téléphone. */
+export const StatusGroup = z.object({ sender: z.string(), name: z.string(), me: z.boolean(), items: z.array(StatusItem) });
+export type StatusGroup = z.infer<typeof StatusGroup>;
+
 /** Événements du flux `GET /events` (une ligne `data:` JSON par événement). */
 export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('status'), status: Status }),
@@ -499,6 +511,8 @@ export const Event = z.discriminatedUnion('type', [
   z.object({ type: z.literal('message'), message: Message }),
   /** messages épinglés d'une discussion changés : à relire (`GET /chats/:id/pins`) */
   z.object({ type: z.literal('pins'), chatId: z.string() }),
+  /** statuts publiés, vus ou expirés : à relire (`GET /statuses`) */
+  z.object({ type: z.literal('statuses') }),
   /** appel reçu : sonne, ou terminé */
   z.object({ type: z.literal('call'), call: Call }),
 ]);

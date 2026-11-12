@@ -291,8 +291,6 @@ export function reactionsOf(wa: WAMessage): RawReaction[] {
 export function toMessage(wa: WAMessage): Converted | null {
   const { remoteJid, id } = wa.key;
   if (remoteJid === null || remoteJid === undefined || id === null || id === undefined) return null;
-  // statuts (« stories ») : hors périmètre
-  if (remoteJid === 'status@broadcast') return null;
   // appel manqué (message technique créé par Baileys) : ligne d'appel
   if (GROUP_CALL_STUBS.has(wa.messageStubType ?? -1)) return null;
   const missed = CALL_STUBS.get(wa.messageStubType ?? -1);
@@ -335,7 +333,8 @@ export function toMessage(wa: WAMessage): Converted | null {
     id,
     chatId: jidNormalizedUser(broadcast ? participant : remoteJid),
     fromMe,
-    sender: isJidGroup(remoteJid) === true && participant !== null ? jidNormalizedUser(participant) : null,
+    // groupe ou statut : auteur
+    sender: (isJidGroup(remoteJid) === true || remoteJid === 'status@broadcast') && participant !== null ? jidNormalizedUser(participant) : null,
     senderName: fromMe ? null : (wa.pushName ?? null),
     timestamp: seconds(wa.messageTimestamp),
     kind,

@@ -257,6 +257,14 @@ store.setChatLabel(NEWS, '4', true);
 store.setChatLabel(BOB, '4', true);
 store.setFavorites([GROUP]);
 
+// statuts de démonstration (24 h) : photos d'Alice, statut texte de Bob, le mien
+const STATUS = 'status@broadcast';
+add(STATUS, false, 'Vue du chalet ce matin', 3 * H, ALICE, 'Alice', { kind: 'image', media: { ...photo, width: 960, height: 600 }, data: landscape(960, 600) });
+add(STATUS, false, '', 2 * H, ALICE, 'Alice', { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });
+seq += 1;
+store.upsertMessage({ id: `fake${seq}`, chatId: STATUS, fromMe: false, sender: BOB, senderName: 'Bob', timestamp: now - H, kind: 'text', text: 'Allez l’équipe ! ⚽', media: null, quoted: null, status: null }, JSON.stringify({ message: { extendedTextMessage: { text: 'Allez l’équipe ! ⚽', backgroundArgb: 0xff_1c_71_d8 - 0x1_00_00_00_00 } } }));
+add(STATUS, true, 'En vacances 🏔️', 4 * H, null, null, { kind: 'image', media: { ...photo, width: 480, height: 300, thumbnail: null }, data: landscape(480, 300) });
+
 /** longue discussion : de quoi remonter dans l'historique local (pagination) */
 const LONG = '33600000005@s.whatsapp.net';
 store.upsertContact(LONG, { name: 'Claire (longue discussion)' });
@@ -305,6 +313,10 @@ const endCall = (id: string, outcome: CallOutcome): void => {
 };
 
 const backend: Backend = {
+  seeStatus: (id) => {
+    if (store.setStatusSeen(id)) emit({ type: 'statuses' });
+    return Promise.resolve();
+  },
   rejectCall: async (callId, message) => {
     const c = ringing.get(callId);
     if (c === undefined) throw new Error('appel terminé');
@@ -522,6 +534,7 @@ function extraAccount(id: string): Account & { pair: () => void; incoming: (chat
     info: (chatId) => Promise.resolve({ id: chatId, name: db.displayName(chatId), group: false, phone: chatId.split('@')[0] ?? null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] }),
     typing: resolved,
     rejectCall: resolved,
+    seeStatus: resolved,
   };
   return {
     store: db,

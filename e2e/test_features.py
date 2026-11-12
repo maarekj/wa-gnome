@@ -1,5 +1,6 @@
 """Fonctions : nouvelle discussion, recherche, réponse depuis une notification."""
 
+import json
 import subprocess
 
 import conftest
@@ -419,3 +420,20 @@ def test_mentions_dans_un_groupe(run_app):
     assert call['args'][0] == GROUP
     assert call['args'][1] == '@33600000002 ok'
     assert call['args'][3] == ['33600000002@s.whatsapp.net']
+
+
+def test_statuts(run_app):
+    fake, app = run_app()
+    # entrée « Statuts » : deux personnes avec du nouveau
+    app.click('button', None, contains='Statuts')
+    app.point(app.find(None, 'Statuts de ~ Bob'))
+    # statut texte de Bob affiché, puis marqué vu (accusé)
+    assert app.text_visible('Allez l’équipe ! ⚽')
+    seen = fake.wait_call('seeStatus')['args'][0]
+    # c'est bien le statut de Bob (texte) qui est marqué vu
+    raw = subprocess.run(['curl', '-s', '-H', 'Authorization: Bearer fake-token', f'{fake.url}/statuses'], check=True, capture_output=True, text=True, timeout=5).stdout
+    bob = next(g for g in json.loads(raw) if g['name'] == '~ Bob')
+    assert seen == bob['items'][0]['message']['id']
+    assert bob['items'][0]['seen'] is True
+    app.key('Escape')
+    app.text_gone('Allez l’équipe', 5)

@@ -242,6 +242,24 @@ export const STYLESHEET = `
 .call-banner .ringing {
   color: var(--success-color);
 }
+/* statuts : cercle autour de la photo (accentué s'il y a du nouveau), cadre, texte */
+.status-ring {
+  border-radius: 999px;
+  outline: 2px solid var(--accent-bg-color);
+  outline-offset: 2px;
+}
+.status-ring.seen {
+  outline-color: alpha(currentColor, 0.25);
+}
+.status-frame {
+  background: black;
+  border-radius: 12px;
+  margin: 8px 10px;
+}
+.status-text {
+  font-size: 22pt;
+  font-weight: bold;
+}
 /* bandeau des messages épinglés */
 .pinned-bar {
   border-radius: 0;

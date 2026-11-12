@@ -30,7 +30,7 @@ import {
 } from 'baileys';
 import pino from 'pino';
 import * as z from 'zod/mini';
-import { callText, type CallOutcome, type ChatAction, replaceMention, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import { callText, type CallOutcome, type ChatAction, replaceMention, STATUS_CHAT, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
 import { type Change, changeOf, pinOf, type RawPin, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
@@ -198,6 +198,8 @@ export class WhatsApp {
           else this.#react(reaction, false);
         }
       });
+      // statuts reçus avec l'historique : liste relue par l'app
+      if (messages.some((m) => m.key.remoteJid === STATUS_CHAT)) this.#emit({ type: 'statuses' });
       // épinglages reçus avec l'historique : discussion ouverte rafraîchie
       for (const id of new Set(messages.flatMap((m) => (pinOf(m) !== null && m.key.remoteJid !== null && m.key.remoteJid !== undefined ? [this.#jid(m.key.remoteJid)] : [])))) this.#emit({ type: 'pins', chatId: id });
       this.#emit({ type: 'chats', chats: this.#store.chats() });
@@ -272,6 +274,11 @@ export class WhatsApp {
         }
         const m = this.#saveMessage(wa);
         if (m === null) continue;
+        // statut : pas une discussion (ni non-lu ni notification), liste des statuts à relire
+        if (m.chatId === STATUS_CHAT) {
+          this.#emit({ type: 'statuses' });
+          continue;
+        }
         if (type === 'notify' && !m.fromMe) this.#store.incrementUnread(m.chatId);
         this.#emit({ type: 'message', message: m });
         this.#emitChats([m.chatId]);
@@ -392,12 +399,19 @@ export class WhatsApp {
 
   /** Discussion lue sur un autre appareil (jusqu'au message `id`) : compteur remis à zéro, app prévenue. */
   #readElsewhere(chatId: string, id: string): void {
+    // statut vu sur le téléphone : vu ici aussi
+    if (chatId === STATUS_CHAT) {
+      if (this.#store.setStatusSeen(id)) this.#emit({ type: 'statuses' });
+      return;
+    }
     if (this.#store.readUpTo(chatId, id)) this.#emitChats([chatId]);
   }
 
   /** Modification ou suppression appliquée ; message visé renvoyé à l'app s'il est connu. */
   #applyChange(c: Change, notify = true): void {
     const chatId = this.#jid(c.chatId);
+    // statut modifié ou supprimé par son auteur : liste à relire
+    if (chatId === STATUS_CHAT && notify) setImmediate(() => this.#emit({ type: 'statuses' }));
     const by = c.by === 'me' ? 'me' : this.#jid(c.by);
     // modification : par l'auteur seulement ; suppression : par l'auteur, ou un admin dans un groupe
     // (rôle non vérifié ici : tout membre d'un groupe est accepté)
@@ -887,6 +901,15 @@ export class WhatsApp {
     logger.info(`messages épinglés : ${rows.length} message(s) relus`);
   }
 
+  /** Statut vu : noté ici, et accusé de lecture à son auteur (comme le téléphone). */
+  async seeStatus(id: string): Promise<void> {
+    if (this.#store.setStatusSeen(id)) this.#emit({ type: 'statuses' });
+    const raw = this.#store.raw(STATUS_CHAT, id);
+    const wa = raw === null ? null : this.#parseRaw(raw);
+    if (wa === null || wa.key.fromMe === true || this.#sock === null || this.#status.state !== 'open') return;
+    await this.#sock.readMessages([wa.key]);
+  }
+
   /** Message gardé : n'expire plus ; plus gardé : durée de son message brut rétablie. */
   #keep(chatId: string, id: string, kept: boolean): void {
     const raw = this.#store.raw(chatId, id);
@@ -901,6 +924,7 @@ export class WhatsApp {
       fs.rmSync(path.join(this.#mediaDir, createHash('sha256').update(`${g.chatId}/${g.id}`).digest('hex')), { force: true });
       this.#emit({ type: 'message.delete', chatId: g.chatId, id: g.id });
     }
+    if (gone.some((g) => g.chatId === STATUS_CHAT)) this.#emit({ type: 'statuses' });
     if (gone.length > 0) {
       this.#emitChats([...new Set(gone.map((g) => g.chatId))]);
       logger.info(`messages éphémères : ${gone.length} expiré(s)`);

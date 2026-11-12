@@ -2,7 +2,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { createState, type Accessor, type Setter } from 'gnim';
-import type { Call, Chat, ChatAction, ChatList, Event, Message, Presence, Status } from './api.ts';
+import type { Call, Chat, ChatAction, StatusGroup, ChatList, Event, Message, Presence, Status } from './api.ts';
 import type { Link, WaClient } from './client.ts';
 import { errorMessage } from './errors.ts';
 
@@ -60,6 +60,9 @@ export class Store {
   readonly presence: Accessor<Presence | null>;
   /** messages épinglés de la discussion ouverte (le plus récent d'abord) */
   readonly pins: Accessor<readonly Message[]>;
+  /** statuts (« stories ») de moins de 24 h, par personne */
+  readonly statuses: Accessor<readonly StatusGroup[]>;
+  readonly #setStatuses: Setter<readonly StatusGroup[]>;
   readonly #setPins: Setter<readonly Message[]>;
   readonly #setPresence: (p: Presence | null) => void;
   /** personnes en train d'écrire, par discussion (aperçu de la liste) */
@@ -113,6 +116,7 @@ export class Store {
     [this.older, this.#setOlder] = createState<OlderState>('idle');
     [this.presence, this.#setPresence] = createState<Presence | null>(null);
     [this.pins, this.#setPins] = createState<readonly Message[]>([]);
+    [this.statuses, this.#setStatuses] = createState<readonly StatusGroup[]>([]);
     [this.typing, this.#setTyping] = createState<ReadonlyMap<string, string>>(new Map());
     [this.drafts, this.#setDrafts] = createState<ReadonlyMap<string, string>>(new Map());
     [this.replyTo, this.setReplyTo] = createState<Message | null>(null);
@@ -153,6 +157,7 @@ export class Store {
       // autant de messages qu'affichés (pages plus anciennes déjà chargées comprises)
       if (id !== null) this.#setMessages(await this.client.messages(id, Math.min(500, Math.max(PAGE, this.messages.peek().length))));
       if (id !== null) void this.#loadPins(id);
+      void this.loadStatuses();
     } catch (error) {
       console.error(`rechargement : ${errorMessage(error)}`);
     }
@@ -225,6 +230,9 @@ export class Store {
       case 'message':
         if (e.message.chatId === this.current.peek()) this.#setMessages(mergeMessage(this.messages.peek(), e.message));
         if (!e.message.fromMe) this.onIncoming?.(e.message, this.#byId.get(e.message.chatId));
+        break;
+      case 'statuses':
+        void this.loadStatuses();
         break;
       case 'pins':
         if (e.chatId === this.current.peek()) void this.#loadPins(e.chatId);
@@ -330,6 +338,15 @@ export class Store {
         return GLib.SOURCE_REMOVE;
       }),
     );
+  }
+
+  /** Statuts relus (au chargement, à chaque changement annoncé par le démon). */
+  async loadStatuses(): Promise<void> {
+    try {
+      this.#setStatuses(await this.client.statuses());
+    } catch (error) {
+      console.error(`statuts : ${errorMessage(error)}`);
+    }
   }
 
   async #loadPins(id: string): Promise<void> {

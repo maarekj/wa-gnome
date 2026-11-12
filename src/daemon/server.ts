@@ -18,6 +18,7 @@
 //   POST /chats/:id/typing          ma saisie { state }
 //   POST /presence                  ma présence { online }
 //   POST /logout                    déconnexion du compte
+//   GET  /statuses                  statuts de moins de 24 h, par personne ; POST /statuses/:id/seen : vu
 //   POST /calls/:id/reject          refuse un appel qui sonne { message? : envoyé à l'appelant }
 //   GET  /events                    flux SSE des événements (voir shared/api.ts)
 //   GET  /accounts                  comptes et leur état ; POST /accounts : nouveau compte (appairage)
@@ -59,6 +60,8 @@ export interface Backend {
   typing: (chatId: string, state: 'composing' | 'recording' | 'paused') => Promise<void>;
   /** refuse un appel qui sonne ; `message` envoyé à l'appelant */
   rejectCall: (callId: string, message?: string) => Promise<void>;
+  /** statut vu (accusé à son auteur) */
+  seeStatus: (id: string) => Promise<void>;
 }
 
 /** Fichier à envoyer. */
@@ -178,7 +181,7 @@ export function startServer(opts: { host: string; port: number; token: string; a
     const store = account.store;
     const wa = account.wa;
     // segments variables : /chats/:id/messages/:mid
-    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => ((parts[0] === 'chats' || parts[0] === 'calls') && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
+    const route = `${req.method ?? 'GET'} /${parts.map((p, i) => ((parts[0] === 'chats' || parts[0] === 'calls' || parts[0] === 'statuses') && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
     const chatId = parts[1] ?? '';
     const messageId = parts[3] ?? '';
     switch (route) {
@@ -306,6 +309,13 @@ export function startServer(opts: { host: string; port: number; token: string; a
         json(res, 200, {});
         return;
       }
+      case 'GET /statuses':
+        json(res, 200, store.statuses(Math.floor(Date.now() / 1000)));
+        return;
+      case 'POST /statuses/:id/seen':
+        await wa.seeStatus(chatId);
+        json(res, 200, {});
+        return;
       case 'POST /calls/:id/reject': {
         const body = RejectBody.safeParse(await readBody(req));
         if (!body.success) throw new HttpError(400, z.prettifyError(body.error));

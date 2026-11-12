@@ -4,7 +4,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
+import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, STATUS_TTL, type StatusGroup, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS pins (
   expires INTEGER NOT NULL,
   PRIMARY KEY (chat_id, message_id)
 );
+-- statuts vus sur cet ordinateur
+CREATE TABLE IF NOT EXISTS status_seen (id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS reactions (
   chat_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -197,7 +199,17 @@ export function mentionsIn(value: unknown, depth = 0): string[] {
   return [];
 }
 
-/** Statuts (« stories ») : hors périmètre, jamais une discussion. */
+/** Statuts d'une personne : du nouveau ; date du dernier. */
+const unseen = (g: StatusGroup): boolean => g.items.some((i) => !i.seen);
+const lastStatus = (g: StatusGroup): number => g.items.at(-1)?.message.timestamp ?? 0;
+
+/** Couleur ARGB (nombre, éventuellement négatif) d'un statut texte → CSS `#rrggbb`, ou null. */
+export function argbCss(v: unknown): string | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  return `#${((v >>> 0) & 0xff_ff_ff).toString(16).padStart(6, '0')}`;
+}
+
+/** Statuts (« stories ») : jamais une discussion (messages gardés 24 h, voir `statuses`). */
 const STATUS = 'status@broadcast';
 
 const MessageRow = z.object({
@@ -1087,16 +1099,20 @@ export class Store {
   /** Messages éphémères expirés à `now` (secondes) : supprimés ; leurs identifiants. */
   purgeExpired(now: number): { chatId: string; id: string }[] {
     const rows = this.#db
-      .prepare('SELECT chat_id, id FROM messages WHERE expiration > 0 AND timestamp + expiration < ?')
-      .all(now)
+      .prepare('SELECT chat_id, id FROM messages WHERE (expiration > 0 AND timestamp + expiration < ?) OR (chat_id = ? AND timestamp < ?)')
+      .all(now, STATUS, now - STATUS_TTL)
       .map((r) => ({ chatId: String(r['chat_id']), id: String(r['id']) }));
     if (rows.length === 0) return [];
     this.transaction(() => {
       const del = this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?');
       const reactions = this.#db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ?');
+      const receipts = this.#db.prepare('DELETE FROM receipts WHERE chat_id = ? AND message_id = ?');
+      const seen = this.#db.prepare('DELETE FROM status_seen WHERE id = ?');
       for (const r of rows) {
         del.run(r.chatId, r.id);
         reactions.run(r.chatId, r.id);
+        receipts.run(r.chatId, r.id);
+        if (r.chatId === STATUS) seen.run(r.id);
       }
     });
     return rows;
@@ -1140,6 +1156,40 @@ export class Store {
   /** Message retiré de la base (message technique enregistré à tort). */
   dropMessage(chatId: string, id: string): void {
     this.#db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, id);
+  }
+
+  // ------------------------------------------------------------------ statuts
+
+  /** Statuts de moins de 24 h par personne : les miens d'abord, puis non vus, puis les plus récents. */
+  statuses(now: number): StatusGroup[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT m.id, m.from_me, m.sender, json_extract(m.raw, '$.message.extendedTextMessage.backgroundArgb') AS bg,
+                EXISTS (SELECT 1 FROM status_seen s WHERE s.id = m.id) AS seen
+         FROM messages m WHERE m.chat_id = ? AND m.timestamp >= ? AND m.deleted = 0 AND m.kind NOT IN ('reaction', 'other', 'call')
+         ORDER BY m.timestamp`,
+      )
+      .all(STATUS, now - STATUS_TTL);
+    const groups = new Map<string, StatusGroup>();
+    for (const r of rows) {
+      const message = this.message(STATUS, String(r['id']));
+      if (message === null) continue;
+      const me = r['from_me'] === 1;
+      const sender = me ? 'me' : this.canonical(String(r['sender'] ?? ''));
+      if (sender === '') continue;
+      let g = groups.get(sender);
+      if (g === undefined) {
+        g = { sender, name: me ? 'Mon statut' : this.displayName(sender), me, items: [] };
+        groups.set(sender, g);
+      }
+      g.items.push({ message, background: argbCss(r['bg']), seen: me || r['seen'] === 1 });
+    }
+    return [...groups.values()].toSorted((a, b) => Number(b.me) - Number(a.me) || Number(unseen(b)) - Number(unseen(a)) || lastStatus(b) - lastStatus(a));
+  }
+
+  /** Statut vu ici ; true s'il ne l'était pas. */
+  setStatusSeen(id: string): boolean {
+    return this.#db.prepare('INSERT OR IGNORE INTO status_seen (id) VALUES (?)').run(id).changes > 0;
   }
 
   /** Mes identifiants (numéro, lid) : citations de mes propres messages reconnues. */

@@ -7,12 +7,15 @@ import { proto } from 'baileys';
 import { forwardedOf, mediaOf, pinOf, quotedOf, toMessage } from './convert.ts';
 import { isNoPicture } from './pictures.ts';
 import { forwardScoreIn, mentionsIn, Store } from './store.ts';
+import { STATUS_TTL } from '../shared/api.ts';
 
 const LID = '111@lid';
 const PN = '33600000001@s.whatsapp.net';
 const GROUP = '1203@g.us';
 
 const msg = (chatId: string, id: string, timestamp: number, sender: string | null = null): Converted => ({ id, chatId, fromMe: false, sender, senderName: null, timestamp, kind: 'text', text: id, media: null, quoted: null, status: null });
+
+const statusMsg = (id: string, ts: number, sender: string | null, fromMe = false): Converted => ({ ...msg('status@broadcast', id, ts, sender), fromMe });
 
 void describe('Store : lid → numéro', () => {
   void it('fusionne la discussion lid dans celle du numéro', () => {
@@ -280,6 +283,23 @@ void describe('statuts et diffusions', () => {
     const wa = { key: { remoteJid: '123@broadcast', id: 'x', fromMe: false, participant: PN }, message: { conversation: 'bonjour' }, messageTimestamp: 10 };
     assert.equal(toMessage(wa)?.chatId, PN);
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
+  });
+  void it('statuts : par personne, 24 h, vus, fond des statuts texte', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage(statusMsg('a', 1000, PN), JSON.stringify({ message: { extendedTextMessage: { text: 'a', backgroundArgb: -14_913_064 } } }));
+    store.upsertMessage(statusMsg('b', 2000, PN), '{}');
+    store.upsertMessage(statusMsg('c', 1500, '2@s.whatsapp.net'), '{}');
+    store.upsertMessage(statusMsg('vieux', 10, PN), '{}');
+    store.upsertMessage(statusMsg('moi', 1200, null, true), '{}');
+    // pas une discussion
+    assert.deepEqual(store.chats(), []);
+    store.setStatusSeen('c');
+    const groups = store.statuses(10 + STATUS_TTL + 1);
+    assert.deepEqual(groups.map((g) => [g.sender, g.items.map((i) => i.message.id)]), [['me', ['moi']], [PN, ['a', 'b']], ['2@s.whatsapp.net', ['c']]]);
+    assert.equal(groups[1]?.items[0]?.background, '#1c71d8');
+    assert.equal(groups[2]?.items[0]?.seen, true);
+    // expirés : retirés
+    assert.deepEqual(store.purgeExpired(1000 + STATUS_TTL + 1).map((r) => r.id).toSorted(), ['a', 'vieux']);
   });
   void it('mentions : relues du message, noms et moi ; citées ignorées', () => {
     const wa = { key: { remoteJid: '1@g.us', id: 'mm', fromMe: false, participant: PN }, message: { extendedTextMessage: { text: '@33611 et @99', contextInfo: { mentionedJid: ['33611@s.whatsapp.net', '99@lid'], quotedMessage: { extendedTextMessage: { text: 'x', contextInfo: { mentionedJid: ['autre@s.whatsapp.net'] } } } } } }, messageTimestamp: 10 };

@@ -11,6 +11,7 @@ import { errorMessage } from '../shared/errors.ts';
 import { esc, fmtShortDate, snippetMarkup } from '../shared/format.ts';
 import type { Store } from '../shared/store.ts';
 import { attachChatMenu } from './ChatMenu.ts';
+import { openStatuses, statusEntryLabel } from './Statuses.ts';
 import { keyedListBox } from './KeyedBox.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
 import { asWidget } from './widgets.ts';
@@ -320,6 +321,21 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
                 <Gtk.Image iconName="folder-symbolic" />
                 <Gtk.Label label="Archivées" xalign={0} hexpand cssClasses={['heading']} />
                 <Gtk.Label label={archivedCount(String)} cssClasses={['dim-label', 'caption']} />
+              </Gtk.Box>
+            </Gtk.Button>
+            {/* statuts (« stories ») de moins de 24 h : fenêtre à part */}
+            <Gtk.Button
+              visible={createMemo(() => !archived() && query().trim() === '' && store.statuses().some((g) => !g.me))}
+              cssClasses={['flat', 'archived-entry']}
+              marginStart={6}
+              marginEnd={6}
+              tooltipText="Statuts des contacts"
+              onClicked={(b: Gtk.Button) => openStatuses(b, store, pictures, toast)}
+            >
+              <Gtk.Box spacing={12} marginStart={14} marginEnd={4}>
+                <Gtk.Image iconName="camera-photo-symbolic" />
+                <Gtk.Label label="Statuts" xalign={0} hexpand cssClasses={['heading']} />
+                <Gtk.Label label={createMemo(() => statusEntryLabel(store.statuses()))} cssClasses={createMemo(() => (store.statuses().some((g) => !g.me && g.items.some((i) => !i.seen)) ? ['accent', 'caption'] : ['dim-label', 'caption']))} />
               </Gtk.Box>
             </Gtk.Button>
             {/* chaînes suivies : à part, comme l'onglet « Actus » du téléphone */}
