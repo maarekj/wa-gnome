@@ -25,13 +25,14 @@ export class Pictures {
   }
 
   /** Photo d'une discussion (null : pas de photo, ou pas encore chargée). */
-  texture(id: string): Accessor<Gdk.Texture | null> {
+  /** `urgent` : avant les photos déjà demandées (membres de la discussion affichée). */
+  texture(id: string, urgent = false): Accessor<Gdk.Texture | null> {
     let entry = this.#entries.get(id);
     if (entry === undefined) {
       const [texture, set] = createState<Gdk.Texture | null>(null);
       entry = { texture, set };
       this.#entries.set(id, entry);
-      this.#enqueue(id);
+      this.#enqueue(id, urgent);
     }
     return entry.texture;
   }
@@ -41,8 +42,11 @@ export class Pictures {
     if (this.#entries.has(id)) this.#enqueue(id);
   }
 
-  #enqueue(id: string): void {
-    if (!this.#queue.includes(id)) this.#queue.push(id);
+  #enqueue(id: string, urgent = false): void {
+    if (!this.#queue.includes(id)) {
+      if (urgent) this.#queue.unshift(id);
+      else this.#queue.push(id);
+    }
     this.#pump();
   }
 

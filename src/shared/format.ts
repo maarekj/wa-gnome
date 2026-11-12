@@ -81,18 +81,36 @@ function closing(s: string, i: number, c: string): number {
   return -1;
 }
 
-/** Début d'adresse web ou e-mail. */
-const URL_START = /^(?:https?:\/\/|www\.)[^\s<>"]+/iu;
-const EMAIL = /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+/u;
+/** Début d'adresse web ou e-mail (collants : essayés à une position, sans copier le texte). */
+const URL_START = /(?:https?:\/\/|www\.)[^\s<>"]+/iuy;
+const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/uy;
+/** Caractère pouvant commencer une adresse e-mail. */
+const EMAIL_CHAR = /[\w.+-]/u;
+
+/** Dernier « @ » du dernier texte examiné (appels successifs sur le même texte : une recherche). */
+let atText = '';
+let lastAt = -1;
+/** Un « @ » se trouve dans `s` après la position `i` (adresse e-mail possible). */
+function atAfter(s: string, i: number): boolean {
+  if (s !== atText) {
+    atText = s;
+    lastAt = s.lastIndexOf('@');
+  }
+  return lastAt > i;
+}
 
 /**
  * Lien commençant en `i` (adresse web ou e-mail, en début de mot), ponctuation finale exclue
  * (« voir https://x.fr. » : le point n'en fait pas partie, parenthèse fermante si non ouverte).
  */
 export function linkAt(s: string, i: number): { text: string; href: string } | null {
+  const c = s[i] ?? '';
+  // essai rapide (appelé à chaque caractère) : ni « h », ni « w », ni e-mail possible
+  const web = c === 'h' || c === 'H' || c === 'w' || c === 'W';
+  if (!web && (!EMAIL_CHAR.test(c) || !atAfter(s, i))) return null;
   if (i > 0 && /[\w@/.]/u.test(s[i - 1] ?? '')) return null;
-  const rest = s.slice(i);
-  const url = URL_START.exec(rest)?.[0];
+  URL_START.lastIndex = i;
+  const url = web ? URL_START.exec(s)?.[0] : undefined;
   if (url !== undefined) {
     let text = url;
     for (;;) {
@@ -104,7 +122,8 @@ export function linkAt(s: string, i: number): { text: string; href: string } | n
     if (/^www\.$/iu.test(text) || text.length < 5) return null;
     return { text, href: /^www\./iu.test(text) ? `https://${text}` : text };
   }
-  const mail = EMAIL.exec(rest)?.[0];
+  EMAIL.lastIndex = i;
+  const mail = EMAIL.exec(s)?.[0];
   if (mail !== undefined) {
     const text = mail.replace(/[.-]+$/u, '');
     return { text, href: `mailto:${text}` };
@@ -181,6 +200,24 @@ export function readMoreCut(text: string, limit = READ_MORE): string | null {
  * `1. ` (laissées telles quelles).
  */
 export function waMarkup(text: string): string {
+  const known = markupCache.get(text);
+  if (known !== undefined) {
+    // plus récent : en fin de file
+    markupCache.delete(text);
+    markupCache.set(text, known);
+    return known;
+  }
+  const out = waMarkupUncached(text);
+  markupCache.set(text, out);
+  if (markupCache.size > MARKUP_CACHE) markupCache.delete(markupCache.keys().next().value ?? '');
+  return out;
+}
+
+/** Balisages calculés, par texte (les plus récents gardés) : une bulle mise à jour ne les refait pas. */
+const markupCache = new Map<string, string>();
+const MARKUP_CACHE = 2000;
+
+function waMarkupUncached(text: string): string {
   return text
     .split('```')
     .map((part, k, parts) =>

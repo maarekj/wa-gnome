@@ -33,12 +33,31 @@ const keyOf = (m: Pick<Message, 'chatId' | 'id'>): string => `${m.chatId}/${m.id
 const [translations, setTranslations] = createState<ReadonlyMap<string, Translation>>(new Map());
 export { translations };
 
+/** Suivis d'un message (sa bulle) : prévenus quand sa traduction change, et seulement elle. */
+const watchers = new Map<string, Set<() => void>>();
+
 const put = (key: string, t: Translation | null): void => {
   const next = new Map(translations.peek());
   if (t === null) next.delete(key);
   else next.set(key, t);
   setTranslations(next);
+  for (const fn of watchers.get(key) ?? []) fn();
 };
+
+/** `fn` appelée à chaque changement de la traduction de `m` ; renvoie le désabonnement. */
+export function watchTranslation(m: Pick<Message, 'chatId' | 'id'>, fn: () => void): () => void {
+  const key = keyOf(m);
+  let set = watchers.get(key);
+  if (set === undefined) {
+    set = new Set();
+    watchers.set(key, set);
+  }
+  set.add(fn);
+  return () => {
+    set.delete(fn);
+    if (set.size === 0) watchers.delete(key);
+  };
+}
 
 /** Traduction affichée sous un message, ou undefined. */
 export const translationOf = (m: Pick<Message, 'chatId' | 'id'>): Translation | undefined => translations.peek().get(keyOf(m));

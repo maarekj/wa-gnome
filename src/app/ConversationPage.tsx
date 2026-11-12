@@ -20,7 +20,7 @@ import { DownloadCancelled } from './Whisper.ts';
 import { ScheduledBar, scheduleButton } from './Schedule.ts';
 import { mentionPicker, type MentionPicker, resolveMentions } from './MentionPicker.ts';
 import { startSummary, SummaryPanel, summaries, summaryKey } from './Summary.ts';
-import { downloadWhisper, hideTranslation, languageName, MissingModel, translateMessage, translationOf, translations } from './Translate.ts';
+import { downloadWhisper, hideTranslation, languageName, MissingModel, translateMessage, translationOf, watchTranslation } from './Translate.ts';
 import { fmtRecording, Recorder } from './Recorder.ts';
 import { attachDragSelect } from './DragSelect.ts';
 import { openGallery } from './Gallery.ts';
@@ -122,6 +122,20 @@ function offerWhisperDownload(parent: Gtk.Widget, model: WhisperModel, toast: (t
 /** Transcription et traduction d'un message (sous son texte), mises à jour en direct. */
 function TranslationView(m: Message): Gtk.Widget {
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, cssClasses: ['translation'], visible: false });
+  // contenu construit à la première traduction de ce message (rien pour les autres bulles)
+  let fill: (() => void) | null = null;
+  const sync = (): void => {
+    if (fill === null && translationOf(m) === undefined) return;
+    fill ??= buildTranslation(m, box);
+    fill();
+  };
+  sync();
+  onCleanup(watchTranslation(m, sync));
+  return box;
+}
+
+/** Libellés de la traduction dans `box` ; renvoie leur mise à jour. */
+function buildTranslation(m: Message, box: Gtk.Box): () => void {
   const transcript = new Gtk.Label({ xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, selectable: true, maxWidthChars: 60, cssClasses: ['transcript'] });
   // à la ligne : un long message d'erreur élargissait toute la conversation (et la fenêtre)
   const head = new Gtk.Label({ xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, maxWidthChars: 60, cssClasses: ['caption', 'dim-label'] });
@@ -156,9 +170,7 @@ function TranslationView(m: Message): Gtk.Widget {
                   ? 'Traduction'
                   : `Traduit ${fromLanguage(t.from)}`;
   };
-  sync();
-  onCleanup(translations.subscribe(sync));
-  return box;
+  return sync;
 }
 
 /** Couleurs des noms des participants (lisibles en thème clair et sombre). */
@@ -188,7 +200,7 @@ function findBubble(w: Gtk.Widget): Gtk.Widget | null {
 function withAuthor(ctx: BubbleContext, w: Gtk.Widget, m: Message, live: Accessor<Item>): Gtk.Widget {
   const name = m.senderName ?? m.sender?.split('@')[0] ?? '';
   const avatar = new Adw.Avatar({ size: 28, text: avatarText(name), showInitials: /\p{L}/u.test(name), valign: Gtk.Align.START, marginTop: 2, tooltipText: name });
-  if (m.sender !== null) bindAvatar(avatar, ctx.pictures.texture(m.sender));
+  if (m.sender !== null) bindAvatar(avatar, ctx.pictures.texture(m.sender, true));
   const first = (): boolean => {
     const it = live.peek();
     return it.kind === 'message' && it.showSender;
@@ -326,8 +338,8 @@ function QuoteBlock(ctx: BubbleContext, q: Quoted): Gtk.Widget {
   return box;
 }
 
-/** Menu d'une bulle (clic droit, appui long) : répondre, copier le texte. */
-function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Message): void {
+/** Actions `msg.*` du menu d'une bulle. */
+function installActions(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Message): void {
   const group = new Gio.SimpleActionGroup();
   const reactAction = new Gio.SimpleAction({ name: 'react', parameterType: new GLib.VariantType('s') });
   reactAction.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => ctx.react(msg(), param?.get_string()[0] ?? ''));
@@ -382,7 +394,19 @@ function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Mes
   });
   group.add_action(copy);
   widget.insert_action_group('msg', group);
+}
+
+/** Menu d'une bulle (clic droit, appui long) : répondre, copier le texte. */
+function attachBubbleMenu(ctx: BubbleContext, widget: Gtk.Widget, msg: () => Message): void {
+  // actions créées à la première ouverture du menu (pas pour chaque bulle affichée)
+  let installed = false;
+  const install = (): void => {
+    if (installed) return;
+    installed = true;
+    installActions(ctx, widget, msg);
+  };
   const openMenu = (model: Gio.Menu, x: number, y: number): void => {
+    install();
     const menu = Gtk.PopoverMenu.new_from_model_full(model, Gtk.PopoverMenuFlags.NESTED);
     menu.hasArrow = false;
     menu.halign = Gtk.Align.START;
@@ -505,12 +529,32 @@ function MessagePicture(ctx: BubbleContext, m: Message & { media: Media }): Gtk.
       frame.add_css_class('media-error');
     }
   };
-  void load();
+  // pleine taille chargée à l'affichage seulement (hors écran : vignette), libérée en sortant
+  let token = 0;
+  frame.connect('map', () => {
+    token += 1;
+    if (loaded === null) void load();
+  });
+  frame.connect('unmap', () => {
+    token += 1;
+    const gone = token;
+    // court délai : un défilement rapide aller-retour ne recharge pas tout
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+      if (token === gone && !frame.get_mapped() && loaded !== null) {
+        loaded = null;
+        frame.setPaintable(thumbnailTexture(m.media));
+      }
+      return GLib.SOURCE_REMOVE;
+    });
+  });
   if (!sticker) {
     frame.set_cursor_from_name('pointer');
     const click = new Gtk.GestureClick();
     click.connect('released', () => {
-      if (loaded === null) return;
+      if (loaded === null) {
+        void load();
+        return;
+      }
       // photos chargées de la discussion (ordre chronologique), pour précédente / suivante
       const photos = ctx.photos();
       const start = photos.findIndex((p) => p.id === m.id);
@@ -1444,7 +1488,7 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
                   self,
                   createMemo(() => {
                     const c = chat();
-                    return c === null ? null : pictures.texture(c.id)();
+                    return c === null ? null : pictures.texture(c.id, true)();
                   }),
                 )
               }
