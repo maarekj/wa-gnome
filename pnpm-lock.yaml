@@ -175,7 +175,7 @@ overrides:
   '@girs/gst-1.0': 5.5.0
 
 patchedDependencies:
-  baileys@7.0.0-rc14: a8f9c66a6f14cbd9f582b76ab9a24538f2de0e8747245c85a60c9088f8cc9687
+  baileys@7.0.0-rc14: 84283d896002ba861cd7e2e71a9af654d9f641ca3eb107286faf75dd5370ca1c
 
 importers:
 
@@ -183,7 +183,7 @@ importers:
     dependencies:
       baileys:
         specifier: 7.0.0-rc14
-        version: 7.0.0-rc14(patch_hash=a8f9c66a6f14cbd9f582b76ab9a24538f2de0e8747245c85a60c9088f8cc9687)(sharp@0.35.5(@types/node@26.6.6))
+        version: 7.0.0-rc14(patch_hash=84283d896002ba861cd7e2e71a9af654d9f641ca3eb107286faf75dd5370ca1c)(sharp@0.35.5(@types/node@26.6.6))
       gnim:
         specifier: ^1.9.1
         version: 1.9.1
@@ -1768,7 +1768,7 @@ snapshots:
 
   atomic-sleep@1.0.0: {}
 
-  baileys@7.0.0-rc14(patch_hash=a8f9c66a6f14cbd9f582b76ab9a24538f2de0e8747245c85a60c9088f8cc9687)(sharp@0.35.5(@types/node@26.6.6)):
+  baileys@7.0.0-rc14(patch_hash=84283d896002ba861cd7e2e71a9af654d9f641ca3eb107286faf75dd5370ca1c)(sharp@0.35.5(@types/node@26.6.6)):
     dependencies:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4

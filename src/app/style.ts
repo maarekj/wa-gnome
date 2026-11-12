@@ -260,9 +260,12 @@ export const STYLESHEET = `
   font-size: 22pt;
   font-weight: bold;
 }
-/* sondage dans une bulle */
+/* sondage dans une bulle : marges intérieures (textes d'indication pas collés aux bords) */
+.poll {
+  padding: 4px 8px 2px 8px;
+}
 .poll-option {
-  padding: 4px 6px;
+  padding: 6px 8px;
 }
 .poll-bar trough,
 .poll-bar progress {

@@ -208,7 +208,8 @@ export type MessageInfo = z.infer<typeof MessageInfo>;
 export const Poll = z.object({
   /** plusieurs réponses possibles */
   multiple: z.boolean(),
-  options: z.array(z.object({ name: z.string(), count: z.number(), mine: z.boolean(), voters: z.array(z.string()) })),
+  /** votants : identifiant (null : moi) et nom affiché */
+  options: z.array(z.object({ name: z.string(), count: z.number(), mine: z.boolean(), voters: z.array(z.object({ id: z.nullable(z.string()), name: z.string() })) })),
   /** personnes ayant voté */
   voters: z.number(),
 });

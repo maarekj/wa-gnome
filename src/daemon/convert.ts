@@ -146,9 +146,9 @@ export interface RawPoll {
 export function pollOf(content: proto.IMessage): RawPoll | null {
   const p = content.pollCreationMessage ?? content.pollCreationMessageV2 ?? content.pollCreationMessageV3 ?? null;
   if (p === null) return null;
-  // V3 : une seule réponse ; sinon nombre choisi par l'auteur (0 : autant que voulu)
-  const single = content.pollCreationMessageV3 !== null && content.pollCreationMessageV3 !== undefined ? true : p.selectableOptionsCount === 1;
-  return { options: (p.options ?? []).map((o) => o.optionName ?? ''), multiple: !single };
+  // nombre de réponses choisi par l'auteur : 1 → une seule ; 0 → autant que voulu (V3 aussi :
+  // le téléphone l'emploie pour les deux, Baileys pour la réponse unique seulement)
+  return { options: (p.options ?? []).map((o) => o.optionName ?? ''), multiple: p.selectableOptionsCount !== 1 };
 }
 
 /** Empreinte d'une option de sondage (SHA-256 de son nom, base64), comme dans les votes. */

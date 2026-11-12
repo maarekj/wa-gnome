@@ -1,3 +1,16 @@
+diff --git a/lib/Socket/messages-send.js b/lib/Socket/messages-send.js
+index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..cfcf9e3ebba2c350b892f3c17f8044300846562c 100644
+--- a/lib/Socket/messages-send.js
++++ b/lib/Socket/messages-send.js
+@@ -492,7 +492,7 @@ export const makeMessagesSocket = (config) => {
+                 await sendNode(stanza);
+                 return;
+             }
+-            if (normalizeMessageContent(message)?.pinInChatMessage || normalizeMessageContent(message)?.reactionMessage) {
++            if (normalizeMessageContent(message)?.pinInChatMessage || normalizeMessageContent(message)?.reactionMessage || normalizeMessageContent(message)?.pollUpdateMessage) {
+                 extraAttrs['decrypt-fail'] = 'hide'; // todo: expand for reactions and other types
+             }
+             if (isGroupOrStatus && !isRetryResend) {
 diff --git a/lib/Types/Events.d.ts b/lib/Types/Events.d.ts
 index f55c4c325b08b8c25dc9d17032514ce5c80ad3fd..616084578c984993af7eb1d123a6c97814bad52b 100644
 --- a/lib/Types/Events.d.ts

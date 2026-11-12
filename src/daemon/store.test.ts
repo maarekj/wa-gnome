@@ -285,7 +285,9 @@ void describe('statuts et diffusions', () => {
     assert.equal(toMessage({ ...wa, key: { ...wa.key, fromMe: true } })?.chatId, '123@broadcast');
   });
   void it('sondages : définition, votes (dernier par personne), chiffrement des votes', () => {
-    const wa = { key: { remoteJid: '1@g.us', id: 'p1', fromMe: false, participant: PN }, message: { pollCreationMessageV3: { name: 'Pizza ?', options: [{ optionName: 'Oui' }, { optionName: 'Non' }] } }, messageTimestamp: 10 };
+    const wa = { key: { remoteJid: '1@g.us', id: 'p1', fromMe: false, participant: PN }, message: { pollCreationMessageV3: { name: 'Pizza ?', options: [{ optionName: 'Oui' }, { optionName: 'Non' }], selectableOptionsCount: 1 } }, messageTimestamp: 10 };
+    // V3 avec 0 : plusieurs réponses (sondage créé sur le téléphone)
+    assert.equal(toMessage({ ...wa, message: { pollCreationMessageV3: { name: 'x', options: [{ optionName: 'a' }], selectableOptionsCount: 0 } } })?.poll?.multiple, true);
     const m = toMessage(wa);
     assert.deepEqual([m?.kind, m?.text, m?.poll], ['poll', 'Pizza ?', { options: ['Oui', 'Non'], multiple: false }]);
     const store = new Store(':memory:');

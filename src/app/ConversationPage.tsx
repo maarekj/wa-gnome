@@ -226,6 +226,8 @@ interface BubbleContext {
   readonly pin: (m: Message, duration: number | null) => void;
   /** voter à un sondage (options choisies ; vide : vote retiré) */
   readonly vote: (m: Message, options: readonly string[]) => void;
+  /** mon identifiant (ma photo), null s'il n'est pas connu */
+  readonly me: () => string | null;
 }
 
 /** Messages transférables (pas ceux supprimés pour tous). */
@@ -587,6 +589,39 @@ function PinnedBar(store: Store, go: (m: Message) => void): Gtk.Widget {
   return bar;
 }
 
+/** Récapitulatif des votes d'un sondage : chaque option, son nombre de votes et les votants. */
+function openPollVotes(parent: Gtk.Widget, pictures: Pictures, me: string | null, m: Message): void {
+  const poll = m.poll;
+  if (poll === null) return;
+  const page = new Adw.PreferencesPage();
+  const head = new Adw.PreferencesGroup({ title: m.text, description: poll.voters === 1 ? '1 personne a voté' : `${poll.voters} personnes ont voté` });
+  page.add(head);
+  // options les plus choisies d'abord (ordre du sondage à égalité)
+  for (const o of poll.options.toSorted((a, b) => b.count - a.count)) {
+    const group = new Adw.PreferencesGroup({ title: o.name, description: o.count === 0 ? 'Aucun vote' : o.count === 1 ? '1 vote' : `${o.count} votes` });
+    for (const v of o.voters) {
+      const row = new Adw.ActionRow({ title: v.name, ...(v.id === null ? { subtitle: 'Votre vote' } : {}) });
+      // photo de la personne (initiales en attendant, ou sans photo)
+      const avatar = new Adw.Avatar({ size: 32, text: v.name.replace(/^~\s*/u, ''), showInitials: true });
+      // moi : ma photo de profil
+      const id = v.id ?? me;
+      if (id !== null) {
+        const texture = pictures.texture(id);
+        avatar.set_custom_image(texture.peek());
+        const off = texture.subscribe(() => avatar.set_custom_image(texture.peek()));
+        row.connect('destroy', off);
+      }
+      row.add_prefix(avatar);
+      group.add(row);
+    }
+    page.add(group);
+  }
+  const view = new Adw.ToolbarView({ content: page });
+  view.add_top_bar(new Adw.HeaderBar());
+  const dialog = new Adw.Dialog({ title: 'Votes du sondage', child: view, contentWidth: 420, contentHeight: 520 });
+  dialog.present(parent);
+}
+
 /** Nouvelle sélection après un clic sur une option (une seule réponse : remplacée, ou retirée). */
 export function toggleVote(poll: Poll, option: string): string[] {
   const mine = poll.options.filter((o) => o.mine).map((o) => o.name);
@@ -615,7 +650,7 @@ function PollView(ctx: BubbleContext, msg: () => Message, live: Accessor<Item>):
       lines.append(top);
       lines.append(new Gtk.ProgressBar({ fraction: o.count / max, cssClasses: ['poll-bar'] }));
       row.child = lines;
-      row.tooltipText = o.voters.length === 0 ? 'Voter' : `${o.voters.join(', ')}${o.mine ? '' : ' — cliquer pour voter'}`;
+      row.tooltipText = o.voters.length === 0 ? 'Voter' : `${o.voters.map((v) => v.name).join(', ')}${o.mine ? '' : ' — cliquer pour voter'}`;
       row.update_property([Gtk.AccessibleProperty.LABEL], [`${o.name} : ${o.count} vote${o.count > 1 ? 's' : ''}${o.mine ? ' (le vôtre)' : ''}`]);
       // sélection relue au clic (vote précédent pas encore revenu : pas écrasé)
       row.connect('clicked', () => {
@@ -624,7 +659,12 @@ function PollView(ctx: BubbleContext, msg: () => Message, live: Accessor<Item>):
       });
       box.append(row);
     }
-    box.append(new Gtk.Label({ label: poll.voters === 0 ? 'Aucun vote' : poll.voters === 1 ? '1 personne a voté' : `${poll.voters} personnes ont voté`, xalign: 0, cssClasses: ['caption', 'dim-label'] }));
+    const foot = new Gtk.Box({ spacing: 6 });
+    foot.append(new Gtk.Label({ label: poll.voters === 0 ? 'Aucun vote' : poll.voters === 1 ? '1 personne a voté' : `${poll.voters} personnes ont voté`, xalign: 0, hexpand: true, cssClasses: ['caption', 'dim-label'] }));
+    const details = new Gtk.Button({ label: 'Voir les votes', cssClasses: ['flat', 'caption'], sensitive: poll.voters > 0 });
+    details.connect('clicked', () => openPollVotes(box, ctx.pictures, ctx.me(), msg()));
+    foot.append(details);
+    box.append(foot);
   };
   // redessiné seulement si le sondage change (pas pour un accusé ou une réaction)
   let shown = '';
@@ -1619,7 +1659,7 @@ export function ConversationPage({ store, pictures, toast, panels }: { store: St
                       conversation = self;
                       // glisser d'un message à l'autre : sélection (comme Telegram Desktop)
                       attachDragSelect(self, () => scroller, () => selection.peek(), setSelection);
-                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), pinned: () => new Set(store.pins.peek().map((p) => p.id)), pin: (m, duration) => pinMessage(m, duration), vote: (m, options) => void store.client.messageAction(m.chatId, m.id, { action: 'vote', options: [...options] }).catch((error: unknown) => toast(`Vote impossible : ${errorMessage(error)}`)), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
+                      onCleanup(keyedBox(self, items, (it) => it.key, bubble({ loader, toast, chatName: () => chat.peek()?.name ?? '', photos: () => store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce), pictures, info: (m) => openMessageInfo(self, store, pictures, m, toast), edit: (m) => store.setEditing(m), remove: (parent, m, action) => confirmRemove(parent, store, m, action, toast), selection, toggleSelect, forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection), translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang), pinned: () => new Set(store.pins.peek().map((p) => p.id)), pin: (m, duration) => pinMessage(m, duration), me: () => store.status.peek().me?.id ?? null, vote: (m, options) => void store.client.messageAction(m.chatId, m.id, { action: 'vote', options: [...options] }).catch((error: unknown) => toast(`Vote impossible : ${errorMessage(error)}`)), reply: (m) => store.setReplyTo(m), react: (m, emoji) => void store.client.react(m.chatId, m.id, emoji).catch((error: unknown) => toast(`Réaction impossible : ${errorMessage(error)}`)), scrollTo: (id) => scrollToMessage(self, id) })));
                     }}
                   />
                 </Gtk.Box>

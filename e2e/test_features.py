@@ -476,3 +476,7 @@ def test_sondage_voter(run_app):
     assert call['args'][2] == {'action': 'vote', 'options': ['Dimanche']}
     app.find('button', 'Dimanche : 1 vote (le vôtre)')
     assert app.text_visible('2 personnes ont voté')
+    # récapitulatif : votants par option
+    app.click('button', 'Voir les votes')
+    assert app.text_visible('Votes du sondage')
+    assert app.text_visible('Votre vote')

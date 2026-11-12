@@ -102,6 +102,16 @@ CREATE TABLE IF NOT EXISTS poll_votes (
   at INTEGER NOT NULL,
   PRIMARY KEY (chat_id, poll_id, voter)
 );
+-- votes reçus pas encore déchiffrables (message brut), essayés de nouveau au démarrage
+CREATE TABLE IF NOT EXISTS pending_votes (
+  chat_id TEXT NOT NULL,
+  vote_id TEXT NOT NULL,
+  poll_id TEXT NOT NULL,
+  raw TEXT NOT NULL,
+  -- essais déjà faits (abandon au-delà de 10)
+  tries INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (chat_id, vote_id)
+);
 -- messages programmés (envoyés par le démon à l'heure dite)
 CREATE TABLE IF NOT EXISTS scheduled (
   id TEXT PRIMARY KEY,
@@ -286,7 +296,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 17;
+const VERSION = 19;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -411,6 +421,15 @@ export class Store {
           FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
           WHERE push <> '' GROUP BY who
         ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
+    }
+    if (!fresh && version < 19) {
+      // votes en attente : une ligne par message de vote (doublons et essais sans fin évités)
+      this.#db.exec('DROP TABLE IF EXISTS pending_votes');
+      this.#db.exec(SCHEMA);
+    }
+    if (!fresh && version < 18) {
+      // réponse unique ou multiple mal déduite (V3) : sondages relus
+      this.setFlag('backfill-polls', true);
     }
     if (!fresh && version < 17) {
       this.#db.exec('ALTER TABLE messages ADD COLUMN poll TEXT');
@@ -1316,6 +1335,18 @@ export class Store {
     );
   }
 
+  /** Vote mis en attente (une fois par message) ; `tries` : essais déjà faits. */
+  addPendingVote(chatId: string, voteId: string, pollId: string, raw: string, tries = 0): void {
+    if (tries >= 10) return;
+    this.#db.prepare('INSERT OR IGNORE INTO pending_votes (chat_id, vote_id, poll_id, raw, tries) VALUES (?, ?, ?, ?, ?)').run(chatId, voteId, pollId, raw, tries);
+  }
+
+  /** Votes en attente, retirés de la table (remis par l'appelant s'ils échouent encore). */
+  takePendingVotes(): { chatId: string; pollId: string; raw: string; tries: number }[] {
+    const rows = this.#db.prepare('DELETE FROM pending_votes RETURNING chat_id, poll_id, raw, tries').all();
+    return rows.map((r) => ({ chatId: String(r['chat_id']), pollId: String(r['poll_id']), raw: String(r['raw']), tries: Number(r['tries']) }));
+  }
+
   /** Définition d'un sondage enregistrée (rattrapage de l'historique). */
   setPollDefinition(chatId: string, id: string, question: string, poll: { options: readonly string[]; multiple: boolean }): void {
     this.#db.prepare("UPDATE messages SET poll = ?, kind = 'poll', text = ? WHERE chat_id = ? AND id = ?").run(JSON.stringify(poll), question, chatId, id);
@@ -1354,7 +1385,7 @@ export class Store {
       options: def.data.options.map((name, i) => {
         const list = by[i] ?? [];
         const isMe = (v: string): boolean => v === 'me' || this.isMe(v);
-        return { name, count: list.length, mine: list.some((x) => isMe(x.voter)), voters: list.map((x) => (isMe(x.voter) ? 'Vous' : this.displayName(this.canonical(x.voter)))) };
+        return { name, count: list.length, mine: list.some((x) => isMe(x.voter)), voters: list.map((x) => (isMe(x.voter) ? { id: null, name: 'Vous' } : { id: this.canonical(x.voter), name: this.displayName(this.canonical(x.voter)) })) };
       }),
     };
   }
