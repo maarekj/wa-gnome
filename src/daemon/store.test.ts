@@ -571,3 +571,32 @@ void describe('serveur : paramètres', () => {
     assert.equal(intParam(u(''), 'limit', 1, 500, 50), 50);
   });
 });
+
+void describe('cache des médias', () => {
+  void it('les moins récemment lus partent d’abord, jusqu’à la taille visée', async () => {
+    const { evictions } = await import('./whatsapp.ts');
+    const files = [
+      { name: 'récent', size: 40, used: 30 },
+      { name: 'vieux', size: 40, used: 10 },
+      { name: 'moyen', size: 40, used: 20 },
+    ];
+    assert.deepEqual(evictions(files, 200, 100), []);
+    assert.deepEqual(evictions(files, 100, 50), ['vieux', 'moyen']);
+    // jamais plus que le nécessaire
+    assert.deepEqual(evictions(files, 100, 90), ['vieux']);
+  });
+
+  void it('discussion supprimée : ses médias listés, tables annexes vidées', () => {
+    const file = tmp('media');
+    remove(file);
+    const store = new Store(file);
+    store.upsertMessage({ ...msg(PN, 'img', 1), kind: 'image', media: { mimetype: 'image/jpeg', size: 1, width: 1, height: 1, thumbnail: null, fileName: null, seconds: null, waveform: null } }, '{}');
+    store.upsertMessage(msg(PN, 'txt', 2), '{}');
+    store.addScheduled({ id: 's', chatId: PN, text: 'x', at: 9_999_999_999, replyTo: null, mentions: [] });
+    assert.deepEqual(store.mediaIds([PN]), [{ chatId: PN, id: 'img' }]);
+    store.deleteChats([PN]);
+    assert.equal(store.scheduled(PN).length, 0);
+    store.close();
+    remove(file);
+  });
+});

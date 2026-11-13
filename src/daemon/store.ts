@@ -707,6 +707,12 @@ export class Store {
       .map((r) => ({ id: r.id, name: r.name, color: r.color, kind: listKind(r.list_type) }));
   }
 
+  /** Messages avec média de ces discussions (fichiers en cache à supprimer avec elles). */
+  mediaIds(chatIds: readonly string[]): { chatId: string; id: string }[] {
+    const q = this.#db.prepare('SELECT id FROM messages WHERE chat_id = ? AND media IS NOT NULL');
+    return chatIds.flatMap((chatId) => q.all(chatId).map((r) => ({ chatId, id: String(r['id']) })));
+  }
+
   /** Messages d'une discussion effacés (la discussion reste). */
   clearMessages(chatId: string): void {
     this.#db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
@@ -732,15 +738,15 @@ export class Store {
   }
 
   deleteChats(ids: readonly string[]): void {
+    const tables = ['messages', 'reactions', 'receipts', 'pins', 'poll_votes', 'pending_votes', 'scheduled', 'deleted_for_me', 'chat_labels', 'favorites'];
     const del = this.#db.prepare('DELETE FROM chats WHERE id = ?');
-    const msgs = this.#db.prepare('DELETE FROM messages WHERE chat_id = ?');
-    const reacts = this.#db.prepare('DELETE FROM reactions WHERE chat_id = ?');
-    for (const id of ids) {
-      del.run(id);
-      msgs.run(id);
-      reacts.run(id);
-      this.#db.prepare('DELETE FROM receipts WHERE chat_id = ?').run(id);
-    }
+    const others = tables.map((t) => this.#db.prepare(`DELETE FROM ${t} WHERE chat_id = ?`));
+    this.transaction(() => {
+      for (const id of ids) {
+        del.run(id);
+        for (const q of others) q.run(id);
+      }
+    });
   }
 
   /** Contact créé ou mis à jour ; un nom absent (null, vide) ne remplace pas le nom connu. */

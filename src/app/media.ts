@@ -33,6 +33,35 @@ const PARALLEL = 3;
 /** Médias gardés en mémoire (les plus récemment demandés). */
 const KEEP = 80;
 
+/** Fichiers du cache de l'app (documents, vocaux, vidéos) gardés au plus (jours depuis leur dernière utilisation). */
+const CACHE_DAYS = 30;
+
+/**
+ * Cache de l'app nettoyé (au lancement) : dossiers de médias plus vieux que CACHE_DAYS supprimés.
+ * Un média supprimé est retéléchargé à la demande.
+ */
+export function cleanMediaCache(): void {
+  const root = Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_cache_dir(), 'wa-gnome', 'media']));
+  const limit = Date.now() / 1000 - CACHE_DAYS * 86_400;
+  const remove = (f: Gio.File): void => {
+    const children = f.enumerate_children('standard::name,standard::type', Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null);
+    for (let info = children.next_file(null); info !== null; info = children.next_file(null)) {
+      const child = f.get_child(info.get_name());
+      if (info.get_file_type() === Gio.FileType.DIRECTORY) remove(child);
+      else child.delete(null);
+    }
+    f.delete(null);
+  };
+  try {
+    const dirs = root.enumerate_children('standard::name,time::modified', Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null);
+    for (let info = dirs.next_file(null); info !== null; info = dirs.next_file(null)) {
+      if (info.get_attribute_uint64('time::modified') < limit) remove(root.get_child(info.get_name()));
+    }
+  } catch {
+    // pas encore de cache
+  }
+}
+
 export class MediaLoader {
   readonly #client: WaClient;
   readonly #cache = new Map<string, Promise<Loaded>>();
@@ -79,7 +108,15 @@ export class MediaLoader {
     const dir = GLib.build_filenamev([GLib.get_user_cache_dir(), 'wa-gnome', 'media', GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, `${m.chatId}/${m.id}`, -1)?.slice(0, 24) ?? m.id]);
     const file = Gio.File.new_for_path(GLib.build_filenamev([dir, suggestedName(m, media).replaceAll('/', '_')]));
     const promise = (async (): Promise<Gio.File> => {
-      if (file.query_exists(null)) return file;
+      if (file.query_exists(null)) {
+        // dernière utilisation (nettoyage du cache, voir cleanMediaCache)
+        try {
+          Gio.File.new_for_path(dir).set_attribute_uint64('time::modified', Math.floor(Date.now() / 1000), Gio.FileQueryInfoFlags.NONE, null);
+        } catch {
+          // date non modifiable : nettoyé un peu plus tôt, rien de grave
+        }
+        return file;
+      }
       const bytes = await this.#slot(() => this.#client.media(m.chatId, m.id));
       GLib.mkdir_with_parents(dir, 0o700);
       await file.replace_contents_bytes_async(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);

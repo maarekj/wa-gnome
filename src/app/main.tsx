@@ -13,6 +13,7 @@ import { Accounts, accountName, unreadChats } from './Accounts.ts';
 import { Badge } from './Badge.ts';
 import { openDiagnostics } from './Diagnostics.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
+import { cleanMediaCache } from './media.ts';
 import { openNewChat } from './NewChat.ts';
 import { PERF, runBench } from './Perf.ts';
 import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
@@ -329,6 +330,11 @@ app.connect('startup', () => {
   // couleur d'accent choisie (sinon celle du système)
   initSettings();
   badge.start();
+  // au repos : le lancement n'attend pas le nettoyage
+  GLib.idle_add(GLib.PRIORITY_LOW, () => {
+    cleanMediaCache();
+    return GLib.SOURCE_REMOVE;
+  });
 });
 
 app.connect('activate', () => {

@@ -84,6 +84,27 @@ const keyAuthor = (k: proto.IMessageKey): string => (k.participant !== null && k
 const isLidGroupKey = (key: WAMessageKey): boolean => key.addressingMode === 'lid' || keyAuthor(key).endsWith('@lid');
 
 
+/** Cache des médias : au-delà, les fichiers les moins récemment lus sont supprimés. */
+const MEDIA_CACHE_MAX = 2 * 1024 ** 3;
+/** Taille visée après un nettoyage (marge : pas de nettoyage à chaque téléchargement). */
+const MEDIA_CACHE_TARGET = 1.5 * 1024 ** 3;
+
+/**
+ * Fichiers à supprimer pour revenir à `target` octets si le total dépasse `max` : les moins
+ * récemment utilisés d'abord.
+ */
+export function evictions(files: readonly { name: string; size: number; used: number }[], max: number, target: number): string[] {
+  let total = files.reduce((n, f) => n + f.size, 0);
+  if (total <= max) return [];
+  const out: string[] = [];
+  for (const f of files.toSorted((a, b) => a.used - b.used)) {
+    if (total <= target) break;
+    out.push(f.name);
+    total -= f.size;
+  }
+  return out;
+}
+
 /** Taille des fichiers d'un dossier (octets), 0 s'il n'existe pas. */
 function dirSize(dir: string): number {
   try {
@@ -293,6 +314,7 @@ export class WhatsApp {
 
     on('chats.delete', (deleted) => {
       const ids = deleted.map((id) => this.#jid(id));
+      this.#dropMedia(this.#store.mediaIds(ids));
       this.#store.deleteChats(ids);
       this.#emit({ type: 'chats.delete', ids });
     });
@@ -369,6 +391,7 @@ export class WhatsApp {
         if (key.id === null || key.id === undefined || key.remoteJid === null || key.remoteJid === undefined) continue;
         const chatId = this.#jid(key.remoteJid);
         if (!this.#store.deleteForMe(chatId, key.id)) continue;
+        this.#dropMedia([{ chatId, id: key.id }]);
         this.#emit({ type: 'message.delete', chatId, id: key.id });
         chats.add(chatId);
       }
@@ -488,6 +511,8 @@ export class WhatsApp {
       return;
     }
     const known = c.kind === 'edit' ? this.#store.applyEdit(chatId, c.targetId, c.text) : this.#store.applyRevoke(chatId, c.targetId);
+    // supprimé pour tous : son média ne reste pas en clair sur le disque
+    if (c.kind === 'revoke') this.#dropMedia([{ chatId, id: c.targetId }]);
     if (!known || !notify) return;
     const m = this.#store.message(chatId, c.targetId);
     if (m !== null) {
@@ -519,6 +544,7 @@ export class WhatsApp {
       case 'delete-for-me':
         await sock.chatModify({ deleteForMe: { deleteMedia: true, key: target.key, timestamp: seconds(target.messageTimestamp) } }, jid);
         this.#store.deleteForMe(chatId, id);
+        this.#dropMedia([{ chatId, id }]);
         this.#emit({ type: 'message.delete', chatId, id });
         this.#emitChats([chatId]);
         break;
@@ -874,19 +900,82 @@ export class WhatsApp {
     const info = this.#store.media(chatId, id);
     const raw = this.#store.raw(chatId, id);
     if (info === null || raw === null) throw new Error('média introuvable');
-    const file = path.join(this.#mediaDir, createHash('sha256').update(`${chatId}/${id}`).digest('hex'));
+    const file = this.#mediaFile(chatId, id);
     try {
-      return { mimetype: info.mimetype, data: await fs.promises.readFile(file) };
+      const data = await fs.promises.readFile(file);
+      // dernière utilisation (nettoyage du cache : les moins récemment lus partent d'abord)
+      const now = new Date();
+      fs.promises.utimes(file, now, now).catch((error: unknown) => logger.debug({ error }, 'date du média'));
+      return { mimetype: info.mimetype, data };
     } catch {
       // absent du cache : téléchargé ci-dessous
     }
+    // même média demandé deux fois en même temps : un seul téléchargement
+    let pending = this.#downloads.get(file);
+    if (pending === undefined) {
+      pending = this.#download(chatId, id, raw, file).finally(() => {
+        this.#downloads.delete(file);
+      });
+      this.#downloads.set(file, pending);
+    }
+    return { mimetype: info.mimetype, data: await pending };
+  }
+
+  /** Téléchargements en cours, par fichier du cache. */
+  readonly #downloads = new Map<string, Promise<Buffer>>();
+
+  async #download(chatId: string, id: string, raw: string, file: string): Promise<Buffer> {
     const wa = this.#parseRaw(raw);
     if (wa === null) throw new Error('message illisible');
     const sock = this.#sock;
     const data = await downloadMediaMessage(wa, 'buffer', {}, sock === null ? undefined : { logger, reuploadRequest: (m) => sock.updateMediaMessage(m) });
     await fs.promises.mkdir(this.#mediaDir, { recursive: true, mode: 0o700 });
-    await fs.promises.writeFile(file, data, { mode: 0o600 });
-    return { mimetype: info.mimetype, data };
+    // écrit à côté puis renommé : un arrêt pendant l'écriture ne laisse pas de fichier tronqué servi ensuite
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fs.promises.writeFile(tmp, data, { mode: 0o600 });
+    await fs.promises.rename(tmp, file);
+    // message supprimé pendant le téléchargement : son média ne reste pas sur le disque
+    if (this.#store.media(chatId, id) === null) fs.rmSync(file, { force: true });
+    this.#trimMedia();
+    return data;
+  }
+
+  /** Fichier du cache d'un média (nom dérivé de son identifiant : pas de chemin venu du réseau). */
+  #mediaFile(chatId: string, id: string): string {
+    return path.join(this.#mediaDir, createHash('sha256').update(`${chatId}/${id}`).digest('hex'));
+  }
+
+  /** Médias de messages disparus (supprimés, discussion effacée) : fichiers en cache supprimés. */
+  #dropMedia(items: readonly { chatId: string; id: string }[]): void {
+    for (const m of items) fs.rmSync(this.#mediaFile(m.chatId, m.id), { force: true });
+  }
+
+  #trimming = false;
+  /** Cache plus gros que MEDIA_CACHE_MAX : fichiers les moins récemment lus supprimés. */
+  #trimMedia(): void {
+    if (this.#trimming) return;
+    this.#trimming = true;
+    try {
+      const files = fs.readdirSync(this.#mediaDir).flatMap((name) => {
+        try {
+          const full = path.join(this.#mediaDir, name);
+          const st = fs.statSync(full);
+          if (name.endsWith('.tmp')) {
+            // fichier temporaire d'un ancien arrêt : supprimé ; en cours d'écriture : laissé
+            if (Date.now() - st.mtimeMs > 3_600_000) fs.rmSync(full, { force: true });
+            return [];
+          }
+          return [{ name, size: st.size, used: st.mtimeMs }];
+        } catch {
+          return [];
+        }
+      });
+      for (const name of evictions(files, MEDIA_CACHE_MAX, MEDIA_CACHE_TARGET)) fs.rmSync(path.join(this.#mediaDir, name), { force: true });
+    } catch {
+      // dossier absent : rien à faire
+    } finally {
+      this.#trimming = false;
+    }
   }
 
   #rawMessage(jid: string | null | undefined, id: string | null | undefined): proto.IMessage | undefined {
@@ -1168,9 +1257,11 @@ export class WhatsApp {
 
   /** Messages éphémères expirés retirés (comme sur le téléphone), médias en cache compris. */
   purgeExpired(): void {
+    // passage périodique : cache des médias ramené sous sa taille maximale
+    this.#trimMedia();
     const gone = this.#store.purgeExpired(Math.floor(Date.now() / 1000));
+    this.#dropMedia(gone);
     for (const g of gone) {
-      fs.rmSync(path.join(this.#mediaDir, createHash('sha256').update(`${g.chatId}/${g.id}`).digest('hex')), { force: true });
       this.#emit({ type: 'message.delete', chatId: g.chatId, id: g.id });
     }
     if (gone.some((g) => g.chatId === STATUS_CHAT)) this.#emit({ type: 'statuses' });
@@ -1389,11 +1480,13 @@ export class WhatsApp {
         break;
       case 'clear':
         await sock.chatModify({ clear: true, lastMessages }, jid);
+        this.#dropMedia(this.#store.mediaIds([chatId]));
         this.#store.clearMessages(chatId);
         this.#emit({ type: 'chat.cleared', id: chatId });
         break;
       case 'delete':
         await sock.chatModify({ delete: true, lastMessages }, jid);
+        this.#dropMedia(this.#store.mediaIds([chatId]));
         this.#store.deleteChats([chatId]);
         this.#emit({ type: 'chats.delete', ids: [chatId] });
         return;
