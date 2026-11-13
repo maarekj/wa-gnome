@@ -29,6 +29,7 @@ import {
   type WAMessageKey,
   type WASocket,
 } from 'baileys';
+import type { BaileysEventMap } from 'baileys';
 import * as z from 'zod/mini';
 import { type AccountDiagnostics, callText, type CallOutcome, type ChatAction, replaceMention, STATUS_CHAT, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
@@ -49,6 +50,11 @@ function voiceContent(f: Upload): AnyMessageContent {
 
 /** Délai avant reconnexion après une coupure (ms). */
 const RECONNECT_MS = 3000;
+/** Délai de reconnexion au plus (doublé à chaque échec à partir de RECONNECT_MS). */
+const RECONNECT_MAX_MS = 5 * 60_000;
+
+/** Délai avant la `n`-ième reconnexion de suite (0 : première). */
+export const reconnectDelay = (n: number): number => Math.min(RECONNECT_MAX_MS, RECONNECT_MS * 2 ** Math.min(n, 20));
 /** Délai de réponse de WhatsApp pour une photo de profil (une requête bloquée retient la file). */
 const PICTURE_TIMEOUT_MS = 10_000;
 /** « En train d'écrire » plus ancien : ignoré (WhatsApp n'envoie pas toujours la pause). */
@@ -126,6 +132,8 @@ export class WhatsApp {
   readonly #calls = new Map<string, RingingCall>();
   /** reconnexion programmée (annulée par stop) */
   #restartTimer: NodeJS.Timeout | null = null;
+  /** échecs de connexion de suite (délai croissant), remis à 0 une fois connecté */
+  #failures = 0;
 
   constructor(store: Store, dataDir: string, emit: (e: Event) => void) {
     this.#store = store;
@@ -168,13 +176,26 @@ export class WhatsApp {
     this.#sock = sock;
     this.#setStatus({ state: 'connecting', qr: null, error: null });
 
-    sock.ev.on('creds.update', () => {
+    // gestionnaire en erreur : journalisé, les suivants et le lot continuent (sinon l'exception
+    // remonte dans Baileys et le lot entier est perdu)
+    const on = <E extends keyof BaileysEventMap>(event: E, fn: (arg: BaileysEventMap[E]) => void): void => {
+      sock.ev.on(event, (arg) => {
+        try {
+          fn(arg);
+        } catch (error) {
+          logger.error({ error, event }, 'événement WhatsApp');
+        }
+      });
+    };
+
+    on('creds.update', () => {
       saveCreds().catch((error: unknown) => logger.error({ error }, 'creds.update'));
     });
 
-    sock.ev.on('connection.update', (u) => {
+    on('connection.update', (u) => {
       if (u.qr !== undefined) this.#setStatus({ state: 'qr', qr: u.qr });
       if (u.connection === 'open') {
+        this.#failures = 0;
         const me = sock.user;
         // mes identifiants : citations de mes propres messages reconnues
         if (me !== undefined) this.#store.setMe([jidNormalizedUser(me.id), ...(me.lid === undefined || me.lid === null ? [] : [jidNormalizedUser(me.lid)])]);
@@ -203,17 +224,23 @@ export class WhatsApp {
           this.#disconnectedAt = Math.floor(Date.now() / 1000);
           this.#disconnects += 1;
         }
+        // session ouverte ailleurs avec ces identifiants : pas de reconnexion (les deux se
+        // délogeraient sans fin) ; reprise au prochain démarrage du démon
+        if (code === DisconnectReason.connectionReplaced) {
+          this.#setStatus({ state: 'closed', error: 'Session remplacée par une autre connexion de ce poste : redémarrez le démon pour la reprendre' });
+          return;
+        }
         this.#setStatus({ state: 'closed', error: u.lastDisconnect?.error === undefined ? null : errorText(u.lastDisconnect.error) });
         // 515 (restartRequired) : normal juste après l'appairage
-        if (!this.#stopped) this.#restart(code === DisconnectReason.restartRequired ? 0 : RECONNECT_MS);
+        if (!this.#stopped) this.#restart(code === DisconnectReason.restartRequired ? 0 : reconnectDelay(this.#failures++));
       }
     });
 
-    sock.ev.on('lid-mapping.update', (mapping) => {
+    on('lid-mapping.update', (mapping) => {
       this.#learn([mapping]);
     });
 
-    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings, syncType }) => {
+    on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings, syncType }) => {
       this.#store.transaction(() => {
         // correspondances d'abord : les données suivantes sont rangées directement sous le numéro
         this.#learn(lidPnMappings ?? [], false);
@@ -248,7 +275,7 @@ export class WhatsApp {
       }
     });
 
-    sock.ev.on('chats.upsert', (chats) => {
+    on('chats.upsert', (chats) => {
       for (const c of chats) {
         if (c.id === null || c.id === undefined) continue;
         this.#store.upsertChat(this.#chatPatch(c, c.id));
@@ -256,7 +283,7 @@ export class WhatsApp {
       this.#emitChats(chats.map((c) => c.id));
     });
 
-    sock.ev.on('chats.update', (updates) => {
+    on('chats.update', (updates) => {
       for (const c of updates) {
         if (c.id === null || c.id === undefined) continue;
         this.#store.upsertChat(this.#chatPatch(c, c.id));
@@ -264,17 +291,17 @@ export class WhatsApp {
       this.#emitChats(updates.map((c) => c.id));
     });
 
-    sock.ev.on('chats.delete', (deleted) => {
+    on('chats.delete', (deleted) => {
       const ids = deleted.map((id) => this.#jid(id));
       this.#store.deleteChats(ids);
       this.#emit({ type: 'chats.delete', ids });
     });
 
-    sock.ev.on('contacts.upsert', (contacts) => {
+    on('contacts.upsert', (contacts) => {
       for (const c of contacts) this.#saveContact(c);
     });
 
-    sock.ev.on('contacts.update', (contacts) => {
+    on('contacts.update', (contacts) => {
       for (const c of contacts) {
         if (c.id === undefined) continue;
         this.#saveContact({ ...c, id: c.id });
@@ -287,7 +314,7 @@ export class WhatsApp {
       }
     });
 
-    sock.ev.on('messages.upsert', ({ messages, type }) => {
+    on('messages.upsert', ({ messages, type }) => {
       for (const wa of messages) {
         this.#learnFromKey(wa.key);
         // modification, suppression pour tous : appliquées au message visé
@@ -327,12 +354,12 @@ export class WhatsApp {
     });
 
     // appels reçus : sonnerie et fin (on ne peut ni décrocher ni appeler)
-    sock.ev.on('call', (events) => {
+    on('call', (events) => {
       for (const c of events) this.#onCall(c);
     });
 
     // supprimé pour moi sur un autre appareil (synchronisation de l'état WhatsApp)
-    sock.ev.on('messages.delete', (d) => {
+    on('messages.delete', (d) => {
       if (!('keys' in d)) {
         logger.info(`suppression de toute la discussion ${d.jid} : ignorée`);
         return;
@@ -349,18 +376,18 @@ export class WhatsApp {
     });
 
     // listes (étiquettes) : favoris, listes personnalisées
-    sock.ev.on('labels.edit', (l) => {
+    on('labels.edit', (l) => {
       this.#store.upsertLabel({ id: l.id, name: l.name, color: l.color, listType: l.listType ?? null, orderIndex: l.orderIndex ?? null, deleted: l.deleted });
       this.#emit({ type: 'lists', lists: this.#store.lists() });
     });
-    sock.ev.on('labels.association', ({ type, association }) => {
+    on('labels.association', ({ type, association }) => {
       // associations à un message : non gérées
       if ('messageId' in association) return;
       const id = this.#jid(association.chatId);
       this.#store.setChatLabel(id, association.labelId, type === 'add');
       this.#emitChats([id]);
     });
-    sock.ev.on('favorites.set', ({ ids, index, collection, version: apiVersion }) => {
+    on('favorites.set', ({ ids, index, collection, version: apiVersion }) => {
       this.#store.setFavorites(ids.map((id) => this.#jid(id)));
       // forme de l'action telle que WhatsApp l'écrit : reprise pour modifier les favoris
       this.#store.setMeta('favorites-patch', JSON.stringify({ index, collection: collection ?? null, version: apiVersion ?? null, ids }));
@@ -368,7 +395,7 @@ export class WhatsApp {
     });
 
     // accusés : envoyé, reçu, lu, écouté (messages envoyés)
-    sock.ev.on('messages.update', (updates) => {
+    on('messages.update', (updates) => {
       for (const { key, update } of updates) {
         // modification (nouveau contenu) ou suppression pour tous (contenu retiré)
         if (key.id !== null && key.id !== undefined && key.remoteJid !== null && key.remoteJid !== undefined) {
@@ -403,7 +430,7 @@ export class WhatsApp {
     });
 
     // présence : en ligne, vu, en train d'écrire (discussions suivies par l'app)
-    sock.ev.on('presence.update', ({ id, presences }) => {
+    on('presence.update', ({ id, presences }) => {
       const chatId = this.#jid(id);
       const known = this.#presence.get(chatId) ?? new Map<string, { data: PresenceData; at: number }>();
       for (const [who, data] of Object.entries(presences)) known.set(this.#jid(who), { data, at: Date.now() });
@@ -412,7 +439,7 @@ export class WhatsApp {
     });
 
     // accusés par participant (groupes) : dates de distribution, de lecture, d'écoute
-    sock.ev.on('message-receipt.update', (updates) => {
+    on('message-receipt.update', (updates) => {
       for (const { key, receipt } of updates) {
         // groupe lu sur un autre de mes appareils
         const reader = receipt.userJid;
@@ -425,14 +452,14 @@ export class WhatsApp {
     });
 
     // groupe renommé
-    sock.ev.on('groups.update', (groups) => {
+    on('groups.update', (groups) => {
       const named = groups.filter((g): g is typeof g & { id: string; subject: string } => g.id !== undefined && g.subject !== undefined);
       for (const g of named) this.#store.upsertChat({ id: g.id, name: g.subject });
       this.#emitChats(named.map((g) => g.id));
     });
 
     // noms de groupes : pas toujours présents dans l'historique
-    sock.ev.on('groups.upsert', (groups) => {
+    on('groups.upsert', (groups) => {
       for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject, ...(g.ephemeralDuration === undefined ? {} : { ephemeral: g.ephemeralDuration }) });
       this.#emitChats(groups.map((g) => g.id));
     });
@@ -761,7 +788,14 @@ export class WhatsApp {
   }
 
   #parseRaw(raw: string): WAMessage | null {
-    const wa: unknown = JSON.parse(raw, BufferJSON.reviver);
+    let wa: unknown;
+    try {
+      wa = JSON.parse(raw, BufferJSON.reviver);
+    } catch (error) {
+      // ligne corrompue : ignorée (sinon les reprises du démarrage échouent et le démon redémarre en boucle)
+      logger.warn({ error }, "message brut illisible");
+      return null;
+    }
     if (typeof wa !== 'object' || wa === null || !('key' in wa)) return null;
     const msg = proto.WebMessageInfo.fromObject(wa);
     const { key } = msg;
@@ -876,7 +910,7 @@ export class WhatsApp {
       this.#restartTimer = null;
       this.start().catch((error: unknown) => {
         this.#setStatus({ state: 'closed', error: errorText(error) });
-        this.#restart(RECONNECT_MS);
+        this.#restart(reconnectDelay(this.#failures++));
       });
     }, delay);
   }

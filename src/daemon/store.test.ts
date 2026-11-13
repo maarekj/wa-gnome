@@ -1,6 +1,7 @@
 // Store du démon (node --test) : fusion des identifiants lid / numéro.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 import type { Converted } from './convert.ts';
 import { decryptPollVote, proto } from 'baileys';
@@ -485,5 +486,76 @@ void describe('forme d’onde', () => {
     const media = mediaOf({ audioMessage: { mimetype: 'audio/ogg; codecs=opus', seconds: 3, ptt: true, waveform: new Uint8Array([0, 50, 100, 120]) } });
     assert.deepEqual(media?.waveform, [0, 50, 100, 100]);
     assert.equal(mediaOf({ imageMessage: { mimetype: 'image/jpeg' } })?.waveform, undefined);
+  });
+});
+
+const tmp = (name: string): string => `/tmp/wa-gnome-store-${name}-${process.pid}.db`;
+const remove = (file: string): void => {
+  for (const f of [file, `${file}-wal`, `${file}-shm`]) fs.rmSync(f, { force: true });
+};
+
+/** base de la toute première version (v0) : trois tables, sans les colonnes ajoutées depuis */
+const v0 = (file: string): void => {
+  remove(file);
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE chats (id TEXT PRIMARY KEY, name TEXT, unread INTEGER NOT NULL DEFAULT 0, timestamp INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE contacts (id TEXT PRIMARY KEY, name TEXT);
+    CREATE TABLE messages (chat_id TEXT NOT NULL, id TEXT NOT NULL, from_me INTEGER NOT NULL, sender TEXT, sender_name TEXT, timestamp INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, raw TEXT NOT NULL, PRIMARY KEY (chat_id, id));
+    INSERT INTO chats (id, name, timestamp) VALUES ('${PN}', 'Alice', 10);
+    INSERT INTO messages VALUES ('${PN}', 'm1', 0, NULL, NULL, 10, 'text', 'bonjour café', '{"key":{"id":"m1"},"pushName":"Alice"}');
+    INSERT INTO messages VALUES ('${PN}', 'm2', 0, NULL, NULL, 11, 'text', 'illisible', '{pas du json');`);
+  db.close();
+};
+
+void describe('Store : migrations et déconnexion', () => {
+
+  void it('migre une base v0 jusqu’à la version courante', () => {
+    const file = tmp('v0');
+    v0(file);
+    const store = new Store(file);
+    assert.deepEqual(
+      store.messages(PN, 10).map((m) => m.id),
+      ['m1', 'm2'],
+    );
+    // index de recherche reconstruit pour les messages existants
+    assert.equal(store.search('cafe', 10, null).length, 1);
+    assert.equal(store.needsMediaBackfill, true);
+    store.close();
+    const db = new DatabaseSync(file);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.['user_version'], 19);
+    db.close();
+    // réouverture : aucune migration rejouée
+    new Store(file).close();
+    remove(file);
+  });
+
+  void it('reprend après une migration interrompue', () => {
+    const file = tmp('reprise');
+    v0(file);
+    new Store(file).close();
+    // arrêt juste avant la dernière migration : seule celle-ci est rejouée au démarrage suivant
+    const db = new DatabaseSync(file);
+    db.exec('PRAGMA user_version = 18');
+    db.close();
+    const store = new Store(file);
+    assert.equal(store.messages(PN, 10).length, 2);
+    store.close();
+    remove(file);
+  });
+
+  void it('déconnexion : tout est effacé, messages programmés compris', () => {
+    const file = tmp('clear');
+    remove(file);
+    const store = new Store(file);
+    store.upsertMessage(msg(PN, 'a', 1), '{}');
+    store.addScheduled({ id: 's1', chatId: PN, text: 'plus tard', at: 9_999_999_999, replyTo: null, mentions: [] });
+    store.setFlag('backfill-polls', true);
+    store.clear();
+    assert.equal(store.messages(PN, 10).length, 0);
+    assert.equal(store.scheduled(PN).length, 0);
+    assert.equal(store.meta('backfill-polls'), null);
+    store.close();
+    remove(file);
   });
 });

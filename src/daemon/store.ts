@@ -347,128 +347,173 @@ export class Store {
     this.#db.exec('PRAGMA recursive_triggers = ON');
     const version = Number(this.#db.prepare('PRAGMA user_version').get()?.['user_version'] ?? 0);
     const fresh = this.#db.prepare("SELECT name FROM sqlite_master WHERE name = 'messages'").get() === undefined;
+    // tables manquantes créées d'abord (meta, pins… dont les migrations ont besoin) ; colonnes
+    // ajoutées ensuite par les migrations, puis schéma relu (index, déclencheurs)
     this.#db.exec(SCHEMA);
-    this.needsMediaBackfill = false;
-    if (!fresh && version < 1) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
-      this.needsMediaBackfill = true;
-    }
-    if (!fresh && version < 12) {
-      // index de recherche des messages existants
-      this.#db.exec(`DELETE FROM messages_fts; INSERT INTO messages_fts (rowid, text) SELECT rowid, text FROM messages WHERE deleted = 0 AND text <> ''`);
-    }
-    if (!fresh && version < 11) {
-      // statuts : plus de discussion ; diffusions reçues : déplacées au démarrage (identifiants lid connus)
-      this.#db.prepare('DELETE FROM chats WHERE id = ?').run(STATUS);
-      this.setFlag('move-broadcasts', true);
-    }
-    if (!fresh && version < 10) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
-      // messages transférés déjà reçus : relus dans le message brut
-      const rows = this.#db.prepare(`SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%"isForwarded":true%'`).all();
-      const upd = this.#db.prepare('UPDATE messages SET forwarded = ? WHERE chat_id = ? AND id = ?');
-      this.transaction(() => {
-        for (const r of rows) {
-          const score = forwardScoreIn(parseJson(String(r['raw'])));
-          if (score > 0) upd.run(score, String(r['chat_id']), String(r['id']));
-        }
-      });
-    }
-    if (!fresh && version < 9) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0; ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
-    }
-    if (!fresh && version < 8) {
-      // accusés par destinataire des messages déjà envoyés : relus dans les messages bruts
-      this.setFlag('backfill-receipts', true);
-    }
-    if (!fresh && version < 7) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN status TEXT');
-      // état des messages envoyés : relu dans le message brut (nombre ou nom selon la source)
-      const rows = this.#db.prepare("SELECT chat_id, id, json_extract(raw, '$.status') AS s FROM messages WHERE from_me = 1").all();
-      const upd = this.#db.prepare('UPDATE messages SET status = ? WHERE chat_id = ? AND id = ?');
-      this.transaction(() => {
-        for (const r of rows) upd.run(statusOf(r['s']) ?? 'sent', String(r['chat_id']), String(r['id']));
-      });
-    }
-    if (!fresh && version < 6) {
-      // réactions jusqu'ici enregistrées comme messages, ou seulement dans `raw` : relues au démarrage
-      this.setFlag('backfill-reactions', true);
-    }
-    if (!fresh && version < 5) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN quoted TEXT');
-      // citations des messages déjà reçus : recalculées depuis `raw` au démarrage
-      this.setFlag('backfill-quoted', true);
-    }
-    if (!fresh && version < 4) {
-      // listes et favoris ignorés jusqu'ici : nouvelle relecture de l'état de WhatsApp
-      this.setFlag('resync-chat-state', true);
-    }
-    if (!fresh && version < 3) {
-      this.#db.exec(`
-        ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE chats ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE chats ADD COLUMN marked_unread INTEGER NOT NULL DEFAULT 0;`);
-      // état (archivée, silencieux…) connu seulement après une resynchronisation de WhatsApp
-      this.setFlag('resync-chat-state', true);
-    }
-    if (!fresh && version < 2) {
-      this.#db.exec('ALTER TABLE contacts ADD COLUMN notify TEXT');
-      // noms publics des messages déjà reçus (le plus récent par personne)
-      this.#db.exec(`
-        INSERT INTO contacts (id, notify)
-          SELECT coalesce(sender, chat_id) AS who, json_extract(raw, '$.pushName') AS push
-          FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
-          WHERE push <> '' GROUP BY who
-        ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
-    }
-    if (!fresh && version < 19) {
-      // votes en attente : une ligne par message de vote (doublons et essais sans fin évités)
-      this.#db.exec('DROP TABLE IF EXISTS pending_votes');
+    let mediaBackfill = false;
+    if (!fresh) {
+      // une transaction par version, dans l'ordre : un arrêt au milieu reprend à la version suivante
+      const step = (v: number): boolean => {
+        let backfill = false;
+        this.transaction(() => {
+          backfill = this.#migrate(v);
+          this.#db.exec(`PRAGMA user_version = ${v}`);
+        });
+        return backfill;
+      };
+      for (let v = version + 1; v <= VERSION; v += 1) if (step(v)) mediaBackfill = true;
       this.#db.exec(SCHEMA);
     }
-    if (!fresh && version < 18) {
-      // réponse unique ou multiple mal déduite (V3) : sondages relus
-      this.setFlag('backfill-polls', true);
-    }
-    if (!fresh && version < 17) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN poll TEXT');
-      // sondages et leurs votes (historique) : relus dans les messages bruts au démarrage
-      this.setFlag('backfill-polls', true);
-    }
-    if (!fresh && version < 16) {
-      this.#db.exec('ALTER TABLE messages ADD COLUMN mentions TEXT');
-      // mentions des messages existants : relues dans les messages bruts
-      const rows = this.#db.prepare(`SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%mentionedJid%'`).all();
-      const upd = this.#db.prepare('UPDATE messages SET mentions = ? WHERE chat_id = ? AND id = ?');
-      this.transaction(() => {
-        for (const r of rows) {
-          const ids = mentionsIn(parseJson(String(r['raw'])));
-          if (ids.length > 0) upd.run(JSON.stringify(ids), String(r['chat_id']), String(r['id']));
-        }
-      });
-    }
-    if (!fresh && version < 15) {
-      // épinglages de l'historique (messages techniques jusqu'ici affichés « Message ») : relus
-      this.setFlag('backfill-pins', true);
-    }
-    if (!fresh && version < 14) {
-      this.#db.exec(`
-        ALTER TABLE chats ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE messages ADD COLUMN view_once INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE messages ADD COLUMN expiration INTEGER NOT NULL DEFAULT 0;`);
-      // vue unique et durée éphémère des messages existants : relues dans les messages bruts
-      this.setFlag('backfill-ephemeral', true);
-    }
-    if (!fresh && version < 13) {
-      // forme d'onde des vocaux : médias audio reconvertis depuis le message brut
-      this.#db.exec("UPDATE messages SET media = NULL WHERE kind = 'audio' AND raw LIKE '%waveform%'");
-      this.needsMediaBackfill = true;
-    }
     this.#db.exec(`PRAGMA user_version = ${VERSION}`);
+    this.needsMediaBackfill = mediaBackfill;
     for (const r of this.#db.prepare('SELECT lid, pn FROM lid_map').all()) {
       if (typeof r['lid'] === 'string' && typeof r['pn'] === 'string') this.#pn.set(r['lid'], r['pn']);
     }
+  }
+
+  /** Passage d'une base à la version `v` (depuis v - 1) ; vrai : médias à reconvertir. */
+  #migrate(v: number): boolean {
+    let mediaBackfill = false;
+    switch (v) {
+      case 1: {
+        this.#db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
+        mediaBackfill = true;
+        break;
+      }
+      case 2: {
+        this.#db.exec('ALTER TABLE contacts ADD COLUMN notify TEXT');
+        // noms publics des messages déjà reçus (le plus récent par personne)
+        this.#db.exec(`
+          INSERT INTO contacts (id, notify)
+            SELECT coalesce(sender, chat_id) AS who, json_extract(raw, '$.pushName') AS push
+            FROM (SELECT * FROM messages WHERE from_me = 0 AND json_valid(raw) AND json_extract(raw, '$.pushName') IS NOT NULL ORDER BY timestamp)
+            WHERE push <> '' GROUP BY who
+          ON CONFLICT (id) DO UPDATE SET notify = excluded.notify`);
+        break;
+      }
+      case 3: {
+        this.#db.exec(`
+          ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE chats ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE chats ADD COLUMN marked_unread INTEGER NOT NULL DEFAULT 0;`);
+        // état (archivée, silencieux…) connu seulement après une resynchronisation de WhatsApp
+        this.setFlag('resync-chat-state', true);
+        break;
+      }
+      case 4: {
+        // listes et favoris ignorés jusqu'ici : nouvelle relecture de l'état de WhatsApp
+        this.setFlag('resync-chat-state', true);
+        break;
+      }
+      case 5: {
+        this.#db.exec('ALTER TABLE messages ADD COLUMN quoted TEXT');
+        // citations des messages déjà reçus : recalculées depuis `raw` au démarrage
+        this.setFlag('backfill-quoted', true);
+        break;
+      }
+      case 6: {
+        // réactions jusqu'ici enregistrées comme messages, ou seulement dans `raw` : relues au démarrage
+        this.setFlag('backfill-reactions', true);
+        break;
+      }
+      case 7: {
+        this.#db.exec('ALTER TABLE messages ADD COLUMN status TEXT');
+        // état des messages envoyés : relu dans le message brut (nombre ou nom selon la source)
+        const rows = this.#db.prepare("SELECT chat_id, id, json_extract(raw, '$.status') AS s FROM messages WHERE from_me = 1").all();
+        const upd = this.#db.prepare('UPDATE messages SET status = ? WHERE chat_id = ? AND id = ?');
+        this.transaction(() => {
+          for (const r of rows) upd.run(statusOf(r['s']) ?? 'sent', String(r['chat_id']), String(r['id']));
+        });
+        break;
+      }
+      case 8: {
+        // accusés par destinataire des messages déjà envoyés : relus dans les messages bruts
+        this.setFlag('backfill-receipts', true);
+        break;
+      }
+      case 9: {
+        this.#db.exec('ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0; ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
+        break;
+      }
+      case 10: {
+        this.#db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
+        // messages transférés déjà reçus : relus dans le message brut
+        const rows = this.#db.prepare(`SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%"isForwarded":true%'`).all();
+        const upd = this.#db.prepare('UPDATE messages SET forwarded = ? WHERE chat_id = ? AND id = ?');
+        this.transaction(() => {
+          for (const r of rows) {
+            const score = forwardScoreIn(parseJson(String(r['raw'])));
+            if (score > 0) upd.run(score, String(r['chat_id']), String(r['id']));
+          }
+        });
+        break;
+      }
+      case 11: {
+        // statuts : plus de discussion ; diffusions reçues : déplacées au démarrage (identifiants lid connus)
+        this.#db.prepare('DELETE FROM chats WHERE id = ?').run(STATUS);
+        this.setFlag('move-broadcasts', true);
+        break;
+      }
+      case 12: {
+        // index de recherche des messages existants
+        this.#db.exec(`DELETE FROM messages_fts; INSERT INTO messages_fts (rowid, text) SELECT rowid, text FROM messages WHERE deleted = 0 AND text <> ''`);
+        break;
+      }
+      case 13: {
+        // forme d'onde des vocaux : médias audio reconvertis depuis le message brut
+        this.#db.exec("UPDATE messages SET media = NULL WHERE kind = 'audio' AND raw LIKE '%waveform%'");
+        mediaBackfill = true;
+        break;
+      }
+      case 14: {
+        this.#db.exec(`
+          ALTER TABLE chats ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE messages ADD COLUMN view_once INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE messages ADD COLUMN expiration INTEGER NOT NULL DEFAULT 0;`);
+        // vue unique et durée éphémère des messages existants : relues dans les messages bruts
+        this.setFlag('backfill-ephemeral', true);
+        break;
+      }
+      case 15: {
+        // épinglages de l'historique (messages techniques jusqu'ici affichés « Message ») : relus
+        this.setFlag('backfill-pins', true);
+        break;
+      }
+      case 16: {
+        this.#db.exec('ALTER TABLE messages ADD COLUMN mentions TEXT');
+        // mentions des messages existants : relues dans les messages bruts
+        const rows = this.#db.prepare(`SELECT chat_id, id, raw FROM messages WHERE raw LIKE '%mentionedJid%'`).all();
+        const upd = this.#db.prepare('UPDATE messages SET mentions = ? WHERE chat_id = ? AND id = ?');
+        this.transaction(() => {
+          for (const r of rows) {
+            const ids = mentionsIn(parseJson(String(r['raw'])));
+            if (ids.length > 0) upd.run(JSON.stringify(ids), String(r['chat_id']), String(r['id']));
+          }
+        });
+        break;
+      }
+      case 17: {
+        this.#db.exec('ALTER TABLE messages ADD COLUMN poll TEXT');
+        // sondages et leurs votes (historique) : relus dans les messages bruts au démarrage
+        this.setFlag('backfill-polls', true);
+        break;
+      }
+      case 18: {
+        // réponse unique ou multiple mal déduite (V3) : sondages relus
+        this.setFlag('backfill-polls', true);
+        break;
+      }
+      case 19: {
+        // votes en attente : une ligne par message de vote (doublons et essais sans fin évités)
+        this.#db.exec('DROP TABLE IF EXISTS pending_votes');
+        this.#db.exec(SCHEMA);
+        break;
+      }
+      default:
+        break;
+    }
+    return mediaBackfill;
   }
 
   // ------------------------------------------------------------------ identifiants
@@ -770,7 +815,10 @@ export class Store {
 
   /** Tout effacer (déconnexion du compte). */
   clear(): void {
-    this.#db.exec('DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM labels; DELETE FROM chat_labels; DELETE FROM favorites; DELETE FROM reactions; DELETE FROM receipts;');
+    // tout ce qui vient du compte, messages programmés compris (sinon envoyés depuis le compte suivant)
+    this.transaction(() => {
+      for (const t of ['messages', 'chats', 'contacts', 'lid_map', 'labels', 'chat_labels', 'favorites', 'reactions', 'receipts', 'deleted_for_me', 'pins', 'poll_votes', 'pending_votes', 'scheduled', 'status_seen', 'meta']) this.#db.exec(`DELETE FROM ${t}`);
+    });
     this.#pn.clear();
   }
 
