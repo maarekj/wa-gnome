@@ -74,7 +74,8 @@ export function translatePrompt(text: string, target: string): string {
     `Si le message est déjà en ${target}, mets une traduction vide ("").`,
     'Garde la mise en forme WhatsApp (*gras*, _italique_), les émojis, les liens et les retours à la ligne.',
     '<message>',
-    text,
+    // balise fermante retirée du texte : le message ne peut pas sortir de sa zone (injection)
+    text.replaceAll('</message>', ''),
     '</message>',
   ].join('\n');
 }
@@ -128,11 +129,16 @@ function program(name: string): string {
 }
 
 /** Dossier neutre où l'outil est lancé (pas de projet, pas de fichiers lus). */
+// dossier d'exécution de l'utilisateur (privé, 0700), pas /tmp partagé : un autre compte ne peut
+// ni le créer à l'avance ni y lire les vocaux
 function workDir(): string {
-  const dir = GLib.build_filenamev([GLib.get_tmp_dir(), 'wa-gnome-traduction']);
+  const dir = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'wa-gnome-traduction']);
   GLib.mkdir_with_parents(dir, 0o700);
   return dir;
 }
+
+/** Durée maximale d'un outil (traduction, transcription, résumé) avant abandon. */
+const RUN_TIMEOUT_S = 300;
 
 /** Lance un programme, `input` sur l'entrée standard ; sortie standard, erreur si le code n'est pas 0. */
 async function run(argv: string[], input: string | null, env: Record<string, string> = {}): Promise<string> {
@@ -140,7 +146,21 @@ async function run(argv: string[], input: string | null, env: Record<string, str
   launcher.set_cwd(workDir());
   for (const [k, v] of Object.entries(env)) launcher.setenv(k, v, true);
   const proc = launcher.spawnv(argv);
-  const [out, err] = await proc.communicate_utf8_async(input, null);
+  // outil bloqué : arrêté (sinon « Traduction… » resterait affiché indéfiniment)
+  let timedOut = false;
+  const timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, RUN_TIMEOUT_S, () => {
+    timedOut = true;
+    proc.force_exit();
+    return GLib.SOURCE_REMOVE;
+  });
+  let out: string | null;
+  let err: string | null;
+  try {
+    [out, err] = await proc.communicate_utf8_async(input, null);
+  } finally {
+    if (!timedOut) GLib.source_remove(timer);
+  }
+  if (timedOut) throw new Error(`${GLib.path_get_basename(argv[0] ?? '')} : pas de réponse après ${RUN_TIMEOUT_S / 60} min`);
   if (!proc.get_successful()) {
     const last = (err ?? '').trim().split('\n').at(-1) ?? '';
     throw new Error(last === '' ? `${GLib.path_get_basename(argv[0] ?? '')} : échec` : last);
@@ -159,8 +179,9 @@ async function ask(prompt: string): Promise<string> {
   const s = settings();
   if (s.translator === 'opencode') {
     const model = s.opencodeModel === '' ? [] : ['--model', s.opencodeModel];
+    // consigne sur l'entrée standard (pas en argument : visible dans `ps`, taille limitée)
     // agent sans aucun outil : un message reçu ne peut pas faire lancer de commande (injection)
-    return opencodeText(await run([program('opencode'), 'run', '--agent', OPENCODE_AGENT, '--format', 'json', '--dir', workDir(), ...model, prompt], null, { OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG }));
+    return opencodeText(await run([program('opencode'), 'run', '--agent', OPENCODE_AGENT, '--format', 'json', '--dir', workDir(), ...model], prompt, { OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG }));
   }
   // Claude Code : sans outils ni session gardée, consigne sur l'entrée standard
   return run([program('claude'), '-p', '--tools', '', '--no-session-persistence', '--output-format', 'text'], prompt);

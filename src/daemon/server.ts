@@ -153,6 +153,21 @@ const json = (res: http.ServerResponse, status: number, body: unknown): void => 
   res.end(JSON.stringify(body));
 };
 
+/** Paramètre entier borné (`min`..`max`) ; absent ou invalide : `fallback`. */
+export function intParam(url: URL, name: string, min: number, max: number, fallback: number): number {
+  const n = Number(url.searchParams.get(name) ?? Number.NaN);
+  return Number.isInteger(n) ? Math.max(min, Math.min(max, n)) : fallback;
+}
+
+/** Paramètre entier facultatif (secondes) ; présent mais invalide : 400. */
+function optionalInt(url: URL, name: string): number | undefined {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return undefined;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n)) throw new HttpError(400, `paramètre ${name} invalide`);
+  return n;
+}
+
 export function startServer(opts: { host: string; port: number; token: string; accounts: Accounts }): Promise<Server> {
   /** flux SSE ouverts et leur compte */
   const clients = new Map<http.ServerResponse, string>();
@@ -229,12 +244,12 @@ export function startServer(opts: { host: string; port: number; token: string; a
         return;
       }
       case 'GET /chats/:id/messages': {
-        const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 500);
-        const before = url.searchParams.get('before');
-        const from = url.searchParams.get('from');
+        const limit = intParam(url, 'limit', 1, 500, 50);
+        const before = optionalInt(url, 'before');
+        const from = optionalInt(url, 'from');
         // ouverture sur un message (recherche) : quelques messages avant, puis tous les suivants
-        if (from === null) json(res, 200, store.messages(chatId, limit, before === null ? undefined : Number(before)));
-        else json(res, 200, store.messagesFrom(chatId, Number(from)));
+        if (from === undefined) json(res, 200, store.messages(chatId, limit, before));
+        else json(res, 200, store.messagesFrom(chatId, from));
         return;
       }
       case 'POST /chats/:id/messages': {

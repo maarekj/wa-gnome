@@ -479,7 +479,7 @@ function swatch(a: (typeof ACCENTS)[number], group: Gtk.ToggleButton | null): Gt
 export function openPreferences(parent: Gtk.Widget): void {
   const dialog = new Adw.PreferencesDialog({ title: 'Préférences' });
   // messages affichés dans la fenêtre des préférences (au-dessus de la fenêtre principale)
-  const toast = (t: string): void => dialog.add_toast(new Adw.Toast({ title: t, timeout: 5 }));
+  const toast = (t: string): void => dialog.add_toast(new Adw.Toast({ title: t, timeout: 5, useMarkup: false }));
   const page = new Adw.PreferencesPage({ title: 'Général', iconName: 'preferences-system-symbolic' });
   const appearance = new Adw.PreferencesGroup({ title: 'Apparence', description: 'Couleur d’accent de l’application (boutons, sélection, liens)' });
   const row = new Adw.ActionRow({ title: 'Couleur d’accent' });

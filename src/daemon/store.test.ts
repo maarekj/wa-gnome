@@ -559,3 +559,15 @@ void describe('Store : migrations et déconnexion', () => {
     remove(file);
   });
 });
+
+const u = (q: string): URL => new URL(`http://x/?${q}`);
+
+void describe('serveur : paramètres', () => {
+  void it('limite bornée, valeur invalide remplacée', async () => {
+    const { intParam } = await import('./server.ts');
+    assert.equal(intParam(u('limit=-1'), 'limit', 1, 500, 50), 1);
+    assert.equal(intParam(u('limit=9999'), 'limit', 1, 500, 50), 500);
+    assert.equal(intParam(u('limit=abc'), 'limit', 1, 500, 50), 50);
+    assert.equal(intParam(u(''), 'limit', 1, 500, 50), 50);
+  });
+});

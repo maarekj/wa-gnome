@@ -1,5 +1,5 @@
 // Mise en forme WhatsApp → balisage Pango.
-import { emojiOnly, linkAt, markdownMarkup, mentionMarkup, mentionQuery, readMoreCut, waMarkup } from '../src/shared/format.ts';
+import { esc, emojiOnly, linkAt, markdownMarkup, mentionMarkup, mentionQuery, readMoreCut, waMarkup } from '../src/shared/format.ts';
 
 describe('« Lire la suite »', () => {
   it('message court : en entier', () => {
@@ -103,5 +103,11 @@ describe('mentions', () => {
     const link = waMarkup('https://x.fr/@336 @3361 <b>');
     expect(mentionMarkup(link, [{ token: '336', name: 'Bob', me: false }])).toBe(link);
     expect(mentionMarkup('<b>@336</b>', [{ token: '336', name: 'Bob', me: true }])).toBe('<b><span weight="bold" foreground="#e66100">@Bob</span></b>');
+  });
+});
+
+describe('échappement des noms', () => {
+  it('& et < neutralisés', () => {
+    expect(esc('Tom & <Jerry>')).toBe('Tom &amp; &lt;Jerry&gt;');
   });
 });

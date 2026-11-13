@@ -654,13 +654,13 @@ function openPollVotes(parent: Gtk.Widget, pictures: Pictures, me: string | null
   const poll = m.poll;
   if (poll === null) return;
   const page = new Adw.PreferencesPage();
-  const head = new Adw.PreferencesGroup({ title: m.text, description: poll.voters === 1 ? '1 personne a voté' : `${poll.voters} personnes ont voté` });
+  const head = new Adw.PreferencesGroup({ title: esc(m.text), description: poll.voters === 1 ? '1 personne a voté' : `${poll.voters} personnes ont voté` });
   page.add(head);
   // options les plus choisies d'abord (ordre du sondage à égalité)
   for (const o of poll.options.toSorted((a, b) => b.count - a.count)) {
-    const group = new Adw.PreferencesGroup({ title: o.name, description: o.count === 0 ? 'Aucun vote' : o.count === 1 ? '1 vote' : `${o.count} votes` });
+    const group = new Adw.PreferencesGroup({ title: esc(o.name), description: o.count === 0 ? 'Aucun vote' : o.count === 1 ? '1 vote' : `${o.count} votes` });
     for (const v of o.voters) {
-      const row = new Adw.ActionRow({ title: v.name, ...(v.id === null ? { subtitle: 'Votre vote' } : {}) });
+      const row = new Adw.ActionRow({ title: esc(v.name), ...(v.id === null ? { subtitle: 'Votre vote' } : {}) });
       // photo de la personne (initiales en attendant, ou sans photo)
       const avatar = new Adw.Avatar({ size: 32, text: v.name.replace(/^~\s*/u, ''), showInitials: true });
       // moi : ma photo de profil

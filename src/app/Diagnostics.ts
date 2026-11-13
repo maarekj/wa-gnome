@@ -57,7 +57,7 @@ export function diagnosticsText(d: Diagnostics, app: readonly [string, string][]
 }
 
 const row = (title: string, value: string): Adw.ActionRow => {
-  const r = new Adw.ActionRow({ title, subtitle: value, subtitleSelectable: true });
+  const r = new Adw.ActionRow({ title, subtitle: value, subtitleSelectable: true, useMarkup: false });
   r.add_css_class('property');
   return r;
 };

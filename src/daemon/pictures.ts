@@ -22,6 +22,9 @@ export const isNoPicture = (e: unknown): boolean => {
   return output.statusCode === 404 || output.statusCode === 401 || output.statusCode === 403;
 };
 
+/** Téléchargement d'une photo au plus (une requête bloquée occuperait sa place dans la file). */
+const FETCH_TIMEOUT_MS = 15_000;
+
 export class Pictures {
   readonly #dir: string;
   /** adresse de la photo (aperçu) d'un identifiant, undefined si aucune ; rejette sur erreur */
@@ -87,7 +90,7 @@ export class Pictures {
         fs.writeFileSync(this.#file(jid, 'none'), '');
         return null;
       }
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`photo : HTTP ${res.status}`);
       const data = Buffer.from(await res.arrayBuffer());
       this.#failed.delete(jid);

@@ -54,7 +54,7 @@ function switcherIn(bar: Adw.HeaderBar, accounts: Accounts, toast: (t: string) =
 
 export function MainWindow({ app, accounts, ready }: { app: Adw.Application; accounts: Accounts; ready: (api: WindowApi) => void }): JSX.Element {
   let overlay: Adw.ToastOverlay | null = null;
-  const toast = (text: string): void => overlay?.add_toast(new Adw.Toast({ title: text, timeout: 5 }));
+  const toast = (text: string): void => overlay?.add_toast(new Adw.Toast({ title: text, timeout: 5, useMarkup: false }));
   const calls = new CallBanner();
   ready({
     toast,
