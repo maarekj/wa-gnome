@@ -506,3 +506,105 @@ def test_lire_la_suite(run_app):
     app.click('button', 'Lire la suite')
     wait_until(lambda: len(app.all('label', None, contains='Fin cachée du message.')) > before, 5, 'message entier')
     app.text_gone('Lire la suite', 5)
+
+
+def _bubble_menu(app, text: str) -> None:
+    """Menu d'une bulle (clic droit sur son texte, dans la conversation : libellé le plus à droite)."""
+    label = max(app.all('label', text), key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).x)
+    app.point(label, '3')
+
+
+# menu d'un message reçu (texte) : entrées d'un menu surgissant absentes de l'arbre
+# d'accessibilité, choisies au clavier : 0 Répondre, 1 Transférer, 2 Réagir, 3 Copier le texte,
+# 4 Traduire, 5 Épingler, 6 Sélectionner, 7 Supprimer pour moi
+def _choose(app, index: int, sub: int | None = None) -> None:
+    for _ in range(index):
+        app.key('Down')
+    if sub is not None:
+        app.key('Right')
+        for _ in range(sub):
+            app.key('Down')
+    app.key('Return')
+
+
+def test_repondre_a_un_message(run_app):
+    fake, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    _bubble_menu(app, 'Message n° 150')
+    _choose(app, 0)
+    # bandeau de réponse, puis envoi avec la citation
+    assert app.text_visible('Message n° 150')
+    app.send('Réponse citée')
+    call = fake.wait_call('send')
+    assert call['args'][1] == 'Réponse citée'
+    assert call['args'][2] is not None
+
+
+def test_reagir_a_un_message(run_app):
+    fake, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    _bubble_menu(app, 'Message n° 150')
+    _choose(app, 2, 0)
+    call = fake.wait_call('react')
+    assert call['args'][2] == '👍'
+
+
+def test_transferer_un_message(run_app):
+    fake, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    _bubble_menu(app, 'Message n° 150')
+    _choose(app, 1)
+    app.text_visible('Choisissez une ou plusieurs discussions')
+    app.type('voisins')
+    app.click('check box')
+    app.click('button', 'Transférer')
+    call = fake.wait_call('messageAction')
+    assert call['args'][2]['action'] == 'forward'
+
+
+def test_supprimer_un_message_pour_moi(run_app):
+    fake, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    _bubble_menu(app, 'Message n° 150')
+    _choose(app, 7)
+    app.text_visible('Supprimer pour moi ?')
+    app.click(None, 'Supprimer')
+    call = fake.wait_call('messageAction')
+    assert call['args'][2] == {'action': 'delete-for-me'}
+
+
+def test_modifier_un_message_envoye(run_app):
+    fake, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    app.send('Texte avec une fote')
+    fake.wait_call('send')
+    app.text_visible('Texte avec une fote')
+    # mon message récent : 0 Répondre, 1 Transférer, 2 Infos du message, 3 Modifier
+    _bubble_menu(app, 'Texte avec une fote')
+    _choose(app, 3)
+    assert app.text_visible('Modification du message')
+    app.send('Texte avec une faute')
+    call = fake.wait_call('messageAction')
+    assert call['args'][2] == {'action': 'edit', 'text': 'Texte avec une faute'}
+
+
+def test_archiver_depuis_la_liste(run_app):
+    fake, app = run_app()
+    # menu de la discussion (clic droit) : première entrée « Archiver la discussion »
+    app.point(app.find('label', 'Voisins'), '3')
+    app.key('Return')
+    call = fake.wait_call('chatAction')
+    assert call['args'][1] == {'action': 'archive', 'value': True}
+    app.text_visible('2')
+    app.click('button', None, contains='Archivées')
+    assert app.text_visible('Voisins')
+
+
+def test_filtre_par_liste(run_app):
+    _, app = run_app()
+    # « Groupes » : seuls les groupes restent (Famille), Alice disparaît
+    app.click('toggle button', 'Groupes')
+    app.text_gone('Alice Martin', 5)
+    assert app.has('label', 'Famille')
+    app.click('toggle button', 'Toutes')
+    assert app.text_visible('Alice Martin')
