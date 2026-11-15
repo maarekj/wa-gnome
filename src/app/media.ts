@@ -392,8 +392,19 @@ export function openViewer(parent: Gtk.Widget, title: string, photos: readonly P
     const photo = photos[i];
     if (photo === undefined) return;
     const mine = (generation += 1);
+    const hadFocus = dialog.get_focus() !== null;
     prev.visible = i > 0;
     next.visible = i < photos.length - 1;
+    // bouton masqué qui avait le focus (première ou dernière photo) : focus rendu à la fenêtre,
+    // sinon Échap et les flèches ne lui parviennent plus
+    // (focus retiré par GTK après coup : vérifié au repos)
+    if (hadFocus) {
+      GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        const f = dialog.get_focus();
+        if (f === null || !f.get_mapped()) zoomLabel.grab_focus();
+        return GLib.SOURCE_REMOVE;
+      });
+    }
     dialog.title = photos.length > 1 ? `${title} — ${i + 1} / ${photos.length}` : title;
     caption.label = waMarkup(photo.text);
     caption.visible = photo.text !== '';

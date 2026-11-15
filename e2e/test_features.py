@@ -608,3 +608,38 @@ def test_filtre_par_liste(run_app):
     assert app.has('label', 'Famille')
     app.click('toggle button', 'Toutes')
     assert app.text_visible('Alice Martin')
+
+
+def test_visionneuse_des_photos(run_app):
+    _, app = run_app()
+    app.open_chat('Alice Martin')
+    # dernière photo de la discussion (la plus basse), puis précédente et fermeture
+    frame = max(app.all('image', 'Ouvrir l’image'), key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).y)
+    app.point(frame)
+    app.find('button', 'Enregistrer sous…')
+    app.click('button', 'Photo précédente')
+    app.key('Escape')
+    wait_until(lambda: not app.has('button', 'Enregistrer sous…'), 5, 'visionneuse fermée')
+
+
+# menu d'une discussion (clic droit, entrées au clavier, la première déjà choisie) :
+# 0 Archiver, 1 Mode silencieux ›, 2 Épingler la discussion, 3 Marquer comme non lue…
+def test_mode_silencieux_d_une_discussion(run_app):
+    fake, app = run_app()
+    app.point(app.find('label', 'Claire (longue discussion)'), '3')
+    _choose(app, 1, 0)
+    call = fake.wait_call('chatAction')
+    assert call['args'][1]['action'] == 'mute'
+    assert call['args'][1]['until'] > 0
+    # icône du mode silencieux sur la ligne (Voisins l'avait déjà)
+    wait_until(lambda: len(app.all('image', 'Mode silencieux')) >= 2, 5, 'icône du mode silencieux')
+
+
+def test_epingler_une_discussion(run_app):
+    fake, app = run_app()
+    app.point(app.find('label', 'Claire (longue discussion)'), '3')
+    _choose(app, 2)
+    call = fake.wait_call('chatAction')
+    assert call['args'][1] == {'action': 'pin', 'value': True}
+    # deuxième discussion épinglée (Alice l'était déjà) : icône sur sa ligne
+    wait_until(lambda: len(app.all('image', 'Épinglée')) >= 2, 5, 'icône épinglée')

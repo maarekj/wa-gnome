@@ -544,7 +544,10 @@ export const isPicture = (m: Message): m is Message & { media: Media } => m.medi
 export function MessagePicture(ctx: BubbleContext, m: Message & { media: Media }): Gtk.Widget {
   const sticker = m.kind === 'sticker';
   const [w, h] = displaySize(m.media.width, m.media.height, sticker ? 160 : 300);
-  const frame = new MediaFrame({ cssClasses: ['message-media'], tooltipText: sticker ? 'Autocollant' : 'Ouvrir l’image' });
+  const label = sticker ? 'Autocollant' : 'Ouvrir l’image';
+  // image accessible (lecteur d'écran, tests) : rôle et nom
+  const frame = new MediaFrame({ cssClasses: ['message-media'], tooltipText: label, accessibleRole: Gtk.AccessibleRole.IMG });
+  frame.update_property([Gtk.AccessibleProperty.LABEL], [label]);
   frame.setup(w, h, sticker ? 'contain' : 'cover', sticker ? 0 : 8);
   frame.setPaintable(thumbnailTexture(m.media));
   let loaded: Loaded | null = null;
