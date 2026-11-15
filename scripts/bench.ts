@@ -68,7 +68,11 @@ try {
   }
   await buildApp();
   const port = await freePort();
-  fake = spawn(process.execPath, [path.join(root, 'scripts', 'fake-daemon.ts'), '--port', port, '--dir', dir, '--no-replies', ...(source === null ? [] : ['--db', copy])], { stdio: 'ignore' });
+  fake = spawn(
+    process.execPath,
+    [path.join(root, 'scripts', 'fake-daemon.ts'), '--port', port, '--dir', dir, '--no-replies', ...(source === null ? [] : ['--db', copy])],
+    { stdio: 'ignore' },
+  );
   // le faux démon est prêt quand son jeton est écrit et qu'il répond
   for (let i = 0; i < 100; i += 1) {
     // oxlint-disable-next-line no-await-in-loop -- attente, une tentative après l'autre

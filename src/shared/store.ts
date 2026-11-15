@@ -16,7 +16,9 @@ export function sameChat(prev: Chat | undefined, next: Chat): Chat {
 
 /** Discussions triées : épinglées d'abord (la dernière épinglée en tête), puis la plus récente d'abord. */
 export const sortChats = (chats: Iterable<Chat>): Chat[] =>
-  [...chats].toSorted((a, b) => Number(b.pinned > 0) - Number(a.pinned > 0) || b.pinned - a.pinned || b.timestamp - a.timestamp || a.name.localeCompare(b.name));
+  [...chats].toSorted(
+    (a, b) => Number(b.pinned > 0) - Number(a.pinned > 0) || b.pinned - a.pinned || b.timestamp - a.timestamp || a.name.localeCompare(b.name),
+  );
 
 /** « écrit… » sans nouvelle de WhatsApp pendant ce délai : retiré (ms). */
 const TYPING_TIMEOUT_MS = 15_000;
@@ -248,10 +250,14 @@ export class Store {
         break;
       case 'message.update': {
         // message épinglé modifié (ou supprimé pour tous) : bandeau à jour
-        if (this.pins.peek().some((p) => p.id === e.message.id)) this.#setPins(e.message.deleted ? this.pins.peek().filter((p) => p.id !== e.message.id) : this.pins.peek().map((p) => (p.id === e.message.id ? e.message : p)));
+        if (this.pins.peek().some((p) => p.id === e.message.id))
+          this.#setPins(
+            e.message.deleted ? this.pins.peek().filter((p) => p.id !== e.message.id) : this.pins.peek().map((p) => (p.id === e.message.id ? e.message : p)),
+          );
         // remplacé s'il est affiché (pas d'ajout : réaction à un message plus ancien que la page)
         const list = this.messages.peek();
-        if (e.message.chatId === this.current.peek() && list.some((m) => m.id === e.message.id)) this.#setMessages(list.map((m) => (m.id === e.message.id ? e.message : m)));
+        if (e.message.chatId === this.current.peek() && list.some((m) => m.id === e.message.id))
+          this.#setMessages(list.map((m) => (m.id === e.message.id ? e.message : m)));
         break;
       }
       case 'history':

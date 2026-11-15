@@ -150,7 +150,13 @@ export function patternSvg(stroke: string): string {
         const angle = Math.round((rnd() - 0.5) * 60);
         const scale = size / 24;
         // trait de 1 px quelle que soit la taille
-        draw(x, y, r, (cx, cy) => `<path stroke-width="${(1 / scale).toFixed(3)}" transform="translate(${(cx - size / 2).toFixed(1)} ${(cy - size / 2).toFixed(1)}) scale(${scale.toFixed(3)}) rotate(${angle} 12 12)" d="${path}"/>`);
+        draw(
+          x,
+          y,
+          r,
+          (cx, cy) =>
+            `<path stroke-width="${(1 / scale).toFixed(3)}" transform="translate(${(cx - size / 2).toFixed(1)} ${(cy - size / 2).toFixed(1)}) scale(${scale.toFixed(3)}) rotate(${angle} 12 12)" d="${path}"/>`,
+        );
         break;
       }
     }
@@ -185,7 +191,8 @@ export const WALLPAPER_COLORS = [
 /** Fond choisi : motif (défaut), aucun, couleur unie (`color:<id>`) ou image de l'utilisateur. */
 export type Wallpaper = 'pattern' | 'none' | 'image' | `color:${(typeof WALLPAPER_COLORS)[number]['id']}`;
 export const WALLPAPER_DEFAULT: Wallpaper = 'pattern';
-export const isWallpaper = (w: string | undefined): w is Wallpaper => w === 'pattern' || w === 'none' || w === 'image' || WALLPAPER_COLORS.some((c) => `color:${c.id}` === w);
+export const isWallpaper = (w: string | undefined): w is Wallpaper =>
+  w === 'pattern' || w === 'none' || w === 'image' || WALLPAPER_COLORS.some((c) => `color:${c.id}` === w);
 
 /** Fichier du motif (écrit une fois dans le cache), pour la feuille de style. */
 function patternFile(theme: 'light' | 'dark'): string {

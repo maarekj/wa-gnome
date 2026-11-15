@@ -102,7 +102,15 @@ export class AudioPlayer {
   }
 
   #seek(seconds: number): void {
-    this.#bin.seek(this.#speed, Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.ACCURATE, Gst.SeekType.SET, Math.round(seconds * NS), Gst.SeekType.NONE, -1);
+    this.#bin.seek(
+      this.#speed,
+      Gst.Format.TIME,
+      Gst.SeekFlags.FLUSH | Gst.SeekFlags.ACCURATE,
+      Gst.SeekType.SET,
+      Math.round(seconds * NS),
+      Gst.SeekType.NONE,
+      -1,
+    );
   }
 
   #emit(): void {

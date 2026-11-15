@@ -62,8 +62,16 @@ export function chatMenu(chat: Chat, pinnedCount: number, lists: readonly ChatLi
 
 /** Confirmations des actions destructrices. */
 const CONFIRM: Readonly<Partial<Record<ChatAction['action'], { heading: string; body: string; label: string }>>> = {
-  clear: { heading: 'Effacer la discussion ?', body: 'Les messages de « %s » seront effacés sur tous vos appareils. La discussion reste dans la liste.', label: 'Effacer' },
-  delete: { heading: 'Supprimer la discussion ?', body: 'La discussion avec « %s » et ses messages seront supprimés sur tous vos appareils.', label: 'Supprimer' },
+  clear: {
+    heading: 'Effacer la discussion ?',
+    body: 'Les messages de « %s » seront effacés sur tous vos appareils. La discussion reste dans la liste.',
+    label: 'Effacer',
+  },
+  delete: {
+    heading: 'Supprimer la discussion ?',
+    body: 'La discussion avec « %s » et ses messages seront supprimés sur tous vos appareils.',
+    label: 'Supprimer',
+  },
   leave: { heading: 'Quitter le groupe ?', body: 'Vous ne recevrez plus les messages de « %s ».', label: 'Quitter' },
 };
 

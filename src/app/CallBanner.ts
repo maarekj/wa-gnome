@@ -24,7 +24,14 @@ export class CallBanner {
   readonly #rows = new Map<string, Gtk.Widget>();
 
   constructor() {
-    this.widget = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 8, halign: Gtk.Align.CENTER, valign: Gtk.Align.START, marginTop: 56, visible: false });
+    this.widget = new Gtk.Box({
+      orientation: Gtk.Orientation.VERTICAL,
+      spacing: 8,
+      halign: Gtk.Align.CENTER,
+      valign: Gtk.Align.START,
+      marginTop: 56,
+      visible: false,
+    });
   }
 
   ring(r: RingingCall): void {

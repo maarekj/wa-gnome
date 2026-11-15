@@ -13,11 +13,15 @@ make.set_state(Gst.State.NULL);
 const loop = GLib.MainLoop.new(null, false);
 let last: PlayerState = { playing: false, position: 0, duration: 0 };
 let failure = '';
-const player = new AudioPlayer(GLib.filename_to_uri(file, null), (s) => {
-  last = s;
-}, (message) => {
-  failure = message;
-});
+const player = new AudioPlayer(
+  GLib.filename_to_uri(file, null),
+  (s) => {
+    last = s;
+  },
+  (message) => {
+    failure = message;
+  },
+);
 player.play();
 let atSpeed = 0;
 GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {

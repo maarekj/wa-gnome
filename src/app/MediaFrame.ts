@@ -69,4 +69,3 @@ function placeholderColor(w: Gtk.Widget): Gdk.RGBA {
   const c = w.get_color();
   return new Gdk.RGBA({ red: c.red, green: c.green, blue: c.blue, alpha: 0.08 });
 }
-

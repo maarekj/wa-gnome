@@ -222,7 +222,13 @@ function waMarkupUncached(text: string): string {
     .split('```')
     .map((part, k, parts) =>
       // morceaux impairs : dans un bloc de code (s'il est fermé)
-      k % 2 === 1 && k < parts.length - 1 ? `${CODE_OPEN}${esc(part.replace(/^\n/u, '').replace(/\n$/u, ''))}</span>` : (k % 2 === 1 ? '```' : '') + part.split('\n').map((l) => line(l)).join('\n'),
+      k % 2 === 1 && k < parts.length - 1
+        ? `${CODE_OPEN}${esc(part.replace(/^\n/u, '').replace(/\n$/u, ''))}</span>`
+        : (k % 2 === 1 ? '```' : '') +
+          part
+            .split('\n')
+            .map((l) => line(l))
+            .join('\n'),
     )
     .join('');
 }
@@ -243,7 +249,8 @@ export function snippetMarkup(snippet: string): string {
 /** Émoji (pictogramme, avec variantes, couleurs de peau, séquences et drapeaux). */
 // premier élément affiché en émoji : présentation émoji par défaut, ou forcée par U+FE0F
 // (« © », « ™ », « ↔ » seuls restent du texte)
-const EMOJI = /^(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F)\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*)/u;
+const EMOJI =
+  /^(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F)\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*)/u;
 
 /** Nombre d'émojis si le texte n'est fait que d'émojis (espaces permis), 0 sinon. */
 export function emojiOnly(text: string): number {
@@ -300,7 +307,8 @@ export function markdownMarkup(text: string): string {
     const bullet = /^(\s*)[-*+]\s+(.*)$/u.exec(row);
     const numbered = /^(\s*)(\d+)[.)]\s+(.*)$/u.exec(row);
     const quote = /^(\s*)>\s?(.*)$/u.exec(row);
-    if (heading !== null && heading[2] !== undefined) out.push(`<span weight="bold"${(heading[1]?.length ?? 1) <= 2 ? ' size="large"' : ''}>${mdInline(heading[2])}</span>`);
+    if (heading !== null && heading[2] !== undefined)
+      out.push(`<span weight="bold"${(heading[1]?.length ?? 1) <= 2 ? ' size="large"' : ''}>${mdInline(heading[2])}</span>`);
     else if (/^\s*([-*_])(\s*\1){2,}\s*$/u.test(row)) out.push('<span alpha="40%">──────────</span>');
     else if (bullet !== null) out.push(`${'    '.repeat(Math.floor((bullet[1]?.length ?? 0) / 2))}•  ${mdInline(bullet[2] ?? '')}`);
     else if (numbered !== null) out.push(`${'    '.repeat(Math.floor((numbered[1]?.length ?? 0) / 2))}${numbered[2] ?? ''}.  ${mdInline(numbered[3] ?? '')}`);
@@ -318,7 +326,10 @@ export function mentionMarkup(markup: string, mentions: readonly { token: string
     const name = esc(m.name.replace(/^~\s*/u, ''));
     const token = esc(m.token).replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
     // après un espace ou une balise seulement (jamais dans un lien ni un attribut), nombre entier
-    out = out.replaceAll(new RegExp(`(^|[\\s>])@${token}(?![\\p{L}\\p{N}])`, 'gu'), (_all, before: string) => `${before}<span weight="bold" foreground="${m.me ? '#e66100' : '#1c71d8'}">@${name}</span>`);
+    out = out.replaceAll(
+      new RegExp(`(^|[\\s>])@${token}(?![\\p{L}\\p{N}])`, 'gu'),
+      (_all, before: string) => `${before}<span weight="bold" foreground="${m.me ? '#e66100' : '#1c71d8'}">@${name}</span>`,
+    );
   }
   return out;
 }

@@ -42,7 +42,11 @@ export function DocumentView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
   const media = m.media;
   const name = media.fileName ?? suggestedName(m, media);
   const box = new Gtk.Box({ spacing: 10, cssClasses: ['document'], widthRequest: 260 });
-  const icon = new Gtk.Image({ gicon: Gio.content_type_get_symbolic_icon(Gio.content_type_from_mime_type(media.mimetype) ?? media.mimetype), pixelSize: 32, valign: Gtk.Align.CENTER });
+  const icon = new Gtk.Image({
+    gicon: Gio.content_type_get_symbolic_icon(Gio.content_type_from_mime_type(media.mimetype) ?? media.mimetype),
+    pixelSize: 32,
+    valign: Gtk.Align.CENTER,
+  });
   box.append(icon);
   const text = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true, valign: Gtk.Align.CENTER });
   text.append(new Gtk.Label({ label: name, xalign: 0, ellipsize: Pango.EllipsizeMode.MIDDLE, maxWidthChars: 28, cssClasses: ['heading'] }));
@@ -51,7 +55,12 @@ export function DocumentView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
   box.append(text);
   const open = new Gtk.Button({ iconName: 'document-open-symbolic', tooltipText: 'Ouvrir', valign: Gtk.Align.CENTER, cssClasses: ['flat', 'circular'] });
   open.connect('clicked', () => withFile(ctx, m, open, (file) => void openExternal(open, file, ctx.toast)));
-  const saveButton = new Gtk.Button({ iconName: 'document-save-symbolic', tooltipText: 'Enregistrer sous…', valign: Gtk.Align.CENTER, cssClasses: ['flat', 'circular'] });
+  const saveButton = new Gtk.Button({
+    iconName: 'document-save-symbolic',
+    tooltipText: 'Enregistrer sous…',
+    valign: Gtk.Align.CENTER,
+    cssClasses: ['flat', 'circular'],
+  });
   saveButton.connect('clicked', () => withFile(ctx, m, saveButton, (file) => void save(saveButton, name, file, ctx.toast)));
   box.append(open);
   box.append(saveButton);
@@ -64,14 +73,28 @@ export function DocumentView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
 export function AudioView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
   const box = new Gtk.Box({ spacing: 8, cssClasses: ['audio'], widthRequest: 280 });
   const play = new Gtk.Button({ iconName: 'media-playback-start-symbolic', tooltipText: 'Lire', valign: Gtk.Align.CENTER, cssClasses: ['circular'] });
-  const scale = new Gtk.Scale({ orientation: Gtk.Orientation.HORIZONTAL, hexpand: true, drawValue: false, sensitive: false, adjustment: new Gtk.Adjustment({ lower: 0, upper: Math.max(1, m.media.seconds ?? 1), stepIncrement: 1 }) });
+  const scale = new Gtk.Scale({
+    orientation: Gtk.Orientation.HORIZONTAL,
+    hexpand: true,
+    drawValue: false,
+    sensitive: false,
+    adjustment: new Gtk.Adjustment({ lower: 0, upper: Math.max(1, m.media.seconds ?? 1), stepIncrement: 1 }),
+  });
   const time = new Gtk.Label({ label: fmtDuration(m.media.seconds ?? 0), widthChars: 5, xalign: 1, cssClasses: ['caption', 'dim-label', 'numeric'] });
-  const speed = new Gtk.Button({ label: speedLabel(1), tooltipText: 'Vitesse de lecture', valign: Gtk.Align.CENTER, cssClasses: ['flat', 'pill', 'speed', 'caption-heading'] });
+  const speed = new Gtk.Button({
+    label: speedLabel(1),
+    tooltipText: 'Vitesse de lecture',
+    valign: Gtk.Align.CENTER,
+    cssClasses: ['flat', 'pill', 'speed', 'caption-heading'],
+  });
   box.append(play);
   // vocal avec forme d'onde : barres à la place de la barre de progression (comme WhatsApp)
-  const wave = m.media.waveform === null || m.media.waveform === undefined || m.media.waveform.length === 0 ? null : waveformView(m.media.waveform, (fraction) => {
-    if (player !== null) scale.set_value(fraction * scale.adjustment.upper);
-  });
+  const wave =
+    m.media.waveform === null || m.media.waveform === undefined || m.media.waveform.length === 0
+      ? null
+      : waveformView(m.media.waveform, (fraction) => {
+          if (player !== null) scale.set_value(fraction * scale.adjustment.upper);
+        });
   box.append(wave?.widget ?? scale);
   box.append(time);
   box.append(speed);
@@ -137,9 +160,25 @@ export function VideoView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
   frame.setup(w, h, 'cover', 8);
   frame.setPaintable(thumbnailTexture(m.media));
   const overlay = new Gtk.Overlay({ child: frame, tooltipText: 'Lire la vidéo', halign: Gtk.Align.START });
-  const play = new Gtk.Image({ iconName: 'media-playback-start-symbolic', pixelSize: 24, halign: Gtk.Align.CENTER, valign: Gtk.Align.CENTER, cssClasses: ['video-play'] });
+  const play = new Gtk.Image({
+    iconName: 'media-playback-start-symbolic',
+    pixelSize: 24,
+    halign: Gtk.Align.CENTER,
+    valign: Gtk.Align.CENTER,
+    cssClasses: ['video-play'],
+  });
   overlay.add_overlay(play);
-  if (m.media.seconds !== null) overlay.add_overlay(new Gtk.Label({ label: fmtDuration(m.media.seconds), halign: Gtk.Align.START, valign: Gtk.Align.END, marginStart: 8, marginBottom: 6, cssClasses: ['video-duration', 'caption'] }));
+  if (m.media.seconds !== null)
+    overlay.add_overlay(
+      new Gtk.Label({
+        label: fmtDuration(m.media.seconds),
+        halign: Gtk.Align.START,
+        valign: Gtk.Align.END,
+        marginStart: 8,
+        marginBottom: 6,
+        cssClasses: ['video-duration', 'caption'],
+      }),
+    );
   overlay.set_cursor_from_name('pointer');
   const click = new Gtk.GestureClick();
   click.connect('released', () => {

@@ -28,9 +28,20 @@ export interface WaveformView {
 export function waveformView(values: readonly number[], seek: (fraction: number) => void): WaveformView {
   let progress = 0;
   // curseur pour l'accessibilité (lecteur d'écran) et le clavier (flèches : ±5 %)
-  const area = new Gtk.DrawingArea({ hexpand: true, contentHeight: 30, valign: Gtk.Align.CENTER, tooltipText: 'Position dans le vocal', accessibleRole: Gtk.AccessibleRole.SLIDER, focusable: true, sensitive: false });
+  const area = new Gtk.DrawingArea({
+    hexpand: true,
+    contentHeight: 30,
+    valign: Gtk.Align.CENTER,
+    tooltipText: 'Position dans le vocal',
+    accessibleRole: Gtk.AccessibleRole.SLIDER,
+    focusable: true,
+    sensitive: false,
+  });
   const announce = (): void => {
-    area.update_property([Gtk.AccessibleProperty.VALUE_MIN, Gtk.AccessibleProperty.VALUE_MAX, Gtk.AccessibleProperty.VALUE_NOW], [0, 100, Math.round(progress * 100)]);
+    area.update_property(
+      [Gtk.AccessibleProperty.VALUE_MIN, Gtk.AccessibleProperty.VALUE_MAX, Gtk.AccessibleProperty.VALUE_NOW],
+      [0, 100, Math.round(progress * 100)],
+    );
   };
   announce();
   const keys = new Gtk.EventControllerKey();

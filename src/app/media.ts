@@ -105,7 +105,12 @@ export class MediaLoader {
     const key = `file:${m.chatId}/${m.id}`;
     const pending = this.#files.get(key);
     if (pending !== undefined) return pending;
-    const dir = GLib.build_filenamev([GLib.get_user_cache_dir(), 'wa-gnome', 'media', GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, `${m.chatId}/${m.id}`, -1)?.slice(0, 24) ?? m.id]);
+    const dir = GLib.build_filenamev([
+      GLib.get_user_cache_dir(),
+      'wa-gnome',
+      'media',
+      GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, `${m.chatId}/${m.id}`, -1)?.slice(0, 24) ?? m.id,
+    ]);
     const file = Gio.File.new_for_path(GLib.build_filenamev([dir, suggestedName(m, media).replaceAll('/', '_')]));
     const promise = (async (): Promise<Gio.File> => {
       if (file.query_exists(null)) {
@@ -238,7 +243,17 @@ const ZOOM_STEP = 1.25;
 
 /** Bouton flottant précédente / suivante. */
 const navButton = (icon: string, tip: string, align: Gtk.Align): Gtk.Button =>
-  new Gtk.Button({ iconName: icon, tooltipText: tip, halign: align, valign: Gtk.Align.CENTER, marginStart: 12, marginEnd: 12, cssClasses: ['osd', 'circular'], widthRequest: 40, heightRequest: 40 });
+  new Gtk.Button({
+    iconName: icon,
+    tooltipText: tip,
+    halign: align,
+    valign: Gtk.Align.CENTER,
+    marginStart: 12,
+    marginEnd: 12,
+    cssClasses: ['osd', 'circular'],
+    widthRequest: 40,
+    heightRequest: 40,
+  });
 
 /** Photo de la visionneuse (message avec média). */
 export type Photo = Message & { media: Media };
@@ -252,8 +267,21 @@ export function openViewer(parent: Gtk.Widget, title: string, photos: readonly P
   let loaded: Loaded | null = null;
   /** null : ajustée à la fenêtre ; sinon échelle par rapport à la taille réelle */
   let scale: number | null = null;
-  const picture = new Gtk.Picture({ contentFit: Gtk.ContentFit.CONTAIN, canShrink: true, hexpand: true, vexpand: true, halign: Gtk.Align.FILL, valign: Gtk.Align.FILL });
-  const scroller = new Gtk.ScrolledWindow({ child: picture, hscrollbarPolicy: Gtk.PolicyType.NEVER, vscrollbarPolicy: Gtk.PolicyType.NEVER, hexpand: true, vexpand: true });
+  const picture = new Gtk.Picture({
+    contentFit: Gtk.ContentFit.CONTAIN,
+    canShrink: true,
+    hexpand: true,
+    vexpand: true,
+    halign: Gtk.Align.FILL,
+    valign: Gtk.Align.FILL,
+  });
+  const scroller = new Gtk.ScrolledWindow({
+    child: picture,
+    hscrollbarPolicy: Gtk.PolicyType.NEVER,
+    vscrollbarPolicy: Gtk.PolicyType.NEVER,
+    hexpand: true,
+    vexpand: true,
+  });
   const hadj = scroller.get_hadjustment();
   const vadj = scroller.get_vadjustment();
   const spinner = new Adw.Spinner({ halign: Gtk.Align.CENTER, valign: Gtk.Align.CENTER, widthRequest: 32, heightRequest: 32, canTarget: false });
@@ -387,7 +415,8 @@ export function openViewer(parent: Gtk.Widget, title: string, photos: readonly P
       if (mine === generation) spinner.visible = false;
     }
     // voisines préchargées
-    for (const n of [photos[i - 1], photos[i + 1]]) if (n !== undefined) loader.load(n).catch((error: unknown) => console.error(`préchargement : ${errorMessage(error)}`));
+    for (const n of [photos[i - 1], photos[i + 1]])
+      if (n !== undefined) loader.load(n).catch((error: unknown) => console.error(`préchargement : ${errorMessage(error)}`));
   };
   const go = (delta: number): void => {
     const i = index + delta;

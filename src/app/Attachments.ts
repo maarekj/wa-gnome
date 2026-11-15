@@ -39,7 +39,12 @@ function preview(mimetype: string, bytes: GLib.Bytes): Gdk.Texture | null {
 
 /** Fichier lu en pièce jointe ; refusé s'il dépasse la limite d'envoi. */
 export async function fromFile(file: Gio.File): Promise<Attachment> {
-  const info = await file.query_info_async('standard::content-type,standard::display-name,standard::size', Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, null);
+  const info = await file.query_info_async(
+    'standard::content-type,standard::display-name,standard::size',
+    Gio.FileQueryInfoFlags.NONE,
+    GLib.PRIORITY_DEFAULT,
+    null,
+  );
   if (info.get_size() > MAX_UPLOAD) throw new Error(`${info.get_display_name()} : ${fmtSize(info.get_size())}, ${fmtSize(MAX_UPLOAD)} au plus`);
   const [bytes] = await file.load_bytes_async(null);
   const mimetype = Gio.content_type_get_mime_type(info.get_content_type() ?? '') ?? 'application/octet-stream';

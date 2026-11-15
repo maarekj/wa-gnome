@@ -30,7 +30,16 @@ const specsOut = path.join(root, 'dist', 'specs');
 fs.rmSync(specsOut, { recursive: true, force: true });
 const specs = only.length > 0 ? only.map((s) => path.resolve(s)) : list(path.join(root, 'specs'), '.spec.ts').map((f) => path.join(root, 'specs', f));
 if (specs.length > 0) {
-  await build({ entryPoints: specs, outdir: specsOut, bundle: true, format: 'esm', target: 'es2022', external: GJS_EXTERNALS, tsconfigRaw: GJS_TSCONFIG, logLevel: 'warning' });
+  await build({
+    entryPoints: specs,
+    outdir: specsOut,
+    bundle: true,
+    format: 'esm',
+    target: 'es2022',
+    external: GJS_EXTERNALS,
+    tsconfigRaw: GJS_TSCONFIG,
+    logLevel: 'warning',
+  });
   const jasmine = spawnSync('xvfb-run', ['-a', 'env', ...ENV, 'jasmine', '--module', '--no-config', specsOut], { stdio: 'inherit' });
   if (jasmine.status !== 0) {
     console.log('ÉCHEC specs jasmine');
@@ -44,7 +53,18 @@ const out = path.join(root, 'dist', 'tests');
 const tests = list(path.join(root, 'tests'), '.ts');
 const file = (t: string): string => path.join(out, t.replace(/\.ts$/u, '.js'));
 await Promise.all(
-  tests.map((t) => build({ entryPoints: [path.join(root, 'tests', t)], outfile: file(t), bundle: true, format: 'esm', target: 'es2022', external: GJS_EXTERNALS, tsconfigRaw: GJS_TSCONFIG, logLevel: 'warning' })),
+  tests.map((t) =>
+    build({
+      entryPoints: [path.join(root, 'tests', t)],
+      outfile: file(t),
+      bundle: true,
+      format: 'esm',
+      target: 'es2022',
+      external: GJS_EXTERNALS,
+      tsconfigRaw: GJS_TSCONFIG,
+      logLevel: 'warning',
+    }),
+  ),
 );
 let failed = 0;
 for (const t of tests) {
@@ -53,6 +73,8 @@ for (const t of tests) {
   const warnings = output.split('\n').filter((l) => /Gtk-(WARNING|CRITICAL)/u.test(l));
   const ok = res.status === 0 && output.includes('TEST OK') && warnings.length === 0;
   if (!ok) failed += 1;
-  console.log(`${ok ? 'ok  ' : 'ÉCHEC'} ${t}${ok ? '' : ` (code ${res.status ?? 'délai'}, ${warnings.length} avertissement(s))\n${output.split('\n').slice(-15).join('\n')}`}`);
+  console.log(
+    `${ok ? 'ok  ' : 'ÉCHEC'} ${t}${ok ? '' : ` (code ${res.status ?? 'délai'}, ${warnings.length} avertissement(s))\n${output.split('\n').slice(-15).join('\n')}`}`,
+  );
 }
 if (failed > 0) process.exit(1);

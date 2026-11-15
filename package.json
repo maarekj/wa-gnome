@@ -8,7 +8,9 @@
     "gnim-types": "node scripts/gnim-types.ts",
     "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/daemon && tsc -p src/shared && tsc -p src/app && tsc -p specs",
     "lint": "oxlint --type-aware",
-    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "format": "oxfmt 'src/**/*.{ts,tsx}' 'scripts/**/*.ts' 'specs/**/*.ts' 'tests/**/*.ts'",
+    "format-check": "oxfmt --check 'src/**/*.{ts,tsx}' 'scripts/**/*.ts' 'specs/**/*.ts' 'tests/**/*.ts'",
+    "check": "pnpm format-check && pnpm typecheck && pnpm lint && pnpm test",
     "build": "node scripts/build.ts",
     "daemon": "node src/daemon/main.ts",
     "start": "node scripts/build.ts && gjs -m dist/app/main.js",
@@ -41,6 +43,7 @@
     "@types/jasmine": "~3.10.19",
     "@types/node": "^26.6.5",
     "esbuild": "^0.28.2",
+    "oxfmt": "^0.78.0",
     "oxlint": "^1.88.0",
     "oxlint-tsgolint": "^7.0.2004",
     "typescript": "^7.0.2"

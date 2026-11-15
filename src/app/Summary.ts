@@ -45,7 +45,12 @@ function load(): ReadonlyMap<string, readonly Summary[]> {
     const [, bytes] = GLib.file_get_contents(summariesFile());
     const parsed = SummaryFile.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
     // résumé interrompu (application fermée) : en erreur
-    return new Map(Object.entries(parsed.success ? parsed.data : {}).map(([k, list]) => [k, list.map((s) => (s.status === 'done' || s.status === 'error' ? s : { ...s, status: 'error' as const, error: 'interrompu' }))]));
+    return new Map(
+      Object.entries(parsed.success ? parsed.data : {}).map(([k, list]) => [
+        k,
+        list.map((s) => (s.status === 'done' || s.status === 'error' ? s : { ...s, status: 'error' as const, error: 'interrompu' })),
+      ]),
+    );
   } catch {
     return new Map();
   }
@@ -89,7 +94,15 @@ export function summaryLines(messages: readonly Message[], chatName: string): Su
     .filter((m) => m.kind !== 'reaction')
     .map((m) => {
       const transcript = translationOf(m)?.transcript;
-      const text = m.deleted ? DELETED_TEXT : m.kind === 'audio' && transcript !== undefined ? `(vocal) ${transcript}` : m.text === '' || m.kind === 'call' ? previewOf(m) : m.kind === 'text' ? m.text : `${previewOf(m)} · ${m.text}`;
+      const text = m.deleted
+        ? DELETED_TEXT
+        : m.kind === 'audio' && transcript !== undefined
+          ? `(vocal) ${transcript}`
+          : m.text === '' || m.kind === 'call'
+            ? previewOf(m)
+            : m.kind === 'text'
+              ? m.text
+              : `${previewOf(m)} · ${m.text}`;
       return {
         when: GLib.DateTime.new_from_unix_local(m.timestamp)?.format('%d/%m %H:%M') ?? '',
         who: m.fromMe ? 'Moi' : (m.senderName ?? m.sender?.split('@')[0] ?? chatName),
@@ -99,7 +112,8 @@ export function summaryLines(messages: readonly Message[], chatName: string): Su
 }
 
 /** Vocaux à transcrire avant le résumé (pas encore de transcription). */
-export const voicesToTranscribe = (messages: readonly Message[]): Message[] => messages.filter((m) => m.kind === 'audio' && m.media !== null && !m.deleted && !m.viewOnce && translationOf(m)?.transcript === undefined);
+export const voicesToTranscribe = (messages: readonly Message[]): Message[] =>
+  messages.filter((m) => m.kind === 'audio' && m.media !== null && !m.deleted && !m.viewOnce && translationOf(m)?.transcript === undefined);
 
 /**
  * Nouveau résumé (affiché dans le panneau) : vocaux transcrits d'abord, puis résumé.
@@ -108,7 +122,14 @@ export const voicesToTranscribe = (messages: readonly Message[]): Message[] => m
 export function startSummary(key: string, chatName: string, messages: readonly Message[], file: (m: Message) => Promise<Gio.File>): void {
   const first = messages[0];
   const last = messages.at(-1);
-  const base: Summary = { id: `${Date.now()}`, at: Math.floor(Date.now() / 1000), count: messages.length, from: first?.timestamp ?? 0, to: last?.timestamp ?? 0, status: 'summarizing' };
+  const base: Summary = {
+    id: `${Date.now()}`,
+    at: Math.floor(Date.now() / 1000),
+    count: messages.length,
+    from: first?.timestamp ?? 0,
+    to: last?.timestamp ?? 0,
+    status: 'summarizing',
+  };
   void (async (): Promise<void> => {
     let note: string | undefined;
     const voices = voicesToTranscribe(messages);
@@ -119,7 +140,10 @@ export function startSummary(key: string, chatName: string, messages: readonly M
         await translateMessage(m, { file: () => file(m), translate: false });
       } catch (error) {
         // modèle absent : vocaux laissés tels quels (« Audio »), signalé sous le résumé
-        note = error instanceof MissingModel ? 'Vocaux non transcrits : modèle de transcription à télécharger (Préférences)' : `Vocaux non transcrits : ${errorMessage(error)}`;
+        note =
+          error instanceof MissingModel
+            ? 'Vocaux non transcrits : modèle de transcription à télécharger (Préférences)'
+            : `Vocaux non transcrits : ${errorMessage(error)}`;
         break;
       }
     }
@@ -142,12 +166,24 @@ function summaryCard(key: string, s: Summary): Gtk.Widget {
   title.append(new Gtk.Label({ label: s.count === 1 ? '1 message' : `${s.count} messages`, xalign: 0, cssClasses: ['heading'] }));
   title.append(new Gtk.Label({ label: period, xalign: 0, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['caption', 'dim-label'] }));
   top.append(title);
-  const copy = new Gtk.Button({ iconName: 'edit-copy-symbolic', tooltipText: 'Copier le résumé', cssClasses: ['flat', 'circular'], valign: Gtk.Align.START, sensitive: s.status === 'done' });
+  const copy = new Gtk.Button({
+    iconName: 'edit-copy-symbolic',
+    tooltipText: 'Copier le résumé',
+    cssClasses: ['flat', 'circular'],
+    valign: Gtk.Align.START,
+    sensitive: s.status === 'done',
+  });
   copy.connect('clicked', () => {
     copy.get_clipboard().set(s.text ?? '');
     copy.tooltipText = 'Résumé copié';
   });
-  const del = new Gtk.Button({ iconName: 'user-trash-symbolic', tooltipText: 'Effacer ce résumé', cssClasses: ['flat', 'circular'], valign: Gtk.Align.START, sensitive: s.status === 'done' || s.status === 'error' });
+  const del = new Gtk.Button({
+    iconName: 'user-trash-symbolic',
+    tooltipText: 'Effacer ce résumé',
+    cssClasses: ['flat', 'circular'],
+    valign: Gtk.Align.START,
+    sensitive: s.status === 'done' || s.status === 'error',
+  });
   del.connect('clicked', () => remove(key, s.id));
   top.append(copy);
   top.append(del);
@@ -155,13 +191,29 @@ function summaryCard(key: string, s: Summary): Gtk.Widget {
   if (s.status === 'transcribing' || s.status === 'summarizing') {
     const wait = new Gtk.Box({ spacing: 8 });
     wait.append(new Gtk.Spinner({ spinning: true }));
-    wait.append(new Gtk.Label({ label: s.status === 'transcribing' ? `Transcription des vocaux (${s.progress ?? ''})…` : 'Résumé en cours…', xalign: 0, cssClasses: ['dim-label'] }));
+    wait.append(
+      new Gtk.Label({
+        label: s.status === 'transcribing' ? `Transcription des vocaux (${s.progress ?? ''})…` : 'Résumé en cours…',
+        xalign: 0,
+        cssClasses: ['dim-label'],
+      }),
+    );
     card.append(wait);
   } else if (s.status === 'error') {
-    card.append(new Gtk.Label({ label: `Résumé impossible : ${s.error ?? ''}`, xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, cssClasses: ['error'] }));
+    card.append(
+      new Gtk.Label({ label: `Résumé impossible : ${s.error ?? ''}`, xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, cssClasses: ['error'] }),
+    );
   } else {
     // réponse en Markdown (gras, listes, citations…) ; liens ouverts dans le navigateur
-    const body = new Gtk.Label({ label: markdownMarkup(s.text ?? ''), useMarkup: true, xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, selectable: true, cssClasses: ['summary'] });
+    const body = new Gtk.Label({
+      label: markdownMarkup(s.text ?? ''),
+      useMarkup: true,
+      xalign: 0,
+      wrap: true,
+      wrapMode: Pango.WrapMode.WORD_CHAR,
+      selectable: true,
+      cssClasses: ['summary'],
+    });
     openLinks(body);
     card.append(body);
   }
@@ -180,7 +232,13 @@ export function SummaryPanel(key: Accessor<string>, open: Accessor<boolean>, clo
   closeButton.connect('clicked', close);
   top.append(closeButton);
   const list = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 10, marginTop: 10, marginBottom: 12, marginStart: 10, marginEnd: 10 });
-  const empty = new Gtk.Label({ label: 'Aucun résumé pour cette discussion.\nSélectionnez des messages puis « Résumer (IA) ».', wrap: true, justify: Gtk.Justification.CENTER, marginTop: 24, cssClasses: ['dim-label'] });
+  const empty = new Gtk.Label({
+    label: 'Aucun résumé pour cette discussion.\nSélectionnez des messages puis « Résumer (IA) ».',
+    wrap: true,
+    justify: Gtk.Justification.CENTER,
+    marginTop: 24,
+    cssClasses: ['dim-label'],
+  });
   const panel = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true, cssClasses: ['chat-search'] });
   panel.append(top);
   panel.append(new Gtk.Separator());

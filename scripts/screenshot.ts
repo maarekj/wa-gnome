@@ -34,7 +34,11 @@ const control = await freePort();
 const dir = path.join(os.tmpdir(), 'wa-gnome-screenshot');
 
 await buildApp();
-const fake = spawn(process.execPath, [path.join(root, 'scripts', 'fake-daemon.ts'), '--state', values.state, '--port', port, '--dir', dir, '--control', control], { stdio: 'inherit' });
+const fake = spawn(
+  process.execPath,
+  [path.join(root, 'scripts', 'fake-daemon.ts'), '--state', values.state, '--port', port, '--dir', dir, '--control', control],
+  { stdio: 'inherit' },
+);
 await new Promise((resolve) => {
   setTimeout(resolve, 800);
 });

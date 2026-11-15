@@ -31,7 +31,36 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import * as z from 'zod/mini';
-import { type AccountDiagnostics, type Diagnostics, type Account as AccountInfo, ChatAction, DEFAULT_ACCOUNT, MAX_PINNED_MESSAGES, type ChatInfo, type Event, GALLERY_KINDS, isGalleryTab, MAX_UPLOAD, MessageAction, type MessageInfo, type Presence, PresenceBody, phoneDigits, ReactBody, RejectBody, ScheduleBody, TypingBody, SendBody, type Status, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from '../shared/api.ts';
+import {
+  type AccountDiagnostics,
+  type Diagnostics,
+  type Account as AccountInfo,
+  ChatAction,
+  DEFAULT_ACCOUNT,
+  MAX_PINNED_MESSAGES,
+  type ChatInfo,
+  type Event,
+  GALLERY_KINDS,
+  isGalleryTab,
+  MAX_UPLOAD,
+  MessageAction,
+  type MessageInfo,
+  type Presence,
+  PresenceBody,
+  phoneDigits,
+  ReactBody,
+  RejectBody,
+  ScheduleBody,
+  TypingBody,
+  SendBody,
+  type Status,
+  UPLOAD_AS,
+  UPLOAD_CAPTION,
+  UPLOAD_NAME,
+  UPLOAD_REPLY,
+  UPLOAD_VOICE_SECONDS,
+  UPLOAD_VOICE_WAVEFORM,
+} from '../shared/api.ts';
 import { recentLogs } from './log.ts';
 import type { Store } from './store.ts';
 
@@ -180,7 +209,10 @@ export function startServer(opts: { host: string; port: number; token: string; a
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     if (!authorized(req)) throw new HttpError(401, 'jeton invalide');
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const all = url.pathname.split('/').filter((p) => p !== '').map((p) => decodeURIComponent(p));
+    const all = url.pathname
+      .split('/')
+      .filter((p) => p !== '')
+      .map((p) => decodeURIComponent(p));
     if (all.length === 1 && all[0] === 'diagnostics' && req.method === 'GET') {
       json(res, 200, {
         daemon: opts.accounts.daemon,
@@ -198,10 +230,14 @@ export function startServer(opts: { host: string; port: number; token: string; a
         return;
       }
       if (req.method !== 'GET') throw new HttpError(405, 'méthode non prise en charge');
-      json(res, 200, opts.accounts.ids().flatMap((id): AccountInfo[] => {
-        const a = opts.accounts.get(id);
-        return a === undefined ? [] : [{ id, status: a.wa.status }];
-      }));
+      json(
+        res,
+        200,
+        opts.accounts.ids().flatMap((id): AccountInfo[] => {
+          const a = opts.accounts.get(id);
+          return a === undefined ? [] : [{ id, status: a.wa.status }];
+        }),
+      );
       return;
     }
     const accountId = all[0] === 'accounts' ? (all[1] ?? '') : DEFAULT_ACCOUNT;
@@ -232,7 +268,15 @@ export function startServer(opts: { host: string; port: number; token: string; a
         json(res, 200, store.chats());
         return;
       case 'GET /search':
-        json(res, 200, store.search(url.searchParams.get('q') ?? '', Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200)), url.searchParams.get('chat')));
+        json(
+          res,
+          200,
+          store.search(
+            url.searchParams.get('q') ?? '',
+            Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200)),
+            url.searchParams.get('chat'),
+          ),
+        );
         return;
       case 'GET /contacts':
         json(res, 200, store.contacts());
@@ -293,8 +337,19 @@ export function startServer(opts: { host: string; port: number; token: string; a
         if (data.length === 0) throw new HttpError(400, 'fichier vide');
         const mimetype = (req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]?.trim() ?? 'application/octet-stream';
         const seconds = Number(header(req, UPLOAD_VOICE_SECONDS));
-        const voice = header(req, UPLOAD_AS) === 'voice' && Number.isFinite(seconds) ? { voice: { seconds: Math.round(seconds), waveform: new Uint8Array(Buffer.from(header(req, UPLOAD_VOICE_WAVEFORM), 'base64')) } } : {};
-        await wa.sendMedia(chatId, { data, mimetype, fileName: header(req, UPLOAD_NAME) || 'fichier', caption: header(req, UPLOAD_CAPTION), asDocument: header(req, UPLOAD_AS) === 'document', replyTo: header(req, UPLOAD_REPLY), ...voice });
+        const voice =
+          header(req, UPLOAD_AS) === 'voice' && Number.isFinite(seconds)
+            ? { voice: { seconds: Math.round(seconds), waveform: new Uint8Array(Buffer.from(header(req, UPLOAD_VOICE_WAVEFORM), 'base64')) } }
+            : {};
+        await wa.sendMedia(chatId, {
+          data,
+          mimetype,
+          fileName: header(req, UPLOAD_NAME) || 'fichier',
+          caption: header(req, UPLOAD_CAPTION),
+          asDocument: header(req, UPLOAD_AS) === 'document',
+          replyTo: header(req, UPLOAD_REPLY),
+          ...voice,
+        });
         json(res, 200, {});
         return;
       }
@@ -347,7 +402,11 @@ export function startServer(opts: { host: string; port: number; token: string; a
         return;
       }
       case 'GET /chats/:id/scheduled':
-        json(res, 200, store.scheduled(chatId).map(({ mentions: _m, ...s }) => s));
+        json(
+          res,
+          200,
+          store.scheduled(chatId).map(({ mentions: _m, ...s }) => s),
+        );
         return;
       case 'POST /chats/:id/scheduled': {
         const body = ScheduleBody.safeParse(await readBody(req));

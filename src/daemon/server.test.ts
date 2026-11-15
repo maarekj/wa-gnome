@@ -15,7 +15,19 @@ const TOKEN = 'jeton-de-test';
 const CHAT = '33600000001@s.whatsapp.net';
 const DB = `/tmp/wa-gnome-server-test-${process.pid}.db`;
 
-const msg = (id: string, timestamp: number): Converted => ({ id, chatId: CHAT, fromMe: false, sender: null, senderName: null, timestamp, kind: 'text', text: `message ${id}`, media: null, quoted: null, status: null });
+const msg = (id: string, timestamp: number): Converted => ({
+  id,
+  chatId: CHAT,
+  fromMe: false,
+  sender: null,
+  senderName: null,
+  timestamp,
+  kind: 'text',
+  text: `message ${id}`,
+  media: null,
+  quoted: null,
+  status: null,
+});
 
 /** Appels reçus par le faux Backend : nom et arguments. */
 const calls: { method: string; args: unknown[] }[] = [];
@@ -50,7 +62,11 @@ let base = '';
 const extras = new Map<string, Account>();
 
 const request = (method: string, route: string, body?: unknown, token = TOKEN): Promise<Response> =>
-  fetch(`${base}${route}`, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  fetch(`${base}${route}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
 
 void describe('serveur HTTP', () => {
   before(async () => {

@@ -175,7 +175,14 @@ export type MessageStatus = z.infer<typeof MessageStatus>;
 /** proto.WebMessageInfo.Status (nombre, ou nom dans l'historique) → état ; null si inconnu. */
 export function statusOf(s: unknown): MessageStatus | null {
   const byNumber: readonly MessageStatus[] = ['error', 'pending', 'sent', 'delivered', 'read', 'played'];
-  const byName: Readonly<Record<string, MessageStatus>> = { ERROR: 'error', PENDING: 'pending', SERVER_ACK: 'sent', DELIVERY_ACK: 'delivered', READ: 'read', PLAYED: 'played' };
+  const byName: Readonly<Record<string, MessageStatus>> = {
+    ERROR: 'error',
+    PENDING: 'pending',
+    SERVER_ACK: 'sent',
+    DELIVERY_ACK: 'delivered',
+    READ: 'read',
+    PLAYED: 'played',
+  };
   if (typeof s === 'number') return byNumber[s] ?? null;
   if (typeof s === 'string') return byName[s] ?? null;
   return null;
@@ -185,7 +192,8 @@ export function statusOf(s: unknown): MessageStatus | null {
 export const PENDING_STALE_S = 10 * 60;
 
 /** État affiché d'un message envoyé à `timestamp` (secondes). */
-export const effectiveStatus = (s: MessageStatus, timestamp: number, now = Date.now() / 1000): MessageStatus => (s === 'pending' && now - timestamp > PENDING_STALE_S ? 'sent' : s);
+export const effectiveStatus = (s: MessageStatus, timestamp: number, now = Date.now() / 1000): MessageStatus =>
+  s === 'pending' && now - timestamp > PENDING_STALE_S ? 'sent' : s;
 
 /** Rang d'un état : un état n'est jamais remplacé par un moins avancé (accusés dans le désordre). */
 export const statusRank = (s: MessageStatus): number => ['pending', 'sent', 'delivered', 'read', 'played', 'error'].indexOf(s);
@@ -209,7 +217,9 @@ export const Poll = z.object({
   /** plusieurs réponses possibles */
   multiple: z.boolean(),
   /** votants : identifiant (null : moi) et nom affiché */
-  options: z.array(z.object({ name: z.string(), count: z.number(), mine: z.boolean(), voters: z.array(z.object({ id: z.nullable(z.string()), name: z.string() })) })),
+  options: z.array(
+    z.object({ name: z.string(), count: z.number(), mine: z.boolean(), voters: z.array(z.object({ id: z.nullable(z.string()), name: z.string() })) }),
+  ),
   /** personnes ayant voté */
   voters: z.number(),
 });
@@ -504,7 +514,12 @@ export const Scheduled = z.object({
   error: z.nullable(z.string()),
 });
 export type Scheduled = z.infer<typeof Scheduled>;
-export const ScheduleBody = z.object({ text: z.string().check(z.minLength(1)), at: z.number(), replyTo: z.optional(z.string()), mentions: z.optional(z.array(z.string())) });
+export const ScheduleBody = z.object({
+  text: z.string().check(z.minLength(1)),
+  at: z.number(),
+  replyTo: z.optional(z.string()),
+  mentions: z.optional(z.array(z.string())),
+});
 
 /** État de la connexion d'un compte (écran de diagnostic). */
 export const AccountDiagnostics = z.object({
@@ -604,7 +619,8 @@ export function formatPhone(digits: string): string {
 }
 
 /** Libellé d'un média à vue unique (« Photo à vue unique »). */
-export const viewOnceLabel = (kind: MessageKind): string => (kind === 'video' ? 'Vidéo à vue unique' : kind === 'audio' ? 'Message vocal à vue unique' : 'Photo à vue unique');
+export const viewOnceLabel = (kind: MessageKind): string =>
+  kind === 'video' ? 'Vidéo à vue unique' : kind === 'audio' ? 'Message vocal à vue unique' : 'Photo à vue unique';
 
 /** Texte court d'un message pour la liste des discussions. */
 export function previewOf(m: Pick<Message, 'kind' | 'text'> & { viewOnce?: boolean; mentions?: readonly Mention[] }): string {

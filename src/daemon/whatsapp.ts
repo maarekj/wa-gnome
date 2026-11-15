@@ -31,10 +31,49 @@ import {
 } from 'baileys';
 import type { BaileysEventMap } from 'baileys';
 import * as z from 'zod/mini';
-import { type AccountDiagnostics, callText, type CallOutcome, type ChatAction, replaceMention, STATUS_CHAT, type ChatInfo, EDIT_WINDOW_S, type Event, MAX_PINNED, type Message, type MessageAction, type MessageInfo, type Presence, type Status, statusOf, statusRank, uploadKind } from '../shared/api.ts';
+import {
+  type AccountDiagnostics,
+  callText,
+  type CallOutcome,
+  type ChatAction,
+  replaceMention,
+  STATUS_CHAT,
+  type ChatInfo,
+  EDIT_WINDOW_S,
+  type Event,
+  MAX_PINNED,
+  type Message,
+  type MessageAction,
+  type MessageInfo,
+  type Presence,
+  type Status,
+  statusOf,
+  statusRank,
+  uploadKind,
+} from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import type { Upload } from './server.ts';
-import { type Change, changeOf, encryptPollVote, pinOf, pollOf, type RawPin, votesOf, editedContent, expirationOf, isKept, keepOf, mediaOf, quotedOf, type RawReaction, reactionOf, reactionsOf, seconds, toMessage, viewOnceOf } from './convert.ts';
+import {
+  type Change,
+  changeOf,
+  encryptPollVote,
+  pinOf,
+  pollOf,
+  type RawPin,
+  votesOf,
+  editedContent,
+  expirationOf,
+  isKept,
+  keepOf,
+  mediaOf,
+  quotedOf,
+  type RawReaction,
+  reactionOf,
+  reactionsOf,
+  seconds,
+  toMessage,
+  viewOnceOf,
+} from './convert.ts';
 import { logger } from './log.ts';
 import { Pictures } from './pictures.ts';
 import type { ChatPatch, Store } from './store.ts';
@@ -46,7 +85,6 @@ function voiceContent(f: Upload): AnyMessageContent {
   const content = { audio: f.data, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: f.voice.seconds, waveform: f.voice.waveform };
   return content;
 }
-
 
 /** Délai avant reconnexion après une coupure (ms). */
 const RECONNECT_MS = 3000;
@@ -78,11 +116,11 @@ const keyAuthors = (k: WAMessageKey): (string | null | undefined)[] => [keyAutho
  * Auteur d'un message d'après sa clé : participant (groupe), sinon la discussion. Discussion
  * directe : `participant` est souvent une chaîne vide, pas absent.
  */
-const keyAuthor = (k: proto.IMessageKey): string => (k.participant !== null && k.participant !== undefined && k.participant !== '' ? k.participant : (k.remoteJid ?? ''));
+const keyAuthor = (k: proto.IMessageKey): string =>
+  k.participant !== null && k.participant !== undefined && k.participant !== '' ? k.participant : (k.remoteJid ?? '');
 
 /** Message adressé par lid (auteur en lid, ou adressage annoncé par la clé). */
 const isLidGroupKey = (key: WAMessageKey): boolean => key.addressingMode === 'lid' || keyAuthor(key).endsWith('@lid');
-
 
 /** Cache des médias : au-delà, les fichiers les moins récemment lus sont supprimés. */
 const MEDIA_CACHE_MAX = 2 * 1024 ** 3;
@@ -221,7 +259,12 @@ export class WhatsApp {
         // mes identifiants : citations de mes propres messages reconnues
         if (me !== undefined) this.#store.setMe([jidNormalizedUser(me.id), ...(me.lid === undefined || me.lid === null ? [] : [jidNormalizedUser(me.lid)])]);
         this.#connectedAt = Math.floor(Date.now() / 1000);
-        this.#setStatus({ state: 'open', qr: null, error: null, me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null } });
+        this.#setStatus({
+          state: 'open',
+          qr: null,
+          error: null,
+          me: me === undefined ? null : { id: jidNormalizedUser(me.id), name: me.name ?? me.notify ?? null },
+        });
         void this.#resolveLids(sock);
         // reconnexion pendant que l'app est au premier plan : de nouveau en ligne
         if (this.#online) void sock.sendPresenceUpdate('available').catch((error: unknown) => logger.warn({ error }, 'présence'));
@@ -285,7 +328,10 @@ export class WhatsApp {
       // statuts reçus avec l'historique : liste relue par l'app
       if (messages.some((m) => m.key.remoteJid === STATUS_CHAT)) this.#emit({ type: 'statuses' });
       // épinglages reçus avec l'historique : discussion ouverte rafraîchie
-      for (const id of new Set(messages.flatMap((m) => (pinOf(m) !== null && m.key.remoteJid !== null && m.key.remoteJid !== undefined ? [this.#jid(m.key.remoteJid)] : [])))) this.#emit({ type: 'pins', chatId: id });
+      for (const id of new Set(
+        messages.flatMap((m) => (pinOf(m) !== null && m.key.remoteJid !== null && m.key.remoteJid !== undefined ? [this.#jid(m.key.remoteJid)] : [])),
+      ))
+        this.#emit({ type: 'pins', chatId: id });
       this.#emit({ type: 'chats', chats: this.#store.chats() });
       // historique : messages éphémères déjà expirés retirés aussitôt
       this.purgeExpired();
@@ -430,7 +476,12 @@ export class WhatsApp {
             if (e !== null) this.#applyChange({ kind: 'edit', chatId: key.remoteJid, targetId: key.id, text: e.text, msgKind: e.kind, by });
           } else if (update.message === null && update.messageStubType === proto.WebMessageInfo.StubType.REVOKE) {
             const revoker = update.key ?? key;
-            this.#applyChange({ kind: 'revoke', chatId: key.remoteJid, targetId: key.id, by: revoker.fromMe === true ? 'me' : jidNormalizedUser(revoker.participant ?? revoker.remoteJid ?? key.remoteJid) });
+            this.#applyChange({
+              kind: 'revoke',
+              chatId: key.remoteJid,
+              targetId: key.id,
+              by: revoker.fromMe === true ? 'me' : jidNormalizedUser(revoker.participant ?? revoker.remoteJid ?? key.remoteJid),
+            });
           }
         }
         const status = statusOf(update.status);
@@ -444,7 +495,14 @@ export class WhatsApp {
         // discussion directe : dates d'accusé du destinataire (les groupes ont message-receipt.update)
         if (!chatId.endsWith('@g.us')) {
           const now = Math.floor(Date.now() / 1000);
-          this.#store.setReceipt({ chatId, messageId: key.id, user: chatId, delivered: statusRank(status) >= statusRank('delivered') ? now : null, read: status === 'read' || status === 'played' ? now : null, played: status === 'played' ? now : null });
+          this.#store.setReceipt({
+            chatId,
+            messageId: key.id,
+            user: chatId,
+            delivered: statusRank(status) >= statusRank('delivered') ? now : null,
+            read: status === 'read' || status === 'played' ? now : null,
+            played: status === 'played' ? now : null,
+          });
         }
         if (!this.#store.setStatus(chatId, key.id, status)) continue;
         const m = this.#store.message(chatId, key.id);
@@ -483,7 +541,8 @@ export class WhatsApp {
 
     // noms de groupes : pas toujours présents dans l'historique
     on('groups.upsert', (groups) => {
-      for (const g of groups) this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject, ...(g.ephemeralDuration === undefined ? {} : { ephemeral: g.ephemeralDuration }) });
+      for (const g of groups)
+        this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject, ...(g.ephemeralDuration === undefined ? {} : { ephemeral: g.ephemeralDuration }) });
       this.#emitChats(groups.map((g) => g.id));
     });
   }
@@ -562,15 +621,39 @@ export class WhatsApp {
           : isLidGroupKey(target.key);
         const me = this.#myJid(lid);
         const creator = target.key.fromMe === true ? me : this.#authorJid(target.key, lid);
-        const enc = encryptPollVote(proto.Message.PollVoteMessage.encode({ selectedOptions: hashes }).finish(), { pollEncKey: poll.secret, pollCreatorJid: creator, pollMsgId: id, voterJid: me });
+        const enc = encryptPollVote(proto.Message.PollVoteMessage.encode({ selectedOptions: hashes }).finish(), {
+          pollEncKey: poll.secret,
+          pollCreatorJid: creator,
+          pollMsgId: id,
+          voterJid: me,
+        });
         // enveloppe identique à celle du téléphone : nœud « meta polltype=vote content_type=add_on »,
         // et « decrypt-fail=hide » sur le contenu chiffré (patch de Baileys)
         // clé du sondage telle que le protocole la décrit (sans participant vide ni champs ajoutés par Baileys)
-        const pollKey: proto.IMessageKey = { remoteJid: target.key.remoteJid ?? jid, fromMe: target.key.fromMe === true, id, ...(target.key.participant !== null && target.key.participant !== undefined && target.key.participant !== '' ? { participant: target.key.participant } : {}) };
+        const pollKey: proto.IMessageKey = {
+          remoteJid: target.key.remoteJid ?? jid,
+          fromMe: target.key.fromMe === true,
+          id,
+          ...(target.key.participant !== null && target.key.participant !== undefined && target.key.participant !== ''
+            ? { participant: target.key.participant }
+            : {}),
+        };
         logger.debug(`vote envoyé (sondage ${id}) : créateur ${creator}, votant ${me}`);
         const voteId = generateMessageIDV2(sock.user?.id);
-        await sock.relayMessage(jid, { pollUpdateMessage: { pollCreationMessageKey: pollKey, vote: enc, senderTimestampMs: Date.now() } }, { messageId: voteId, additionalNodes: [{ tag: 'meta', attrs: { polltype: 'vote', content_type: 'add_on' } }] });
-        if (this.#store.setVote(chatId, id, 'me', hashes.map((h) => h.toString('base64')), Date.now())) {
+        await sock.relayMessage(
+          jid,
+          { pollUpdateMessage: { pollCreationMessageKey: pollKey, vote: enc, senderTimestampMs: Date.now() } },
+          { messageId: voteId, additionalNodes: [{ tag: 'meta', attrs: { polltype: 'vote', content_type: 'add_on' } }] },
+        );
+        if (
+          this.#store.setVote(
+            chatId,
+            id,
+            'me',
+            hashes.map((h) => h.toString('base64')),
+            Date.now(),
+          )
+        ) {
           const m = this.#store.message(chatId, id);
           if (m !== null) this.#emit({ type: 'message.update', message: m });
         }
@@ -579,7 +662,10 @@ export class WhatsApp {
       case 'pin': {
         // durées de WhatsApp seulement (7 jours sinon) : même valeur ici et chez les autres
         const duration = a.duration === 86_400 || a.duration === 2_592_000 ? a.duration : 604_800;
-        await sock.sendMessage(jid, a.value ? { pin: target.key, type: proto.PinInChat.Type.PIN_FOR_ALL, time: duration } : { pin: target.key, type: proto.PinInChat.Type.UNPIN_FOR_ALL });
+        await sock.sendMessage(
+          jid,
+          a.value ? { pin: target.key, type: proto.PinInChat.Type.PIN_FOR_ALL, time: duration } : { pin: target.key, type: proto.PinInChat.Type.UNPIN_FOR_ALL },
+        );
         // appliqué tout de suite (le message technique revient aussi par messages.upsert)
         // date locale un peu en arrière : un retrait fait ensuite ailleurs (date du serveur) n'est pas ignoré
         this.#pin(chatId, { targetId: id, pinned: a.value, at: Math.floor(Date.now() / 1000) - 60, duration, action: true });
@@ -611,7 +697,14 @@ export class WhatsApp {
     }
     await sock.relayMessage(
       jid,
-      { protocolMessage: { key: target.key, type: proto.Message.ProtocolMessage.Type.MESSAGE_EDIT, editedMessage: { [type]: { caption: text } }, timestampMs: Date.now() } },
+      {
+        protocolMessage: {
+          key: target.key,
+          type: proto.Message.ProtocolMessage.Type.MESSAGE_EDIT,
+          editedMessage: { [type]: { caption: text } },
+          timestampMs: Date.now(),
+        },
+      },
       { messageId: generateMessageIDV2(sock.user?.id) },
     );
   }
@@ -628,7 +721,14 @@ export class WhatsApp {
   /** Accusé d'un destinataire pour un message envoyé. */
   #saveReceipt(key: WAMessageKey, r: proto.IUserReceipt): void {
     if (key.fromMe !== true || key.id === null || key.id === undefined || r.userJid === null || r.userJid === undefined) return;
-    this.#store.setReceipt({ chatId: this.#jid(key.remoteJid), messageId: key.id, user: this.#jid(r.userJid), delivered: seconds(r.receiptTimestamp), read: seconds(r.readTimestamp), played: seconds(r.playedTimestamp) });
+    this.#store.setReceipt({
+      chatId: this.#jid(key.remoteJid),
+      messageId: key.id,
+      user: this.#jid(r.userJid),
+      delivered: seconds(r.receiptTimestamp),
+      read: seconds(r.readTimestamp),
+      played: seconds(r.playedTimestamp),
+    });
   }
 
   /** Messages reçus par liste de diffusion (base antérieure) : rangés chez leur expéditeur. */
@@ -683,7 +783,8 @@ export class WhatsApp {
     // réactions de l'historique portées par le message lui-même
     for (const r of reactionsOf(wa)) this.#react(r, false);
     // votes déjà déchiffrés portés par un sondage de l'historique
-    if (wa.key.remoteJid !== null && wa.key.remoteJid !== undefined) for (const v of votesOf(wa)) this.#store.setVote(this.#jid(wa.key.remoteJid), v.pollId, v.voter === 'me' ? 'me' : this.#jid(v.voter), v.options, v.at);
+    if (wa.key.remoteJid !== null && wa.key.remoteJid !== undefined)
+      for (const v of votesOf(wa)) this.#store.setVote(this.#jid(wa.key.remoteJid), v.pollId, v.voter === 'me' ? 'me' : this.#jid(v.voter), v.options, v.at);
     if (converted === null) return null;
     // discussion et auteurs (message, citation) rangés sous le numéro quand il est connu
     const q = converted.quoted;
@@ -819,7 +920,7 @@ export class WhatsApp {
       wa = JSON.parse(raw, BufferJSON.reviver);
     } catch (error) {
       // ligne corrompue : ignorée (sinon les reprises du démarrage échouent et le démon redémarre en boucle)
-      logger.warn({ error }, "message brut illisible");
+      logger.warn({ error }, 'message brut illisible');
       return null;
     }
     if (typeof wa !== 'object' || wa === null || !('key' in wa)) return null;
@@ -1063,7 +1164,8 @@ export class WhatsApp {
       for (const r of rows) {
         const wa = this.#parseRaw(r.raw);
         const content = normalizeContent(wa);
-        if (content !== undefined) this.#store.setEphemeralFields(r.chatId, r.id, viewOnceOf(wa?.message, content), isKept(wa?.keepInChat?.keepType) ? 0 : expirationOf(content));
+        if (content !== undefined)
+          this.#store.setEphemeralFields(r.chatId, r.id, viewOnceOf(wa?.message, content), isKept(wa?.keepInChat?.keepType) ? 0 : expirationOf(content));
       }
       this.#store.ephemeralFromLastMessages();
     });
@@ -1107,7 +1209,8 @@ export class WhatsApp {
     const secret = poll === null ? null : this.#pollKey(poll);
     // sondage pas encore reçu (historique dans le désordre) : vote gardé pour plus tard
     const keep = (): void => {
-      if (wa.key.id !== null && wa.key.id !== undefined) this.#store.addPendingVote(chatId, wa.key.id, key.id ?? '', JSON.stringify(wa, BufferJSON.replacer), tries + 1);
+      if (wa.key.id !== null && wa.key.id !== undefined)
+        this.#store.addPendingVote(chatId, wa.key.id, key.id ?? '', JSON.stringify(wa, BufferJSON.replacer), tries + 1);
     };
     if (poll === null || secret === null) {
       logger.info(`vote à un sondage inconnu ${key.id}`);
@@ -1115,14 +1218,23 @@ export class WhatsApp {
       return;
     }
     // identifiants possibles (lid ou numéro) de l'auteur du sondage et du votant : le bon déchiffre
-    const forms = (...js: (string | null | undefined)[]): string[] => [...new Set(js.flatMap((j) => (j === null || j === undefined || j === '' ? [] : [j, this.#store.canonical(j), this.#store.lidOf(j) ?? j])).map((x) => jidNormalizedUser(x)))];
+    const forms = (...js: (string | null | undefined)[]): string[] => [
+      ...new Set(
+        js
+          .flatMap((j) => (j === null || j === undefined || j === '' ? [] : [j, this.#store.canonical(j), this.#store.lidOf(j) ?? j]))
+          .map((x) => jidNormalizedUser(x)),
+      ),
+    ];
     const mine = (): string[] => [this.#myJid(true), this.#myJid(false)];
     const creators = poll.key.fromMe === true ? mine() : forms(...keyAuthors(poll.key));
     const voters = wa.key.fromMe === true ? mine() : forms(...keyAuthors(wa.key));
     for (const pollCreatorJid of creators) {
       for (const voterJid of voters) {
         try {
-          const decoded = decryptPollVote({ encPayload: vote.encPayload ?? new Uint8Array(), encIv: vote.encIv ?? new Uint8Array() }, { pollCreatorJid, pollMsgId: key.id, pollEncKey: secret.secret, voterJid });
+          const decoded = decryptPollVote(
+            { encPayload: vote.encPayload ?? new Uint8Array(), encIv: vote.encIv ?? new Uint8Array() },
+            { pollCreatorJid, pollMsgId: key.id, pollEncKey: secret.secret, voterJid },
+          );
           const options = (decoded.selectedOptions ?? []).map((h) => Buffer.from(h).toString('base64'));
           const voter = wa.key.fromMe === true ? 'me' : this.#jid(voterJid);
           const at = Number(u?.senderTimestampMs ?? 0) || seconds(wa.messageTimestamp) * 1000;
@@ -1236,7 +1348,16 @@ export class WhatsApp {
 
   /** Diagnostic de la connexion et des données du compte. */
   diagnostics(id: string): AccountDiagnostics {
-    return { id, status: this.#status, webVersion: this.#webVersion, connectedAt: this.#connectedAt, disconnectedAt: this.#disconnectedAt, disconnects: this.#disconnects, ...this.#store.sizes(), mediaSize: dirSize(this.#mediaDir) };
+    return {
+      id,
+      status: this.#status,
+      webVersion: this.#webVersion,
+      connectedAt: this.#connectedAt,
+      disconnectedAt: this.#disconnectedAt,
+      disconnects: this.#disconnects,
+      ...this.#store.sizes(),
+      mediaSize: dirSize(this.#mediaDir),
+    };
   }
 
   /** Statut vu : noté ici, et accusé de lecture à son auteur (comme le téléphone). */
@@ -1351,13 +1472,19 @@ export class WhatsApp {
   presenceOf(chatId: string): Presence {
     const known = this.#presence.get(chatId) ?? new Map<string, { data: PresenceData; at: number }>();
     const typing = [...known].flatMap(([who, { data, at }]) =>
-      (data.lastKnownPresence === 'composing' || data.lastKnownPresence === 'recording') && fresh(at) ? [{ name: this.#store.chat(who)?.name ?? this.#store.displayName(who), recording: data.lastKnownPresence === 'recording' }] : [],
+      (data.lastKnownPresence === 'composing' || data.lastKnownPresence === 'recording') && fresh(at)
+        ? [{ name: this.#store.chat(who)?.name ?? this.#store.displayName(who), recording: data.lastKnownPresence === 'recording' }]
+        : [],
     );
     // discussion directe : la seule présence est celle de l'autre personne
     const other = chatId.endsWith('@g.us') ? undefined : known.get(chatId);
     const state = other?.data.lastKnownPresence;
     const typingStale = (state === 'composing' || state === 'recording') && other !== undefined && !fresh(other.at);
-    return { online: !typingStale && (state === 'available' || state === 'composing' || state === 'recording'), lastSeen: other?.data.lastSeen ?? null, typing };
+    return {
+      online: !typingStale && (state === 'available' || state === 'composing' || state === 'recording'),
+      lastSeen: other?.data.lastSeen ?? null,
+      typing,
+    };
   }
 
   /** Suit la présence d'une discussion (ouverte dans l'app) ; renvoie ce qui est connu. */
@@ -1376,7 +1503,19 @@ export class WhatsApp {
     if (cached !== undefined && Date.now() - cached.at < 10 * 60_000) return cached.info;
     const sock = this.#open();
     const name = this.#store.chat(chatId)?.name ?? this.#store.displayName(chatId);
-    const base: ChatInfo = { id: chatId, name, group: false, phone: null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] };
+    const base: ChatInfo = {
+      id: chatId,
+      name,
+      group: false,
+      phone: null,
+      publicName: null,
+      about: null,
+      aboutAt: null,
+      description: null,
+      created: null,
+      participants: [],
+      commonGroups: [],
+    };
     let info: ChatInfo;
     if (chatId.endsWith('@g.us')) {
       const g = await sock.groupMetadata(chatId);
@@ -1419,7 +1558,10 @@ export class WhatsApp {
     if (this.#groups === null || Date.now() - this.#groups.at > 10 * 60_000) {
       try {
         const all = Object.values(await sock.groupFetchAllParticipating());
-        this.#groups = { at: Date.now(), list: all.map((g) => ({ id: this.#jid(g.id), name: g.subject, members: new Set(g.participants.map((p) => this.#jid(p.phoneNumber ?? p.id))) })) };
+        this.#groups = {
+          at: Date.now(),
+          list: all.map((g) => ({ id: this.#jid(g.id), name: g.subject, members: new Set(g.participants.map((p) => this.#jid(p.phoneNumber ?? p.id))) })),
+        };
       } catch (error) {
         logger.debug(`groupes en commun : ${errorMessage(error)}`);
         return [];
@@ -1539,7 +1681,15 @@ export class WhatsApp {
       // appelant en lid avec son numéro : correspondance apprise (lignes d'appel de Baileys au même endroit)
       if (c.callerPn !== undefined && c.chatId.endsWith('@lid')) this.#learn([{ lid: c.chatId, pn: c.callerPn }]);
       const chatId = this.#jid(c.groupJid ?? c.callerPn ?? c.chatId);
-      const call: RingingCall = { id: c.id, chatId, from: c.from, video: c.isVideo === true, group: c.isGroup === true, at: Math.floor(c.date.getTime() / 1000), outcome: null };
+      const call: RingingCall = {
+        id: c.id,
+        chatId,
+        from: c.from,
+        video: c.isVideo === true,
+        group: c.isGroup === true,
+        at: Math.floor(c.date.getTime() / 1000),
+        outcome: null,
+      };
       this.#calls.set(c.id, call);
       this.#emitCall(call, 'ringing');
       // fin jamais reçue (connexion coupée) : notification retirée après la durée d'une sonnerie
@@ -1571,7 +1721,22 @@ export class WhatsApp {
 
   /** Ligne d'appel dans la discussion (identifiant de l'appel : pas de doublon avec Baileys). */
   #logCall(call: RingingCall, outcome: CallOutcome): void {
-    this.#store.upsertMessage({ id: call.id, chatId: call.chatId, fromMe: false, sender: call.group ? this.#jid(call.from) : null, senderName: null, timestamp: call.at, kind: 'call', text: callText(call.video, outcome), media: null, quoted: null, status: null }, '{}');
+    this.#store.upsertMessage(
+      {
+        id: call.id,
+        chatId: call.chatId,
+        fromMe: false,
+        sender: call.group ? this.#jid(call.from) : null,
+        senderName: null,
+        timestamp: call.at,
+        kind: 'call',
+        text: callText(call.video, outcome),
+        media: null,
+        quoted: null,
+        status: null,
+      },
+      '{}',
+    );
     if (outcome === 'missed') this.#store.incrementUnread(call.chatId);
     const m = this.#store.message(call.chatId, call.id);
     if (m !== null) this.#emit({ type: 'message', message: m });

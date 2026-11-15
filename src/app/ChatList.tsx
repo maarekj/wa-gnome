@@ -73,7 +73,19 @@ export function visibleChats(all: readonly Chat[], query: string, view: View, fi
   return all.filter((c) => inView(c, view) && (list === undefined || inList(c, list)));
 }
 
-export function ChatList({ store, pictures, toast, switcher, removable = false }: { store: Store; pictures: Pictures; toast: (text: string) => void; switcher?: Gtk.Widget; removable?: boolean }): JSX.Element {
+export function ChatList({
+  store,
+  pictures,
+  toast,
+  switcher,
+  removable = false,
+}: {
+  store: Store;
+  pictures: Pictures;
+  toast: (text: string) => void;
+  switcher?: Gtk.Widget;
+  removable?: boolean;
+}): JSX.Element {
   const [query, setQuery] = createState('');
   const [view, setView] = createState<View>('main');
   // messages trouvés (recherche dans le contenu, après une courte pause de frappe)
@@ -130,7 +142,8 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
     if (archivedCount() > 0) out.push({ kind: 'entry', id: 'archived', count: String(archivedCount()), accent: false });
     // statuts (« stories ») de moins de 24 h : fenêtre à part
     const statuses = store.statuses();
-    if (statuses.some((g) => !g.me)) out.push({ kind: 'entry', id: 'statuses', count: statusEntryLabel(statuses), accent: statuses.some((g) => !g.me && g.items.some((i) => !i.seen)) });
+    if (statuses.some((g) => !g.me))
+      out.push({ kind: 'entry', id: 'statuses', count: statusEntryLabel(statuses), accent: statuses.some((g) => !g.me && g.items.some((i) => !i.seen)) });
     // chaînes suivies : à part, comme l'onglet « Actus » du téléphone
     if (channelCount() > 0) {
       const unread = store.chats().filter((c) => isChannel(c.id) && c.unread > 0).length;
@@ -140,7 +153,11 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
   });
   const rows = createMemo((): readonly SideRow[] => {
     const found = hits();
-    return [...entries(), ...shown().map((chat): SideRow => ({ kind: 'chat', chat })), ...(found.length > 0 ? [{ kind: 'header' } as const, ...found.map((hit): SideRow => ({ kind: 'hit', hit }))] : [])];
+    return [
+      ...entries(),
+      ...shown().map((chat): SideRow => ({ kind: 'chat', chat })),
+      ...(found.length > 0 ? [{ kind: 'header' } as const, ...found.map((hit): SideRow => ({ kind: 'hit', hit }))] : []),
+    ];
   });
   const openEntry = (id: EntryId, button: Gtk.Button): void => {
     if (id === 'statuses') openStatuses(button, store, pictures, toast);
@@ -162,7 +179,13 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
             onCleanup(archived.subscribe(sync));
           }}
         >
-          <Gtk.Button $type="start" iconName="go-previous-symbolic" tooltipText="Retour aux discussions" visible={archived} onClicked={() => setArchived(false)} />
+          <Gtk.Button
+            $type="start"
+            iconName="go-previous-symbolic"
+            tooltipText="Retour aux discussions"
+            visible={archived}
+            onClicked={() => setArchived(false)}
+          />
           <Gtk.Button
             $type="start"
             iconName="chat-message-new-symbolic"
@@ -278,7 +301,17 @@ export function ChatList({ store, pictures, toast, switcher, removable = false }
             $type="overlay"
             visible={createMemo(() => rows().length === 0)}
             iconName="chat-message-new-symbolic"
-            title={createMemo(() => (query() === '' ? (view() === 'channels' ? 'Aucune chaîne' : archived() ? 'Aucune discussion archivée' : filter() === 'all' ? 'Aucune discussion' : 'Aucune discussion dans cette liste') : 'Aucun résultat'))}
+            title={createMemo(() =>
+              query() === ''
+                ? view() === 'channels'
+                  ? 'Aucune chaîne'
+                  : archived()
+                    ? 'Aucune discussion archivée'
+                    : filter() === 'all'
+                      ? 'Aucune discussion'
+                      : 'Aucune discussion dans cette liste'
+                : 'Aucun résultat',
+            )}
             cssClasses={['compact']}
           />
         </Gtk.Overlay>

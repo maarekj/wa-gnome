@@ -3,7 +3,37 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 import * as z from 'zod/mini';
-import { Account, AccountCreated, accountPath, Chat, Diagnostics, Scheduled, StatusGroup, type ChatAction, ChatInfo, ChatList, Contact, Lookup, DEFAULT_ACCOUNT, DEFAULT_PORT, Event, type GalleryTab, Message, type MessageAction, MessageInfo, Presence, SearchHit, Status, TOKEN_FILE, UPLOAD_AS, UPLOAD_CAPTION, UPLOAD_NAME, UPLOAD_REPLY, UPLOAD_VOICE_SECONDS, UPLOAD_VOICE_WAVEFORM } from './api.ts';
+import {
+  Account,
+  AccountCreated,
+  accountPath,
+  Chat,
+  Diagnostics,
+  Scheduled,
+  StatusGroup,
+  type ChatAction,
+  ChatInfo,
+  ChatList,
+  Contact,
+  Lookup,
+  DEFAULT_ACCOUNT,
+  DEFAULT_PORT,
+  Event,
+  type GalleryTab,
+  Message,
+  type MessageAction,
+  MessageInfo,
+  Presence,
+  SearchHit,
+  Status,
+  TOKEN_FILE,
+  UPLOAD_AS,
+  UPLOAD_CAPTION,
+  UPLOAD_NAME,
+  UPLOAD_REPLY,
+  UPLOAD_VOICE_SECONDS,
+  UPLOAD_VOICE_WAVEFORM,
+} from './api.ts';
 import { errorMessage, HttpError } from './errors.ts';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
@@ -17,7 +47,6 @@ const encoder = new TextEncoder();
 const WATCHDOG_MS = 30_000;
 /** Attente entre deux tentatives de connexion au flux. */
 const RETRY_MS = 2000;
-
 
 /** URL du démon (WA_GNOME_URL pour les tests). */
 export const daemonUrl = (): string => GLib.getenv('WA_GNOME_URL') ?? `http://127.0.0.1:${DEFAULT_PORT}`;
@@ -128,7 +157,18 @@ export class WaClient {
   readonly #upload = new Soup.Session({ timeout: 0, idleTimeout: 0 });
 
   /** Envoie un fichier (photo, vidéo, audio ou document selon son type). */
-  async sendFile(chatId: string, f: { bytes: GLib.Bytes; mimetype: string; name: string; caption: string; asDocument: boolean; replyTo?: string; voice?: { seconds: number; waveform: readonly number[] } }): Promise<void> {
+  async sendFile(
+    chatId: string,
+    f: {
+      bytes: GLib.Bytes;
+      mimetype: string;
+      name: string;
+      caption: string;
+      asDocument: boolean;
+      replyTo?: string;
+      voice?: { seconds: number; waveform: readonly number[] };
+    },
+  ): Promise<void> {
     const msg = this.#message('POST', `/chats/${encodeURIComponent(chatId)}/media`);
     const h = msg.get_request_headers();
     h.replace(UPLOAD_NAME, encodeURIComponent(f.name));
@@ -151,7 +191,11 @@ export class WaClient {
   }
 
   async send(chatId: string, text: string, replyTo?: string, mentions?: readonly string[]): Promise<void> {
-    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/messages`, z.unknown(), { text, ...(replyTo === undefined ? {} : { replyTo }), ...(mentions === undefined || mentions.length === 0 ? {} : { mentions }) });
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/messages`, z.unknown(), {
+      text,
+      ...(replyTo === undefined ? {} : { replyTo }),
+      ...(mentions === undefined || mentions.length === 0 ? {} : { mentions }),
+    });
   }
 
   async chatAction(chatId: string, action: ChatAction): Promise<void> {
@@ -165,7 +209,12 @@ export class WaClient {
 
   /** Programme un texte pour `at` (secondes). */
   async schedule(chatId: string, text: string, at: number, replyTo?: string, mentions?: readonly string[]): Promise<void> {
-    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/scheduled`, z.unknown(), { text, at, ...(replyTo === undefined ? {} : { replyTo }), ...(mentions === undefined || mentions.length === 0 ? {} : { mentions }) });
+    await this.request('POST', `/chats/${encodeURIComponent(chatId)}/scheduled`, z.unknown(), {
+      text,
+      at,
+      ...(replyTo === undefined ? {} : { replyTo }),
+      ...(mentions === undefined || mentions.length === 0 ? {} : { mentions }),
+    });
   }
 
   async cancelScheduled(id: string): Promise<void> {

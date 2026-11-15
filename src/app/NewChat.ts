@@ -31,7 +31,15 @@ function contactRow(c: Contact, pictures: Pictures): Adw.ActionRow {
 export function openNewChat(parent: Gtk.Widget, store: Store, pictures: Pictures, toast: (t: string) => void): void {
   let contacts: Contact[] = [];
   const search = new Gtk.SearchEntry({ placeholderText: 'Nom ou numéro (+33 6 12 34 56 78)', marginStart: 12, marginEnd: 12, marginTop: 6 });
-  const list = new Gtk.ListBox({ selectionMode: Gtk.SelectionMode.NONE, cssClasses: ['boxed-list'], marginStart: 12, marginEnd: 12, marginTop: 6, marginBottom: 12, valign: Gtk.Align.START });
+  const list = new Gtk.ListBox({
+    selectionMode: Gtk.SelectionMode.NONE,
+    cssClasses: ['boxed-list'],
+    marginStart: 12,
+    marginEnd: 12,
+    marginTop: 6,
+    marginBottom: 12,
+    valign: Gtk.Align.START,
+  });
   const status = new Gtk.Label({ wrap: true, cssClasses: ['dim-label'], marginTop: 24, marginStart: 12, marginEnd: 12 });
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   box.append(search);
@@ -79,7 +87,11 @@ export function openNewChat(parent: Gtk.Widget, store: Store, pictures: Pictures
       list.append(row);
     }
     list.visible = list.get_first_child() !== null;
-    status.label = list.visible ? '' : search.text.trim() === '' ? 'Aucun contact dans le carnet' : 'Aucun contact trouvé. Saisissez un numéro avec l’indicatif du pays.';
+    status.label = list.visible
+      ? ''
+      : search.text.trim() === ''
+        ? 'Aucun contact dans le carnet'
+        : 'Aucun contact trouvé. Saisissez un numéro avec l’indicatif du pays.';
   };
   search.connect('search-changed', render);
   // Échap (capté par le champ de recherche) : fenêtre fermée

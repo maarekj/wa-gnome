@@ -10,7 +10,14 @@ import type { WaClient } from '../shared/client.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { fmtDateTime } from '../shared/format.ts';
 
-const STATE: Readonly<Record<string, string>> = { starting: 'démarrage', qr: 'appairage nécessaire', connecting: 'connexion…', open: 'connecté', 'logged-out': 'déconnecté du téléphone', closed: 'connexion perdue' };
+const STATE: Readonly<Record<string, string>> = {
+  starting: 'démarrage',
+  qr: 'appairage nécessaire',
+  connecting: 'connexion…',
+  open: 'connecté',
+  'logged-out': 'déconnecté du téléphone',
+  closed: 'connexion perdue',
+};
 
 /** Taille lisible (« 112 Mo »). */
 export function fmtBytes(n: number): string {
@@ -52,7 +59,11 @@ export function diagnosticsText(d: Diagnostics, app: readonly [string, string][]
       `  base : ${fmtBytes(a.dbSize)} (${a.chats} discussions, ${a.messages} messages) ; médias en cache : ${fmtBytes(a.mediaSize)}`,
     );
   }
-  lines.push('', `Journal (${d.logs.length} lignes) :`, ...d.logs.map((l) => `${GLib.DateTime.new_from_unix_local(Math.floor(l.time / 1000))?.format('%d/%m %H:%M:%S') ?? ''} [${l.level}] ${l.msg}`));
+  lines.push(
+    '',
+    `Journal (${d.logs.length} lignes) :`,
+    ...d.logs.map((l) => `${GLib.DateTime.new_from_unix_local(Math.floor(l.time / 1000))?.format('%d/%m %H:%M:%S') ?? ''} [${l.level}] ${l.msg}`),
+  );
   return lines.join('\n');
 }
 
@@ -98,23 +109,55 @@ export function openDiagnostics(parent: Gtk.Widget, client: WaClient, appVersion
       return;
     }
     for (const a of d.accounts) {
-      const g = new Adw.PreferencesGroup({ title: a.status.me === null ? `Compte ${a.id}` : `Compte ${a.status.me.name ?? a.status.me.id}`, description: a.status.me?.id ?? a.id });
+      const g = new Adw.PreferencesGroup({
+        title: a.status.me === null ? `Compte ${a.id}` : `Compte ${a.status.me.name ?? a.status.me.id}`,
+        description: a.status.me?.id ?? a.id,
+      });
       g.add(row('Connexion', STATE[a.status.state] ?? a.status.state));
       if (a.status.error !== null) g.add(row('Dernière erreur', a.status.error));
       g.add(row('Connecté depuis', a.connectedAt === null ? '—' : fmtDateTime(a.connectedAt)));
-      g.add(row('Coupures', a.disconnects === 0 ? 'aucune depuis le démarrage' : `${a.disconnects} (dernière ${a.disconnectedAt === null ? '—' : fmtDateTime(a.disconnectedAt)})`));
+      g.add(
+        row(
+          'Coupures',
+          a.disconnects === 0 ? 'aucune depuis le démarrage' : `${a.disconnects} (dernière ${a.disconnectedAt === null ? '—' : fmtDateTime(a.disconnectedAt)})`,
+        ),
+      );
       g.add(row('Version web annoncée', a.webVersion?.join('.') ?? '—'));
       g.add(row('Données', `base ${fmtBytes(a.dbSize)} (${a.chats} discussions, ${a.messages} messages) · médias en cache ${fmtBytes(a.mediaSize)}`));
       add(g);
     }
-    const logs = new Adw.PreferencesGroup({ title: 'Journal du démon', description: d.logs.length === 0 ? 'Aucun avertissement depuis le démarrage' : `${d.logs.length} derniers avertissements et erreurs` });
+    const logs = new Adw.PreferencesGroup({
+      title: 'Journal du démon',
+      description: d.logs.length === 0 ? 'Aucun avertissement depuis le démarrage' : `${d.logs.length} derniers avertissements et erreurs`,
+    });
     const text = d.logs
       .toReversed()
       .map((l) => `${GLib.DateTime.new_from_unix_local(Math.floor(l.time / 1000))?.format('%d/%m %H:%M:%S') ?? ''}  ${l.level}  ${l.msg}`)
       .join('\n');
     if (text !== '') {
-      const label = new Gtk.Label({ label: text, xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, selectable: true, cssClasses: ['monospace', 'caption'], marginTop: 8, marginBottom: 8, marginStart: 10, marginEnd: 10 });
-      logs.add(new Gtk.Frame({ child: new Gtk.ScrolledWindow({ child: label, minContentHeight: 220, maxContentHeight: 320, propagateNaturalHeight: true, hscrollbarPolicy: Gtk.PolicyType.NEVER }) }));
+      const label = new Gtk.Label({
+        label: text,
+        xalign: 0,
+        wrap: true,
+        wrapMode: Pango.WrapMode.WORD_CHAR,
+        selectable: true,
+        cssClasses: ['monospace', 'caption'],
+        marginTop: 8,
+        marginBottom: 8,
+        marginStart: 10,
+        marginEnd: 10,
+      });
+      logs.add(
+        new Gtk.Frame({
+          child: new Gtk.ScrolledWindow({
+            child: label,
+            minContentHeight: 220,
+            maxContentHeight: 320,
+            propagateNaturalHeight: true,
+            hscrollbarPolicy: Gtk.PolicyType.NEVER,
+          }),
+        }),
+      );
     }
     add(logs);
   };

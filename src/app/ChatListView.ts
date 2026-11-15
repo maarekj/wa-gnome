@@ -46,7 +46,8 @@ export const avatarText = (name: string): string => name.replace(/^~ /u, '');
 /** Aperçu d'une discussion dans la liste : « écrit… », « Brouillon : … » ou dernier message (balisage). */
 export function previewMarkup(c: Pick<Chat, 'preview'>, typing?: string, draft?: string): string {
   if (typing !== undefined) return esc(typing);
-  if (draft !== undefined && draft.trim() !== '') return `<span foreground="#1fa855" weight="bold">Brouillon :</span> <span alpha="60%">${esc(draft.replaceAll('\n', ' '))}</span>`;
+  if (draft !== undefined && draft.trim() !== '')
+    return `<span foreground="#1fa855" weight="bold">Brouillon :</span> <span alpha="60%">${esc(draft.replaceAll('\n', ' '))}</span>`;
   return esc(c.preview.replaceAll('\n', ' '));
 }
 
@@ -173,7 +174,14 @@ function hitView(): View<SearchHit> {
   const root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, marginTop: 8, marginBottom: 8, marginStart: 12, marginEnd: 8 });
   const chat = label({ hexpand: true, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['heading'] });
   const date = new Gtk.Label({ cssClasses: ['caption', 'dim-label'] });
-  const snippet = label({ useMarkup: true, ellipsize: Pango.EllipsizeMode.END, lines: 2, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, cssClasses: ['dim-label'] });
+  const snippet = label({
+    useMarkup: true,
+    ellipsize: Pango.EllipsizeMode.END,
+    lines: 2,
+    wrap: true,
+    wrapMode: Pango.WrapMode.WORD_CHAR,
+    cssClasses: ['dim-label'],
+  });
   const top = new Gtk.Box({ spacing: 6 });
   top.append(chat);
   top.append(date);

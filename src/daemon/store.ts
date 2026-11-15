@@ -5,7 +5,30 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import * as z from 'zod/mini';
 import type { Converted, RawQuoted, RawReaction } from './convert.ts';
-import { type Chat, type ChatList, DELETED_TEXT, formatPhone, listKind, Media, type Mention, type Message, MessageKind, type Poll, type Scheduled, STATUS_TTL, type StatusGroup, MessageStatus, previewOf, type Quoted, type Reaction, type Receipt, type SearchHit, effectiveStatus, statusOf, statusRank } from '../shared/api.ts';
+import {
+  type Chat,
+  type ChatList,
+  DELETED_TEXT,
+  formatPhone,
+  listKind,
+  Media,
+  type Mention,
+  type Message,
+  MessageKind,
+  type Poll,
+  type Scheduled,
+  STATUS_TTL,
+  type StatusGroup,
+  MessageStatus,
+  previewOf,
+  type Quoted,
+  type Reaction,
+  type Receipt,
+  type SearchHit,
+  effectiveStatus,
+  statusOf,
+  statusRank,
+} from '../shared/api.ts';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -664,7 +687,14 @@ export class Store {
   // ------------------------------------------------------------------ listes
 
   /** Liste créée ou modifiée ; champs absents inchangés. */
-  upsertLabel(l: { id: string; name?: string | null; color?: number | null; listType?: number | null; orderIndex?: number | null; deleted?: boolean | null }): void {
+  upsertLabel(l: {
+    id: string;
+    name?: string | null;
+    color?: number | null;
+    listType?: number | null;
+    orderIndex?: number | null;
+    deleted?: boolean | null;
+  }): void {
     this.#db
       .prepare(
         `INSERT INTO labels (id, name, color, list_type, order_index, deleted)
@@ -799,7 +829,8 @@ export class Store {
     const edit = this.meta(`edit:${m.chatId}/${m.id}`);
     if (edit !== null) {
       const text = z.object({ text: z.string() }).safeParse(JSON.parse(edit));
-      if (text.success) this.#db.prepare('UPDATE messages SET text = ?, edited = 1 WHERE chat_id = ? AND id = ? AND deleted = 0').run(text.data.text, m.chatId, m.id);
+      if (text.success)
+        this.#db.prepare('UPDATE messages SET text = ?, edited = 1 WHERE chat_id = ? AND id = ? AND deleted = 0').run(text.data.text, m.chatId, m.id);
     }
     if (this.flag(`revoke:${m.chatId}/${m.id}`)) this.applyRevoke(m.chatId, m.id);
     if (m.status !== null) this.setStatus(m.chatId, m.id, m.status);
@@ -823,7 +854,25 @@ export class Store {
   clear(): void {
     // tout ce qui vient du compte, messages programmés compris (sinon envoyés depuis le compte suivant)
     this.transaction(() => {
-      for (const t of ['messages', 'chats', 'contacts', 'lid_map', 'labels', 'chat_labels', 'favorites', 'reactions', 'receipts', 'deleted_for_me', 'pins', 'poll_votes', 'pending_votes', 'scheduled', 'status_seen', 'meta']) this.#db.exec(`DELETE FROM ${t}`);
+      for (const t of [
+        'messages',
+        'chats',
+        'contacts',
+        'lid_map',
+        'labels',
+        'chat_labels',
+        'favorites',
+        'reactions',
+        'receipts',
+        'deleted_for_me',
+        'pins',
+        'poll_votes',
+        'pending_votes',
+        'scheduled',
+        'status_seen',
+        'meta',
+      ])
+        this.#db.exec(`DELETE FROM ${t}`);
     });
     this.#pn.clear();
   }
@@ -873,7 +922,12 @@ export class Store {
       group: r.id.endsWith('@g.us'),
       unread: r.unread,
       timestamp: r.timestamp,
-      preview: r.last_kind === null ? '' : r.last_deleted === 1 ? DELETED_TEXT : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '', viewOnce: r.last_view_once === 1, mentions: this.#mentions(r.last_mentions) }),
+      preview:
+        r.last_kind === null
+          ? ''
+          : r.last_deleted === 1
+            ? DELETED_TEXT
+            : previewOf({ kind: asKind(r.last_kind), text: r.last_text ?? '', viewOnce: r.last_view_once === 1, mentions: this.#mentions(r.last_mentions) }),
       archived: r.archived !== 0,
       mutedUntil: r.muted_until,
       pinned: r.pinned,
@@ -915,7 +969,15 @@ export class Store {
     return rows.map((r) => {
       const chatId = String(r['chat_id']);
       const sender = typeof r['sender'] === 'string' ? r['sender'] : null;
-      return { chatId, chatName: nameOf(chatId), id: String(r['id']), timestamp: Number(r['timestamp']), fromMe: r['from_me'] === 1, senderName: sender === null ? null : this.displayName(sender), snippet: String(r['snip']) };
+      return {
+        chatId,
+        chatName: nameOf(chatId),
+        id: String(r['id']),
+        timestamp: Number(r['timestamp']),
+        fromMe: r['from_me'] === 1,
+        senderName: sender === null ? null : this.displayName(sender),
+        snippet: String(r['snip']),
+      };
     });
   }
 
@@ -983,7 +1045,11 @@ export class Store {
 
   /** Derniers messages d'une discussion avant `before` (secondes), ordre chronologique. */
   messages(chatId: string, limit: number, before?: number): Message[] {
-    return this.#messages('m.chat_id = ? AND m.timestamp < ? ORDER BY m.timestamp DESC LIMIT ?', [chatId, before ?? Number.MAX_SAFE_INTEGER, limit]).toReversed();
+    return this.#messages('m.chat_id = ? AND m.timestamp < ? ORDER BY m.timestamp DESC LIMIT ?', [
+      chatId,
+      before ?? Number.MAX_SAFE_INTEGER,
+      limit,
+    ]).toReversed();
   }
 
   /** Un message, tel que l'API le renvoie (noms résolus). */
@@ -1000,7 +1066,10 @@ export class Store {
       )
       .all(...params)
       .map((r) => z.parse(MessageRow, r));
-    const reactions = this.#reactions(rows[0]?.chat_id ?? '', rows.map((r) => r.id));
+    const reactions = this.#reactions(
+      rows[0]?.chat_id ?? '',
+      rows.map((r) => r.id),
+    );
     return rows.map((r) => ({
       id: r.id,
       chatId: r.chat_id,
@@ -1062,7 +1131,8 @@ export class Store {
   /** Message supprimé pour tous : contenu effacé, réactions retirées. false si le message est inconnu. */
   applyRevoke(chatId: string, id: string): boolean {
     this.setFlag(`revoke:${chatId}/${id}`, true);
-    const changed = this.#db.prepare("UPDATE messages SET deleted = 1, text = '', media = NULL, quoted = NULL WHERE chat_id = ? AND id = ?").run(chatId, id).changes > 0;
+    const changed =
+      this.#db.prepare("UPDATE messages SET deleted = 1, text = '', media = NULL, quoted = NULL WHERE chat_id = ? AND id = ?").run(chatId, id).changes > 0;
     this.#db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ?').run(chatId, id);
     return changed;
   }
@@ -1099,7 +1169,9 @@ export class Store {
 
   /** État d'un envoi de l'app, imposé tant qu'aucun accusé n'est arrivé (état « envoyé » par défaut). */
   forceStatus(chatId: string, id: string, status: MessageStatus): boolean {
-    return this.#db.prepare("UPDATE messages SET status = ? WHERE chat_id = ? AND id = ? AND from_me = 1 AND status = 'sent'").run(status, chatId, id).changes > 0;
+    return (
+      this.#db.prepare("UPDATE messages SET status = ? WHERE chat_id = ? AND id = ? AND from_me = 1 AND status = 'sent'").run(status, chatId, id).changes > 0
+    );
   }
 
   // ------------------------------------------------------------------ réactions
@@ -1110,7 +1182,9 @@ export class Store {
    */
   setReaction(r: RawReaction): void {
     if (r.emoji === '') {
-      this.#db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ? AND sender = ? AND timestamp <= ?').run(r.chatId, r.targetId, r.sender, r.timestamp);
+      this.#db
+        .prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ? AND sender = ? AND timestamp <= ?')
+        .run(r.chatId, r.targetId, r.sender, r.timestamp);
       return;
     }
     this.#db
@@ -1160,7 +1234,11 @@ export class Store {
     return this.#db
       .prepare(`SELECT chat_id, id, raw FROM messages WHERE ${where}`)
       .all()
-      .flatMap((r) => (typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string' ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }] : []));
+      .flatMap((r) =>
+        typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string'
+          ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }]
+          : [],
+      );
   }
 
   deleteMessage(chatId: string, id: string): void {
@@ -1194,7 +1272,9 @@ export class Store {
 
   /** Réglage éphémère de chaque discussion d'après son dernier message (migration v14). */
   ephemeralFromLastMessages(): void {
-    this.#db.exec(`UPDATE chats SET ephemeral = coalesce((SELECT expiration FROM messages m WHERE m.chat_id = chats.id AND m.kind NOT IN ('call', 'other') ORDER BY timestamp DESC LIMIT 1), 0)`);
+    this.#db.exec(
+      `UPDATE chats SET ephemeral = coalesce((SELECT expiration FROM messages m WHERE m.chat_id = chats.id AND m.kind NOT IN ('call', 'other') ORDER BY timestamp DESC LIMIT 1), 0)`,
+    );
   }
 
   /** Durée éphémère d'un message (0 : gardé, ne disparaît pas). */
@@ -1242,7 +1322,9 @@ export class Store {
   /** Messages épinglés (non expirés, présents), le plus récemment épinglé d'abord. */
   pins(chatId: string, now: number, limit: number): Message[] {
     const ids = this.#db
-      .prepare('SELECT p.message_id FROM pins p JOIN messages m ON m.chat_id = p.chat_id AND m.id = p.message_id WHERE p.chat_id = ? AND p.pinned = 1 AND p.expires > ? AND m.deleted = 0 ORDER BY p.at DESC LIMIT ?')
+      .prepare(
+        'SELECT p.message_id FROM pins p JOIN messages m ON m.chat_id = p.chat_id AND m.id = p.message_id WHERE p.chat_id = ? AND p.pinned = 1 AND p.expires > ? AND m.deleted = 0 ORDER BY p.at DESC LIMIT ?',
+      )
       .all(chatId, now, limit)
       .map((r) => String(r['message_id']));
     return ids.flatMap((id) => {
@@ -1267,13 +1349,19 @@ export class Store {
   /** Taille de la base (octets) et nombre de discussions et de messages (diagnostic). */
   sizes(): { dbSize: number; chats: number; messages: number } {
     const n = (sql: string): number => Number(this.#db.prepare(sql).get()?.['n'] ?? 0);
-    return { dbSize: n('SELECT page_count * page_size AS n FROM pragma_page_count(), pragma_page_size()'), chats: n('SELECT count(*) AS n FROM chats'), messages: n('SELECT count(*) AS n FROM messages') };
+    return {
+      dbSize: n('SELECT page_count * page_size AS n FROM pragma_page_count(), pragma_page_size()'),
+      chats: n('SELECT count(*) AS n FROM chats'),
+      messages: n('SELECT count(*) AS n FROM messages'),
+    };
   }
 
   // ------------------------------------------------------------------ messages programmés
 
   addScheduled(s: { id: string; chatId: string; text: string; at: number; replyTo: string | null; mentions: readonly string[] }): void {
-    this.#db.prepare('INSERT INTO scheduled (id, chat_id, text, at, reply_to, mentions) VALUES (?, ?, ?, ?, ?, ?)').run(s.id, s.chatId, s.text, s.at, s.replyTo, s.mentions.length === 0 ? null : JSON.stringify(s.mentions));
+    this.#db
+      .prepare('INSERT INTO scheduled (id, chat_id, text, at, reply_to, mentions) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(s.id, s.chatId, s.text, s.at, s.replyTo, s.mentions.length === 0 ? null : JSON.stringify(s.mentions));
   }
 
   /** Messages programmés d'une discussion (ou tous), les plus proches d'abord. */
@@ -1305,7 +1393,12 @@ export class Store {
 
   /** Messages à envoyer maintenant (heure passée, pas en attente d'un nouvel essai). */
   dueScheduled(now: number): (Scheduled & { mentions: string[] })[] {
-    const ids = new Set(this.#db.prepare('SELECT id FROM scheduled WHERE at <= ? AND retry_at <= ?').all(now, now).map((r) => String(r['id'])));
+    const ids = new Set(
+      this.#db
+        .prepare('SELECT id FROM scheduled WHERE at <= ? AND retry_at <= ?')
+        .all(now, now)
+        .map((r) => String(r['id'])),
+    );
     return this.scheduled().filter((s) => ids.has(s.id));
   }
 
@@ -1398,7 +1491,9 @@ export class Store {
   /** Vote mis en attente (une fois par message) ; `tries` : essais déjà faits. */
   addPendingVote(chatId: string, voteId: string, pollId: string, raw: string, tries = 0): void {
     if (tries >= 10) return;
-    this.#db.prepare('INSERT OR IGNORE INTO pending_votes (chat_id, vote_id, poll_id, raw, tries) VALUES (?, ?, ?, ?, ?)').run(chatId, voteId, pollId, raw, tries);
+    this.#db
+      .prepare('INSERT OR IGNORE INTO pending_votes (chat_id, vote_id, poll_id, raw, tries) VALUES (?, ?, ?, ?, ?)')
+      .run(chatId, voteId, pollId, raw, tries);
   }
 
   /** Votes en attente, retirés de la table (remis par l'appelant s'ils échouent encore). */
@@ -1445,7 +1540,14 @@ export class Store {
       options: def.data.options.map((name, i) => {
         const list = by[i] ?? [];
         const isMe = (v: string): boolean => v === 'me' || this.isMe(v);
-        return { name, count: list.length, mine: list.some((x) => isMe(x.voter)), voters: list.map((x) => (isMe(x.voter) ? { id: null, name: 'Vous' } : { id: this.canonical(x.voter), name: this.displayName(this.canonical(x.voter)) })) };
+        return {
+          name,
+          count: list.length,
+          mine: list.some((x) => isMe(x.voter)),
+          voters: list.map((x) =>
+            isMe(x.voter) ? { id: null, name: 'Vous' } : { id: this.canonical(x.voter), name: this.displayName(this.canonical(x.voter)) },
+          ),
+        };
       }),
     };
   }
@@ -1484,7 +1586,11 @@ export class Store {
     return this.#db
       .prepare(`SELECT chat_id, id, raw FROM messages WHERE quoted IS NULL AND raw LIKE '%"stanzaId"%'`)
       .all()
-      .flatMap((r) => (typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string' ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }] : []));
+      .flatMap((r) =>
+        typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string'
+          ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }]
+          : [],
+      );
   }
 
   setQuoted(chatId: string, id: string, quoted: RawQuoted | null): void {
@@ -1503,7 +1609,11 @@ export class Store {
     return this.#db
       .prepare("SELECT chat_id, id, raw FROM messages WHERE media IS NULL AND kind IN ('image', 'video', 'audio', 'document', 'sticker')")
       .all()
-      .flatMap((r) => (typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string' ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }] : []));
+      .flatMap((r) =>
+        typeof r['chat_id'] === 'string' && typeof r['id'] === 'string' && typeof r['raw'] === 'string'
+          ? [{ chatId: r['chat_id'], id: r['id'], raw: r['raw'] }]
+          : [],
+      );
   }
 
   setMedia(chatId: string, id: string, media: Media | null): void {

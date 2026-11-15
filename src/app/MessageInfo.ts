@@ -44,7 +44,14 @@ function stateRow(mark: string, cls: string, title: string, when: number | null,
 }
 
 /** Section d'un groupe : titre puis personnes (photo, nom, date). */
-function peopleSection(title: string, mark: string, cls: string, people: readonly Receipt[], when: (r: Receipt) => number | null, pictures: Pictures): Gtk.Widget {
+function peopleSection(
+  title: string,
+  mark: string,
+  cls: string,
+  people: readonly Receipt[],
+  when: (r: Receipt) => number | null,
+  pictures: Pictures,
+): Gtk.Widget {
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4 });
   const head = new Gtk.Box({ spacing: 8, marginTop: 6 });
   head.append(new Gtk.Label({ label: mark, cssClasses: ['ticks', 'info-ticks', cls] }));
@@ -68,7 +75,17 @@ export function openMessageInfo(parent: Gtk.Widget, store: Store, pictures: Pict
   const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 12, marginTop: 12, marginBottom: 18, marginStart: 18, marginEnd: 18 });
   // aperçu du message
   const preview = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, halign: Gtk.Align.END, cssClasses: ['bubble', 'outgoing'] });
-  preview.append(new Gtk.Label({ label: m.kind === 'text' ? m.text : previewOf(m), wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, maxWidthChars: 40, xalign: 0, lines: 6, ellipsize: Pango.EllipsizeMode.END }));
+  preview.append(
+    new Gtk.Label({
+      label: m.kind === 'text' ? m.text : previewOf(m),
+      wrap: true,
+      wrapMode: Pango.WrapMode.WORD_CHAR,
+      maxWidthChars: 40,
+      xalign: 0,
+      lines: 6,
+      ellipsize: Pango.EllipsizeMode.END,
+    }),
+  );
   preview.append(new Gtk.Label({ label: fmtTime(m.timestamp), halign: Gtk.Align.END, cssClasses: ['caption', 'dim-label'] }));
   const frame = new Gtk.Box({ cssClasses: ['info-preview'] });
   frame.append(new Gtk.Box({ hexpand: true }));
@@ -108,7 +125,14 @@ export function openMessageInfo(parent: Gtk.Widget, store: Store, pictures: Pict
       }
       const { read, delivered } = splitReceipts(info.receipts);
       if (read.length === 0 && delivered.length === 0) {
-        details.append(new Gtk.Label({ label: 'Aucun accusé connu pour ce message : accusés reçus avant le suivi des dates, ou pas encore arrivés.', wrap: true, xalign: 0, cssClasses: ['dim-label'] }));
+        details.append(
+          new Gtk.Label({
+            label: 'Aucun accusé connu pour ce message : accusés reçus avant le suivi des dates, ou pas encore arrivés.',
+            wrap: true,
+            xalign: 0,
+            cssClasses: ['dim-label'],
+          }),
+        );
         return;
       }
       if (read.length > 0) details.append(peopleSection('Lu par', '✓✓', 'read', read, (r) => r.read, pictures));

@@ -27,7 +27,8 @@ export function infoSubtitle(info: Pick<ChatInfo, 'group' | 'phone' | 'participa
 const dayText = (t: number): string => fmtDay(t).toLowerCase().replaceAll(/\s+/gu, ' ');
 
 /** Libellé du rôle d'un participant. */
-export const roleOf = (p: Pick<Participant, 'admin'>): string => (p.admin === 'superadmin' ? 'Créateur du groupe' : p.admin === 'admin' ? 'Administrateur' : '');
+export const roleOf = (p: Pick<Participant, 'admin'>): string =>
+  p.admin === 'superadmin' ? 'Créateur du groupe' : p.admin === 'admin' ? 'Administrateur' : '';
 
 function participantRow(p: Participant, pictures: Pictures, open: (p: Participant) => void): Adw.ActionRow {
   const row = new Adw.ActionRow({ title: esc(p.name), subtitle: p.me ? '' : formatPhone(p.id.split('@')[0] ?? ''), activatable: !p.me });
@@ -52,7 +53,8 @@ function header(info: ChatInfo, pictures: Pictures): Gtk.Widget {
   box.append(new Gtk.Label({ label: info.name, wrap: true, justify: Gtk.Justification.CENTER, cssClasses: ['title-2'] }));
   const sub = infoSubtitle(info);
   if (sub !== '') box.append(new Gtk.Label({ label: sub, cssClasses: ['dim-label'] }));
-  if (info.publicName !== null && info.publicName !== info.name) box.append(new Gtk.Label({ label: `~ ${info.publicName}`, cssClasses: ['caption', 'dim-label'] }));
+  if (info.publicName !== null && info.publicName !== info.name)
+    box.append(new Gtk.Label({ label: `~ ${info.publicName}`, cssClasses: ['caption', 'dim-label'] }));
   return box;
 }
 
@@ -102,10 +104,16 @@ function content(info: ChatInfo, store: Store, pictures: Pictures, actions: Info
   action('Médias, documents et audio', 'folder-pictures-symbolic', actions.gallery);
   action('Rechercher dans la discussion', 'system-search-symbolic', actions.search);
   const chat = store.chats.peek().find((c) => c.id === info.id);
-  const mute = new Adw.SwitchRow({ title: 'Mode silencieux', subtitle: 'Ni notification ni son pour cette discussion', active: chat !== undefined && isMuted(chat) });
+  const mute = new Adw.SwitchRow({
+    title: 'Mode silencieux',
+    subtitle: 'Ni notification ni son pour cette discussion',
+    active: chat !== undefined && isMuted(chat),
+  });
   mute.add_prefix(new Gtk.Image({ iconName: 'notifications-disabled-symbolic' }));
   mute.connect('notify::active', () => {
-    store.chatAction(info.id, { action: 'mute', until: mute.active ? -1 : null }).catch((error: unknown) => actions.toast(`Impossible : ${errorMessage(error)}`));
+    store
+      .chatAction(info.id, { action: 'mute', until: mute.active ? -1 : null })
+      .catch((error: unknown) => actions.toast(`Impossible : ${errorMessage(error)}`));
   });
   mute.sensitive = chat !== undefined;
   tools.add(mute);
@@ -115,7 +123,12 @@ function content(info: ChatInfo, store: Store, pictures: Pictures, actions: Info
   if (!info.group && info.commonGroups.length > 0) {
     const common = new Adw.PreferencesGroup({ title: info.commonGroups.length === 1 ? '1 groupe en commun' : `${info.commonGroups.length} groupes en commun` });
     for (const g of info.commonGroups) {
-      const row = new Adw.ActionRow({ title: esc(g.name), subtitle: g.size === 1 ? '1 participant' : `${g.size} participants`, activatable: true, tooltipText: `Ouvrir ${g.name}` });
+      const row = new Adw.ActionRow({
+        title: esc(g.name),
+        subtitle: g.size === 1 ? '1 participant' : `${g.size} participants`,
+        activatable: true,
+        tooltipText: `Ouvrir ${g.name}`,
+      });
       const avatar = new Adw.Avatar({ size: 32, text: avatarText(g.name), showInitials: /\p{L}/u.test(g.name) });
       bindAvatar(avatar, pictures.texture(g.id));
       row.add_prefix(avatar);
@@ -162,7 +175,10 @@ export function openChatInfo(parent: Gtk.Widget, store: Store, pictures: Picture
       );
       stack.visibleChildName = 'info';
     } catch (error) {
-      stack.add_named(new Adw.StatusPage({ iconName: 'dialog-warning-symbolic', title: name, description: `Infos indisponibles : ${errorMessage(error)}` }), 'error');
+      stack.add_named(
+        new Adw.StatusPage({ iconName: 'dialog-warning-symbolic', title: name, description: `Infos indisponibles : ${errorMessage(error)}` }),
+        'error',
+      );
       stack.visibleChildName = 'error';
     }
   })();

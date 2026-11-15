@@ -11,7 +11,15 @@ export const seconds = (ts: number | { toNumber: () => number } | null | undefin
 
 /** Messages techniques (clés de chiffrement, accusés…) : jamais affichés. */
 // call : appel de groupe annoncé par Baileys (rangé chez l'appelant) ; ligne écrite par le démon
-const HIDDEN = new Set(['call', 'reactionMessage', 'protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'keepInChatMessage']);
+const HIDDEN = new Set([
+  'call',
+  'reactionMessage',
+  'protocolMessage',
+  'senderKeyDistributionMessage',
+  'messageContextInfo',
+  'pollUpdateMessage',
+  'keepInChatMessage',
+]);
 
 type Extract = (c: proto.IMessage) => { kind: MessageKind; text: string };
 
@@ -119,7 +127,8 @@ const CALL_STUBS = new Map<number, boolean>([
 const GROUP_CALL_STUBS = new Set<number>([Stub.CALL_MISSED_GROUP_VOICE, Stub.CALL_MISSED_GROUP_VIDEO]);
 
 /** Message reçu par une liste de diffusion (pas un statut, pas une de mes listes). */
-export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean => !fromMe && remoteJid.endsWith('@broadcast') && remoteJid !== 'status@broadcast';
+export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean =>
+  !fromMe && remoteJid.endsWith('@broadcast') && remoteJid !== 'status@broadcast';
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
@@ -226,7 +235,13 @@ export function pinOf(wa: WAMessage): RawPin | null {
     // date du serveur (horloges des appareils décalées), à défaut celle de l'expéditeur
     const ms = toNum(action.senderTimestampMs);
     const server = seconds(wa.messageTimestamp);
-    return { targetId: id, pinned: isPin(action.type), at: server > 0 ? server : Math.floor(ms / 1000), duration: toNum(content?.messageContextInfo?.messageAddOnDurationInSecs ?? wa.message?.messageContextInfo?.messageAddOnDurationInSecs), action: true };
+    return {
+      targetId: id,
+      pinned: isPin(action.type),
+      at: server > 0 ? server : Math.floor(ms / 1000),
+      duration: toNum(content?.messageContextInfo?.messageAddOnDurationInSecs ?? wa.message?.messageContextInfo?.messageAddOnDurationInSecs),
+      action: true,
+    };
   }
   const state = wa.pinInChat;
   const own = wa.key.id;
@@ -272,7 +287,10 @@ export function forwardedOf(content: proto.IMessage): number {
 }
 
 /** Auteur d'un message ou d'une réaction d'après sa clé. */
-const senderOf = (key: proto.IMessageKey, fallback: string): string => (key.fromMe === true ? 'me' : jidNormalizedUser(key.participant !== null && key.participant !== undefined && key.participant !== '' ? key.participant : (key.remoteJid ?? fallback)));
+const senderOf = (key: proto.IMessageKey, fallback: string): string =>
+  key.fromMe === true
+    ? 'me'
+    : jidNormalizedUser(key.participant !== null && key.participant !== undefined && key.participant !== '' ? key.participant : (key.remoteJid ?? fallback));
 
 /** Modification ou suppression d'un message, portée par un message technique (protocolMessage). */
 export type Change = ({ kind: 'edit'; text: string; msgKind: MessageKind } | { kind: 'revoke' }) & {
@@ -315,7 +333,6 @@ export interface RawReaction {
   timestamp: number;
 }
 
-
 /** Message de réaction (reactionMessage) → réaction, null sinon. */
 export function reactionOf(wa: WAMessage): RawReaction | null {
   const content = normalizeMessageContent(wa.message);
@@ -333,7 +350,9 @@ export function reactionsOf(wa: WAMessage): RawReaction[] {
   const targetId = wa.key.id;
   if (chatId === null || chatId === undefined || targetId === null || targetId === undefined) return [];
   return (wa.reactions ?? []).flatMap((r) =>
-    r.key === null || r.key === undefined ? [] : [{ chatId: jidNormalizedUser(chatId), targetId, sender: senderOf(r.key, chatId), emoji: r.text ?? '', timestamp: seconds(r.senderTimestampMs) }],
+    r.key === null || r.key === undefined
+      ? []
+      : [{ chatId: jidNormalizedUser(chatId), targetId, sender: senderOf(r.key, chatId), emoji: r.text ?? '', timestamp: seconds(r.senderTimestampMs) }],
   );
 }
 
@@ -344,7 +363,19 @@ export function toMessage(wa: WAMessage): Converted | null {
   if (GROUP_CALL_STUBS.has(wa.messageStubType ?? -1)) return null;
   const missed = CALL_STUBS.get(wa.messageStubType ?? -1);
   if (missed !== undefined) {
-    return { id, chatId: jidNormalizedUser(remoteJid), fromMe: false, sender: null, senderName: wa.pushName ?? null, timestamp: seconds(wa.messageTimestamp), kind: 'call', text: callText(missed, 'missed'), media: null, quoted: null, status: null };
+    return {
+      id,
+      chatId: jidNormalizedUser(remoteJid),
+      fromMe: false,
+      sender: null,
+      senderName: wa.pushName ?? null,
+      timestamp: seconds(wa.messageTimestamp),
+      kind: 'call',
+      text: callText(missed, 'missed'),
+      media: null,
+      quoted: null,
+      status: null,
+    };
   }
   // supprimé pour tous (historique) : gardé comme « Ce message a été supprimé »
   if (wa.messageStubType === proto.WebMessageInfo.StubType.REVOKE) {
@@ -374,7 +405,8 @@ export function toMessage(wa: WAMessage): Converted | null {
   const fromMe = wa.key.fromMe === true;
   const extracted = extract === undefined ? { kind: 'other' as const, text: '' } : extract(content);
   // appel que j'ai passé (journal du téléphone) : ni manqué ni refusé de mon côté
-  const { kind, text } = fromMe && extracted.kind === 'call' ? { kind: 'call' as const, text: callText(content.callLogMesssage?.isVideo === true, 'outgoing') } : extracted;
+  const { kind, text } =
+    fromMe && extracted.kind === 'call' ? { kind: 'call' as const, text: callText(content.callLogMesssage?.isVideo === true, 'outgoing') } : extracted;
   const participant = wa.key.participant ?? wa.participant ?? null;
   // liste de diffusion reçue : dans la discussion avec l'expéditeur (comme sur le téléphone)
   const broadcast = isReceivedBroadcast(remoteJid, fromMe) && participant !== null;
@@ -403,8 +435,17 @@ export function toMessage(wa: WAMessage): Converted | null {
 }
 
 /** Chiffre un vote (inverse de `decryptPollVote` de Baileys). */
-export function encryptPollVote(vote: Uint8Array, ctx: { pollEncKey: Uint8Array; pollCreatorJid: string; pollMsgId: string; voterJid: string }): { encPayload: Uint8Array; encIv: Uint8Array } {
-  const sign = Buffer.concat([Buffer.from(ctx.pollMsgId), Buffer.from(ctx.pollCreatorJid), Buffer.from(ctx.voterJid), Buffer.from('Poll Vote'), new Uint8Array([1])]);
+export function encryptPollVote(
+  vote: Uint8Array,
+  ctx: { pollEncKey: Uint8Array; pollCreatorJid: string; pollMsgId: string; voterJid: string },
+): { encPayload: Uint8Array; encIv: Uint8Array } {
+  const sign = Buffer.concat([
+    Buffer.from(ctx.pollMsgId),
+    Buffer.from(ctx.pollCreatorJid),
+    Buffer.from(ctx.voterJid),
+    Buffer.from('Poll Vote'),
+    new Uint8Array([1]),
+  ]);
   const key0 = hmacSign(ctx.pollEncKey, new Uint8Array(32), 'sha256');
   const decKey = hmacSign(sign, key0, 'sha256');
   const iv = randomBytes(12);

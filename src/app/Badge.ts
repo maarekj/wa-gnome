@@ -30,7 +30,8 @@ const ITEM_XML = `<node>
 </node>`;
 
 /** Infobulle de l'icône selon le nombre de discussions non lues. */
-export const badgeTooltip = (count: number): string => (count === 0 ? 'Aucun message non lu' : count === 1 ? '1 discussion non lue' : `${count} discussions non lues`);
+export const badgeTooltip = (count: number): string =>
+  count === 0 ? 'Aucun message non lu' : count === 1 ? '1 discussion non lue' : `${count} discussions non lues`;
 
 export class Badge {
   readonly #appId: string;
@@ -84,13 +85,24 @@ export class Badge {
   #register(): void {
     const name = Gio.DBus.session.get_unique_name();
     if (name === null) return;
-    Gio.DBus.session.call('org.kde.StatusNotifierWatcher', '/StatusNotifierWatcher', 'org.kde.StatusNotifierWatcher', 'RegisterStatusNotifierItem', new GLib.Variant('(s)', [name]), null, Gio.DBusCallFlags.NONE, 5000, null, (conn: Gio.DBusConnection | null, res: Gio.AsyncResult) => {
-      try {
-        conn?.call_finish(res);
-      } catch (error) {
-        console.error(`icône de la barre du haut : ${error instanceof Error ? error.message : String(error)}`);
-      }
-    });
+    Gio.DBus.session.call(
+      'org.kde.StatusNotifierWatcher',
+      '/StatusNotifierWatcher',
+      'org.kde.StatusNotifierWatcher',
+      'RegisterStatusNotifierItem',
+      new GLib.Variant('(s)', [name]),
+      null,
+      Gio.DBusCallFlags.NONE,
+      5000,
+      null,
+      (conn: Gio.DBusConnection | null, res: Gio.AsyncResult) => {
+        try {
+          conn?.call_finish(res);
+        } catch (error) {
+          console.error(`icône de la barre du haut : ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
+    );
   }
 
   /** Nombre de discussions non lues (tous comptes). */
@@ -114,7 +126,10 @@ export class Badge {
         `/${this.#appId.replaceAll('.', '/')}/LauncherEntry`,
         'com.canonical.Unity.LauncherEntry',
         'Update',
-        new GLib.Variant('(sa{sv})', [`application://${this.#appId}.desktop`, { count: new GLib.Variant('x', this.#count), 'count-visible': new GLib.Variant('b', this.#count > 0) }]),
+        new GLib.Variant('(sa{sv})', [
+          `application://${this.#appId}.desktop`,
+          { count: new GLib.Variant('x', this.#count), 'count-visible': new GLib.Variant('b', this.#count > 0) },
+        ]),
       );
     } catch (error) {
       console.error(`compteur du dock : ${error instanceof Error ? error.message : String(error)}`);

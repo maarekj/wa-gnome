@@ -127,7 +127,10 @@ const accounts: Accounts = {
 
 const saved = (() => {
   try {
-    return fs.readdirSync(accountsDir).filter((d) => fs.statSync(path.join(accountsDir, d)).isDirectory()).toSorted();
+    return fs
+      .readdirSync(accountsDir)
+      .filter((d) => fs.statSync(path.join(accountsDir, d)).isDirectory())
+      .toSorted();
   } catch {
     return [];
   }

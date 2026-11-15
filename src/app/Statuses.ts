@@ -20,12 +20,21 @@ const SHOW_MS = 6000;
 export const unseenCount = (g: StatusGroup): number => g.items.filter((i) => !i.seen).length;
 
 /** Premier statut à montrer : le premier non vu, sinon le premier. */
-export const startIndex = (g: StatusGroup): number => Math.max(0, g.items.findIndex((i) => !i.seen));
+export const startIndex = (g: StatusGroup): number =>
+  Math.max(
+    0,
+    g.items.findIndex((i) => !i.seen),
+  );
 
 /** Ligne d'une personne : photo (cercle accentué s'il y a du nouveau), nom, heure du dernier statut. */
 function groupRow(pictures: Pictures, g: StatusGroup): Gtk.ListBoxRow {
   const box = new Gtk.Box({ spacing: 12, marginTop: 6, marginBottom: 6, marginStart: 6, marginEnd: 6 });
-  const avatar = new Adw.Avatar({ size: 44, text: g.name.replace(/^~\s*/u, ''), showInitials: true, cssClasses: unseenCount(g) > 0 ? ['status-ring'] : ['status-ring', 'seen'] });
+  const avatar = new Adw.Avatar({
+    size: 44,
+    text: g.name.replace(/^~\s*/u, ''),
+    showInitials: true,
+    cssClasses: unseenCount(g) > 0 ? ['status-ring'] : ['status-ring', 'seen'],
+  });
   if (!g.me) avatar.set_custom_image(pictures.texture(g.sender).peek());
   box.append(avatar);
   const texts = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, valign: Gtk.Align.CENTER, hexpand: true });
@@ -45,8 +54,20 @@ function groupRow(pictures: Pictures, g: StatusGroup): Gtk.ListBoxRow {
 export function openStatuses(parent: Gtk.Widget, store: Store, pictures: Pictures, toast: (t: string) => void): void {
   const loader = new MediaLoader(store.client);
   const nav = new Adw.NavigationView();
-  const list = new Gtk.ListBox({ selectionMode: Gtk.SelectionMode.NONE, cssClasses: ['boxed-list'], marginTop: 12, marginBottom: 12, marginStart: 12, marginEnd: 12, valign: Gtk.Align.START });
-  const empty = new Adw.StatusPage({ iconName: 'camera-photo-symbolic', title: 'Aucun statut', description: 'Les statuts de vos contacts des dernières 24 heures apparaissent ici' });
+  const list = new Gtk.ListBox({
+    selectionMode: Gtk.SelectionMode.NONE,
+    cssClasses: ['boxed-list'],
+    marginTop: 12,
+    marginBottom: 12,
+    marginStart: 12,
+    marginEnd: 12,
+    valign: Gtk.Align.START,
+  });
+  const empty = new Adw.StatusPage({
+    iconName: 'camera-photo-symbolic',
+    title: 'Aucun statut',
+    description: 'Les statuts de vos contacts des dernières 24 heures apparaissent ici',
+  });
   const stack = new Gtk.Stack();
   stack.add_named(new Gtk.ScrolledWindow({ child: list, hscrollbarPolicy: Gtk.PolicyType.NEVER }), 'list');
   stack.add_named(empty, 'empty');
@@ -76,7 +97,14 @@ export function openStatuses(parent: Gtk.Widget, store: Store, pictures: Picture
 }
 
 /** Visionneuse : statut `item` de la personne `group`, passage au suivant (et à la personne suivante). */
-function viewerPage(store: Store, loader: MediaLoader, toast: (t: string) => void, groups: readonly StatusGroup[], group: number, item: number): Adw.NavigationPage {
+function viewerPage(
+  store: Store,
+  loader: MediaLoader,
+  toast: (t: string) => void,
+  groups: readonly StatusGroup[],
+  group: number,
+  item: number,
+): Adw.NavigationPage {
   // barres d'avancement (une par statut de la personne)
   const bars = new Gtk.Box({ spacing: 4, marginTop: 6, marginStart: 10, marginEnd: 10, homogeneous: true });
   const title = new Gtk.Label({ xalign: 0, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['heading'] });
@@ -85,9 +113,33 @@ function viewerPage(store: Store, loader: MediaLoader, toast: (t: string) => voi
   head.append(title);
   head.append(when);
   const frame = new Gtk.Box({ vexpand: true, hexpand: true, cssClasses: ['status-frame'] });
-  const caption = new Gtk.Label({ wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, justify: Gtk.Justification.CENTER, useMarkup: true, marginTop: 8, marginBottom: 12, marginStart: 12, marginEnd: 12, selectable: true });
-  const prev = new Gtk.Button({ iconName: 'go-previous-symbolic', tooltipText: 'Statut précédent (←)', cssClasses: ['osd', 'circular'], valign: Gtk.Align.CENTER, halign: Gtk.Align.START, marginStart: 10 });
-  const next = new Gtk.Button({ iconName: 'go-next-symbolic', tooltipText: 'Statut suivant (→)', cssClasses: ['osd', 'circular'], valign: Gtk.Align.CENTER, halign: Gtk.Align.END, marginEnd: 10 });
+  const caption = new Gtk.Label({
+    wrap: true,
+    wrapMode: Pango.WrapMode.WORD_CHAR,
+    justify: Gtk.Justification.CENTER,
+    useMarkup: true,
+    marginTop: 8,
+    marginBottom: 12,
+    marginStart: 12,
+    marginEnd: 12,
+    selectable: true,
+  });
+  const prev = new Gtk.Button({
+    iconName: 'go-previous-symbolic',
+    tooltipText: 'Statut précédent (←)',
+    cssClasses: ['osd', 'circular'],
+    valign: Gtk.Align.CENTER,
+    halign: Gtk.Align.START,
+    marginStart: 10,
+  });
+  const next = new Gtk.Button({
+    iconName: 'go-next-symbolic',
+    tooltipText: 'Statut suivant (→)',
+    cssClasses: ['osd', 'circular'],
+    valign: Gtk.Align.CENTER,
+    halign: Gtk.Align.END,
+    marginEnd: 10,
+  });
   const pause = new Gtk.ToggleButton({ iconName: 'media-playback-pause-symbolic', tooltipText: 'Pause (Espace)', cssClasses: ['flat'] });
   const overlay = new Gtk.Overlay({ child: frame, vexpand: true });
   overlay.add_overlay(prev);
@@ -175,7 +227,20 @@ function viewerPage(store: Store, loader: MediaLoader, toast: (t: string) => voi
     if (m.kind === 'text') {
       // statut texte : en grand sur sa couleur de fond
       bgCss.load_from_string(`box { background: ${it.background ?? '#1c71d8'}; color: white; }`);
-      frame.append(new Gtk.Label({ label: text, useMarkup: true, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, justify: Gtk.Justification.CENTER, hexpand: true, vexpand: true, marginStart: 24, marginEnd: 24, cssClasses: ['status-text'] }));
+      frame.append(
+        new Gtk.Label({
+          label: text,
+          useMarkup: true,
+          wrap: true,
+          wrapMode: Pango.WrapMode.WORD_CHAR,
+          justify: Gtk.Justification.CENTER,
+          hexpand: true,
+          vexpand: true,
+          marginStart: 24,
+          marginEnd: 24,
+          cssClasses: ['status-text'],
+        }),
+      );
       schedule(SHOW_MS);
     } else if (m.media === null) {
       frame.append(new Gtk.Label({ label: 'Statut non pris en charge', hexpand: true, cssClasses: ['dim-label'] }));

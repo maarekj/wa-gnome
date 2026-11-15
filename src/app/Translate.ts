@@ -121,7 +121,14 @@ function program(name: string): string {
   const found = GLib.find_program_in_path(name);
   if (found !== null) return found;
   const home = GLib.get_home_dir();
-  for (const dir of [`${home}/.local/bin`, `${home}/.nix-profile/bin`, `/etc/profiles/per-user/${GLib.get_user_name()}/bin`, '/run/current-system/sw/bin', '/usr/local/bin', '/usr/bin']) {
+  for (const dir of [
+    `${home}/.local/bin`,
+    `${home}/.nix-profile/bin`,
+    `/etc/profiles/per-user/${GLib.get_user_name()}/bin`,
+    '/run/current-system/sw/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+  ]) {
     const file = GLib.build_filenamev([dir, name]);
     if (GLib.file_test(file, GLib.FileTest.IS_EXECUTABLE)) return file;
   }
@@ -171,7 +178,14 @@ async function run(argv: string[], input: string | null, env: Record<string, str
 /** Agent opencode de l'app : aucun outil, toute permission refusée (texte seulement). */
 const OPENCODE_AGENT = 'wa-gnome-traduction';
 const OPENCODE_CONFIG = JSON.stringify({
-  agent: { [OPENCODE_AGENT]: { description: 'Traduction de messages WhatsApp, sans outils', mode: 'primary', tools: { '*': false }, permission: { edit: 'deny', bash: 'deny', webfetch: 'deny' } } },
+  agent: {
+    [OPENCODE_AGENT]: {
+      description: 'Traduction de messages WhatsApp, sans outils',
+      mode: 'primary',
+      tools: { '*': false },
+      permission: { edit: 'deny', bash: 'deny', webfetch: 'deny' },
+    },
+  },
 });
 
 /** Réponse de l'outil choisi dans les préférences (Claude Code ou opencode) à une consigne. */
@@ -181,7 +195,11 @@ async function ask(prompt: string): Promise<string> {
     const model = s.opencodeModel === '' ? [] : ['--model', s.opencodeModel];
     // consigne sur l'entrée standard (pas en argument : visible dans `ps`, taille limitée)
     // agent sans aucun outil : un message reçu ne peut pas faire lancer de commande (injection)
-    return opencodeText(await run([program('opencode'), 'run', '--agent', OPENCODE_AGENT, '--format', 'json', '--dir', workDir(), ...model], prompt, { OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG }));
+    return opencodeText(
+      await run([program('opencode'), 'run', '--agent', OPENCODE_AGENT, '--format', 'json', '--dir', workDir(), ...model], prompt, {
+        OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
+      }),
+    );
   }
   // Claude Code : sans outils ni session gardée, consigne sur l'entrée standard
   return run([program('claude'), '-p', '--tools', '', '--no-session-persistence', '--output-format', 'text'], prompt);
@@ -211,7 +229,8 @@ export function summaryPrompt(chatName: string, lines: readonly SummaryLine[], t
 /** Résumé de messages avec l'outil choisi dans les préférences. */
 export async function summarize(chatName: string, lines: readonly SummaryLine[]): Promise<string> {
   const s = settings();
-  if (GLib.getenv('WA_GNOME_TEST_TRANSLATE') !== null) return `- **Résumé de test** (${lines.length} messages, en ${s.translateTo})\n- Décision : *dimanche à 12 h 30*\n> ${lines[0]?.text ?? ''}`;
+  if (GLib.getenv('WA_GNOME_TEST_TRANSLATE') !== null)
+    return `- **Résumé de test** (${lines.length} messages, en ${s.translateTo})\n- Décision : *dimanche à 12 h 30*\n> ${lines[0]?.text ?? ''}`;
   return (await ask(summaryPrompt(chatName, lines, s.translateTo))).trim();
 }
 
@@ -246,7 +265,9 @@ export { downloadWhisper, whisperFile };
 function toWav(source: Gio.File): Promise<string> {
   Gst.init([]);
   const out = GLib.build_filenamev([workDir(), `vocal-${Date.now()}.wav`]);
-  const pipeline = Gst.parse_launch(`filesrc name=src ! decodebin ! audioconvert ! audioresample ! audio/x-raw,format=S16LE,rate=16000,channels=1 ! wavenc ! filesink name=sink`);
+  const pipeline = Gst.parse_launch(
+    `filesrc name=src ! decodebin ! audioconvert ! audioresample ! audio/x-raw,format=S16LE,rate=16000,channels=1 ! wavenc ! filesink name=sink`,
+  );
   if (!(pipeline instanceof Gst.Bin)) throw new Error('GStreamer : conversion impossible');
   pipeline.get_by_name('src')?.set_property('location', source.get_path() ?? '');
   pipeline.get_by_name('sink')?.set_property('location', out);
@@ -269,7 +290,9 @@ export const languageName = (code: string): string => VOICE_LANGUAGES.find((l) =
 
 const WhisperJson = z.object({
   result: z.optional(z.object({ language: z.optional(z.string()) })),
-  transcription: z.optional(z.array(z.object({ text: z.optional(z.string()), tokens: z.optional(z.array(z.object({ text: z.optional(z.string()), p: z.optional(z.number()) }))) }))),
+  transcription: z.optional(
+    z.array(z.object({ text: z.optional(z.string()), tokens: z.optional(z.array(z.object({ text: z.optional(z.string()), p: z.optional(z.number()) }))) })),
+  ),
 });
 
 /** Sortie JSON de whisper-cli (`-ojf`) : texte, langue, confiance moyenne des mots (0 à 1). */
@@ -277,7 +300,11 @@ export function parseWhisper(json: string): { text: string; lang: string | null;
   const w = WhisperJson.safeParse(JSON.parse(json));
   if (!w.success) return { text: '', lang: null, score: 0 };
   const segments = w.data.transcription ?? [];
-  const text = segments.map((s) => s.text ?? '').join(' ').replaceAll(/\s+/gu, ' ').trim();
+  const text = segments
+    .map((s) => s.text ?? '')
+    .join(' ')
+    .replaceAll(/\s+/gu, ' ')
+    .trim();
   // jetons spéciaux ([_BEG_], <|fr|>…) exclus de la confiance
   const probs = segments.flatMap((s) => (s.tokens ?? []).filter((t) => !/^\[_|^<\|/u.test(t.text ?? '')).map((t) => t.p ?? 0));
   const score = probs.length === 0 ? 0 : probs.reduce((a, b) => a + b, 0) / probs.length;
@@ -288,7 +315,10 @@ export function parseWhisper(json: string): { text: string; lang: string | null;
 async function whisper(wav: string, model: string, lang: string): Promise<{ text: string; lang: string | null; score: number }> {
   const bin = GLib.getenv('WA_GNOME_WHISPER') ?? program('whisper-cli');
   const base = `${wav}-${lang}`;
-  await run([bin, '-m', model, '-f', wav, '-l', lang, '-nt', '-np', '-ojf', '-of', base, '-t', String(Math.max(1, Math.min(8, GLib.get_num_processors())))], null);
+  await run(
+    [bin, '-m', model, '-f', wav, '-l', lang, '-nt', '-np', '-ojf', '-of', base, '-t', String(Math.max(1, Math.min(8, GLib.get_num_processors())))],
+    null,
+  );
   try {
     const [, data] = GLib.file_get_contents(`${base}.json`);
     const r = parseWhisper(new TextDecoder().decode(data));
@@ -303,7 +333,11 @@ async function whisper(wav: string, model: string, lang: string): Promise<{ text
  * pas partie des langues de l'utilisateur (`languages`), nouvelle passe dans chacune d'elles et
  * meilleur résultat gardé (whisper confond par exemple l'hébreu et l'arménien).
  */
-export async function transcribe(audio: Gio.File, lang: string | null = null, languages: readonly string[] = settings().voiceLanguages): Promise<{ text: string; lang: string | null }> {
+export async function transcribe(
+  audio: Gio.File,
+  lang: string | null = null,
+  languages: readonly string[] = settings().voiceLanguages,
+): Promise<{ text: string; lang: string | null }> {
   if (GLib.getenv('WA_GNOME_TEST_TRANSLATE') !== null) return { text: 'Bonjour, ceci est un vocal de test.', lang: lang ?? 'fr' };
   const model = whisperFile(settings().whisperModel);
   if (!GLib.file_test(model, GLib.FileTest.EXISTS)) throw new MissingModel(settings().whisperModel);

@@ -18,13 +18,15 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
 - `src/shared/api.ts` : **contrat** démon ↔ app (schémas zod/mini), importé des deux côtés ; sans
   dépendance à Node ni à GJS.
 - `src/shared/` (GJS) : client libsoup 3 (`client.ts`), état réactif (`store.ts`), formats.
-- `src/app/` : application `Adw.Application` en TSX avec gnim (`gnim/gtk4`).
+- `src/app/` : application `Adw.Application` en TSX avec gnim (`gnim/gtk4`). Discussion : `ConversationPage.tsx`
+  (page, défilement, affichage progressif), `Bubble.tsx` (bulles), `Composer.tsx` (zone de saisie).
 - Données : `$XDG_DATA_HOME/wa-gnome/` (`auth/` : session WhatsApp, `wa.db`, `token`).
   Variables : `WA_GNOME_DATA_DIR`, `WA_GNOME_URL` (app), `WA_GNOME_PORT`, `WA_GNOME_LOG` (démon),
   `WA_GNOME_APP_ID` (app).
 
 ## Commandes (dans le shell devenv)
-- `pnpm check` : typecheck + lint (oxlint type-aware) + `pnpm test`. Doit passer avant chaque commit.
+- `pnpm check` : format (oxfmt, `.oxfmtrc.json`) + typecheck + lint (oxlint type-aware) + `pnpm test`. Doit passer
+  avant chaque commit. `pnpm format` : reformate le code.
 - Tests du démon : `src/daemon/*.test.ts` (node --test), dont `server.test.ts` (serveur HTTP sur un faux Backend :
   jeton, routes, bornes, comptes) et les migrations depuis une base v0 (`store.test.ts`).
 - `pnpm test` : specs jasmine-gjs (`specs/*.spec.ts`), puis tests GJS sous Xvfb (`tests/*.ts`) ;

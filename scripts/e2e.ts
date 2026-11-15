@@ -16,7 +16,21 @@ await buildApp();
 const libexec = process.env['ATSPI_LIBEXEC'];
 if (libexec === undefined) throw new Error('ATSPI_LIBEXEC absent : lance `pnpm e2e` dans le shell devenv');
 const quote = (a: string): string => `'${a.replaceAll("'", String.raw`'\''`)}'`;
-const pytest = ['python3', '-B', '-m', 'pytest', '-p', 'no:cacheprovider', '-q', '-W', 'ignore::DeprecationWarning', path.join(root, 'e2e'), ...process.argv.slice(2)].map((a) => quote(a)).join(' ');
+const pytest = [
+  'python3',
+  '-B',
+  '-m',
+  'pytest',
+  '-p',
+  'no:cacheprovider',
+  '-q',
+  '-W',
+  'ignore::DeprecationWarning',
+  path.join(root, 'e2e'),
+  ...process.argv.slice(2),
+]
+  .map((a) => quote(a))
+  .join(' ');
 const script = [
   // accessibilité activée (désactivée dans les autres tests), son coupé, pas de portails
   'export GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=atspi GDK_DEBUG=no-portals GIO_USE_VFS=local NO_AT_BRIDGE=0 GSETTINGS_BACKEND=memory',

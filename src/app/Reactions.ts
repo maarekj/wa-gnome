@@ -27,7 +27,12 @@ export const reactionCount = (reactions: readonly Reaction[]): string => {
 
 function openPopover(ctx: ReactionsContext, anchor: Gtk.Widget, m: Message, end: boolean): void {
   // aligné sur le bord de la bulle (à gauche pour un message reçu), pas centré sous la pastille
-  const popover = new Gtk.Popover({ hasArrow: false, position: Gtk.PositionType.BOTTOM, halign: end ? Gtk.Align.END : Gtk.Align.START, cssClasses: ['reactions-popover'] });
+  const popover = new Gtk.Popover({
+    hasArrow: false,
+    position: Gtk.PositionType.BOTTOM,
+    halign: end ? Gtk.Align.END : Gtk.Align.START,
+    cssClasses: ['reactions-popover'],
+  });
   popover.set_parent(anchor);
   const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 8, widthRequest: 300 });
   popover.set_child(content);
@@ -38,7 +43,11 @@ function openPopover(ctx: ReactionsContext, anchor: Gtk.Widget, m: Message, end:
   const picker = new Gtk.Box({ spacing: 2, visible: false, cssClasses: ['reaction-picker'] });
   const mine = m.reactions.find((r) => r.mine)?.emoji ?? null;
   for (const emoji of QUICK_REACTIONS) {
-    const b = new Gtk.Button({ label: emoji, tooltipText: emoji === mine ? 'Retirer ma réaction' : `Réagir ${emoji}`, cssClasses: ['flat', 'reaction-pick', ...(emoji === mine ? ['mine'] : [])] });
+    const b = new Gtk.Button({
+      label: emoji,
+      tooltipText: emoji === mine ? 'Retirer ma réaction' : `Réagir ${emoji}`,
+      cssClasses: ['flat', 'reaction-pick', ...(emoji === mine ? ['mine'] : [])],
+    });
     b.connect('clicked', () => {
       popover.popdown();
       ctx.react(m, emoji === mine ? '' : emoji);
@@ -110,7 +119,11 @@ export function ReactionsRow(ctx: ReactionsContext, live: () => Message, subscri
     // un seul bouton pour toutes les pastilles, comme WhatsApp (émojis puis total)
     const total = m.reactions.reduce((n, r) => n + r.count, 0);
     const label = `${m.reactions.map((r) => r.emoji).join('')}${total > 1 ? ` ${total}` : ''}`;
-    const b = new Gtk.Button({ label, tooltipText: `${reactionCount(m.reactions)} — voir qui a réagi`, cssClasses: ['reaction-chip', ...(m.reactions.some((r) => r.mine) ? ['mine'] : [])] });
+    const b = new Gtk.Button({
+      label,
+      tooltipText: `${reactionCount(m.reactions)} — voir qui a réagi`,
+      cssClasses: ['reaction-chip', ...(m.reactions.some((r) => r.mine) ? ['mine'] : [])],
+    });
     b.connect('clicked', () => openPopover(ctx, b, live(), end));
     box.append(b);
   };

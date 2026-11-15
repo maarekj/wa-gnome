@@ -105,7 +105,22 @@ export interface Settings {
 export const SIDE_PANEL_DEFAULT = 340;
 export const sidePanelWidth = (w: number): number => Math.round(Math.min(Math.max(Number.isFinite(w) ? w : SIDE_PANEL_DEFAULT, 280), 600));
 
-const DEFAULTS: Settings = { accent: 'system', notify: true, preview: true, wallpaper: WALLPAPER_DEFAULT, translator: 'claude', opencodeModel: '', translateTo: 'français', whisperModel: 'small', voiceLanguages: ['fr', 'he', 'en'], chatVoiceLanguages: {}, account: DEFAULT_ACCOUNT, rejectMessage: 'Je ne peux pas répondre, je te rappelle', sidePanelWidth: SIDE_PANEL_DEFAULT, notifyMentions: true };
+const DEFAULTS: Settings = {
+  accent: 'system',
+  notify: true,
+  preview: true,
+  wallpaper: WALLPAPER_DEFAULT,
+  translator: 'claude',
+  opencodeModel: '',
+  translateTo: 'français',
+  whisperModel: 'small',
+  voiceLanguages: ['fr', 'he', 'en'],
+  chatVoiceLanguages: {},
+  account: DEFAULT_ACCOUNT,
+  rejectMessage: 'Je ne peux pas répondre, je te rappelle',
+  sidePanelWidth: SIDE_PANEL_DEFAULT,
+  notifyMentions: true,
+};
 const asAccent = (id: string | undefined): AccentId => ACCENTS.find((a) => a.id === id)?.id ?? 'system';
 
 /** Texte sans espaces autour, ou null s'il est absent ou vide. */
@@ -294,17 +309,37 @@ async function pickWallpaper(parent: Gtk.Widget, toast: (t: string) => void): Pr
 }
 
 /** Pastille de fond cochée : fond choisi. */
-const choose = (w: Wallpaper) => (b: Gtk.ToggleButton): void => {
-  if (b.active) chooseWallpaper(w);
-};
+const choose =
+  (w: Wallpaper) =>
+  (b: Gtk.ToggleButton): void => {
+    if (b.active) chooseWallpaper(w);
+  };
 
 /** Choix du fond : motif, aucun, couleurs unies, image (chaque clic sur « image » en choisit une). */
 function wallpaperChooser(toast: (t: string) => void): Gtk.Widget {
-  const box = new Gtk.FlowBox({ selectionMode: Gtk.SelectionMode.NONE, maxChildrenPerLine: 10, minChildrenPerLine: 4, columnSpacing: 6, rowSpacing: 6, marginTop: 10, marginBottom: 10, marginStart: 12, marginEnd: 12, homogeneous: true });
+  const box = new Gtk.FlowBox({
+    selectionMode: Gtk.SelectionMode.NONE,
+    maxChildrenPerLine: 10,
+    minChildrenPerLine: 4,
+    columnSpacing: 6,
+    rowSpacing: 6,
+    marginTop: 10,
+    marginBottom: 10,
+    marginStart: 12,
+    marginEnd: 12,
+    homogeneous: true,
+  });
   const buttons = new Map<Wallpaper, Gtk.ToggleButton>();
   let first: Gtk.ToggleButton | null = null;
   const option = (w: Wallpaper, tooltip: string, css: string, icon: string | null): Gtk.ToggleButton => {
-    const b = new Gtk.ToggleButton({ tooltipText: tooltip, cssClasses: ['accent-swatch', 'wallpaper-swatch'], widthRequest: 34, heightRequest: 34, valign: Gtk.Align.CENTER, active: current.wallpaper === w });
+    const b = new Gtk.ToggleButton({
+      tooltipText: tooltip,
+      cssClasses: ['accent-swatch', 'wallpaper-swatch'],
+      widthRequest: 34,
+      heightRequest: 34,
+      valign: Gtk.Align.CENTER,
+      active: current.wallpaper === w,
+    });
     if (first !== null) b.set_group(first);
     first ??= b;
     const style = new Gtk.CssProvider();
@@ -344,13 +379,25 @@ function toggleVoiceLanguage(code: string, on: boolean): string[] {
 }
 
 /** Résumé des langues des vocaux (« français, hébreu, anglais »). */
-const voiceLanguagesText = (codes: readonly string[]): string => (codes.length === 0 ? 'Toutes (détection automatique)' : codes.map((c) => VOICE_LANGUAGES.find((l) => l.code === c)?.name ?? c).join(', '));
+const voiceLanguagesText = (codes: readonly string[]): string =>
+  codes.length === 0 ? 'Toutes (détection automatique)' : codes.map((c) => VOICE_LANGUAGES.find((l) => l.code === c)?.name ?? c).join(', ');
 
 /** Préférences de la traduction et de la transcription. */
 function translationGroup(): Adw.PreferencesGroup {
   const group = new Adw.PreferencesGroup({ title: 'Traduction', description: 'Le texte à traduire est envoyé à l’outil choisi, avec votre compte.' });
-  const tool = new Adw.ComboRow({ title: 'Outil de traduction', model: Gtk.StringList.new(TRANSLATORS.map((t) => t.name)), selected: Math.max(0, TRANSLATORS.findIndex((t) => t.id === current.translator)) });
-  const model = new Adw.EntryRow({ title: 'Modèle opencode (fournisseur/modèle, vide : celui d’opencode)', text: current.opencodeModel, visible: current.translator === 'opencode' });
+  const tool = new Adw.ComboRow({
+    title: 'Outil de traduction',
+    model: Gtk.StringList.new(TRANSLATORS.map((t) => t.name)),
+    selected: Math.max(
+      0,
+      TRANSLATORS.findIndex((t) => t.id === current.translator),
+    ),
+  });
+  const model = new Adw.EntryRow({
+    title: 'Modèle opencode (fournisseur/modèle, vide : celui d’opencode)',
+    text: current.opencodeModel,
+    visible: current.translator === 'opencode',
+  });
   tool.connect('notify::selected', () => {
     const id = TRANSLATORS[tool.selected]?.id ?? 'claude';
     update({ translator: id });
@@ -372,8 +419,18 @@ const modelSize = (mo: number): string => (mo >= 1000 ? `${(mo / 1000).toFixed(1
 function modelRow(m: (typeof WHISPER_MODELS)[number], toast: (t: string) => void): Adw.ActionRow {
   const row = new Adw.ActionRow({ title: `${m.name.replace(/ \(.*$/u, '')} (${m.id})`, subtitle: '' });
   const bar = new Gtk.ProgressBar({ valign: Gtk.Align.CENTER, widthRequest: 120 });
-  const download = new Gtk.Button({ iconName: 'folder-download-symbolic', tooltipText: `Télécharger (${modelSize(m.size)})`, valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
-  const cancel = new Gtk.Button({ iconName: 'process-stop-symbolic', tooltipText: 'Annuler le téléchargement', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
+  const download = new Gtk.Button({
+    iconName: 'folder-download-symbolic',
+    tooltipText: `Télécharger (${modelSize(m.size)})`,
+    valign: Gtk.Align.CENTER,
+    cssClasses: ['flat'],
+  });
+  const cancel = new Gtk.Button({
+    iconName: 'process-stop-symbolic',
+    tooltipText: 'Annuler le téléchargement',
+    valign: Gtk.Align.CENTER,
+    cssClasses: ['flat'],
+  });
   const remove = new Gtk.Button({ iconName: 'user-trash-symbolic', tooltipText: 'Supprimer le modèle', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
   for (const w of [bar, download, cancel, remove]) row.add_suffix(w);
   const sync = (): void => {
@@ -421,7 +478,17 @@ function modelRow(m: (typeof WHISPER_MODELS)[number], toast: (t: string) => void
 async function openFolder(dir: string): Promise<void> {
   const uri = GLib.filename_to_uri(dir, null);
   try {
-    await Gio.DBus.session.call('org.freedesktop.FileManager1', '/org/freedesktop/FileManager1', 'org.freedesktop.FileManager1', 'ShowFolders', new GLib.Variant('(ass)', [[uri], '']), null, Gio.DBusCallFlags.NONE, 5000, null);
+    await Gio.DBus.session.call(
+      'org.freedesktop.FileManager1',
+      '/org/freedesktop/FileManager1',
+      'org.freedesktop.FileManager1',
+      'ShowFolders',
+      new GLib.Variant('(ass)', [[uri], '']),
+      null,
+      Gio.DBusCallFlags.NONE,
+      5000,
+      null,
+    );
   } catch {
     Gio.AppInfo.launch_default_for_uri(uri, null);
   }
@@ -429,18 +496,29 @@ async function openFolder(dir: string): Promise<void> {
 
 /** Préférences de la transcription des vocaux : modèle utilisé, modèles téléchargés, langues. */
 function transcriptionGroup(toast: (t: string) => void): Adw.PreferencesGroup {
-  const group = new Adw.PreferencesGroup({ title: 'Transcription des vocaux', description: 'Sur cet ordinateur, avec whisper.cpp. Un modèle plus grand reconnaît mieux les langues moins courantes (hébreu), mais il est plus lent.' });
+  const group = new Adw.PreferencesGroup({
+    title: 'Transcription des vocaux',
+    description: 'Sur cet ordinateur, avec whisper.cpp. Un modèle plus grand reconnaît mieux les langues moins courantes (hébreu), mais il est plus lent.',
+  });
   const whisper = new Adw.ComboRow({
     title: 'Modèle utilisé',
     model: Gtk.StringList.new(WHISPER_MODELS.map((m) => m.name)),
-    selected: Math.max(0, WHISPER_MODELS.findIndex((m) => m.id === current.whisperModel)),
+    selected: Math.max(
+      0,
+      WHISPER_MODELS.findIndex((m) => m.id === current.whisperModel),
+    ),
   });
   whisper.connect('notify::selected', () => update({ whisperModel: WHISPER_MODELS[whisper.selected]?.id ?? DEFAULTS.whisperModel }));
   group.add(whisper);
   for (const m of WHISPER_MODELS) group.add(modelRow(m, toast));
   // dossier des modèles : ménage à la main
   const folder = new Adw.ActionRow({ title: 'Dossier des modèles', subtitle: whisperDir(), subtitleSelectable: true });
-  const open = new Gtk.Button({ iconName: 'folder-open-symbolic', tooltipText: 'Ouvrir le dossier des modèles', valign: Gtk.Align.CENTER, cssClasses: ['flat'] });
+  const open = new Gtk.Button({
+    iconName: 'folder-open-symbolic',
+    tooltipText: 'Ouvrir le dossier des modèles',
+    valign: Gtk.Align.CENTER,
+    cssClasses: ['flat'],
+  });
   open.connect('clicked', () => {
     GLib.mkdir_with_parents(whisperDir(), 0o700);
     openFolder(whisperDir()).catch((error: unknown) => toast(`Ouverture impossible : ${errorMessage(error)}`));
@@ -463,7 +541,13 @@ function transcriptionGroup(toast: (t: string) => void): Adw.PreferencesGroup {
 /** Pastille de couleur (bouton à cocher rond). */
 function swatch(a: (typeof ACCENTS)[number], group: Gtk.ToggleButton | null): Gtk.ToggleButton {
   const color = accentColor(a.id);
-  const b = new Gtk.ToggleButton({ tooltipText: a.name, cssClasses: ['accent-swatch', ...(color === null ? ['system'] : [])], widthRequest: 34, heightRequest: 34, valign: Gtk.Align.CENTER });
+  const b = new Gtk.ToggleButton({
+    tooltipText: a.name,
+    cssClasses: ['accent-swatch', ...(color === null ? ['system'] : [])],
+    widthRequest: 34,
+    heightRequest: 34,
+    valign: Gtk.Align.CENTER,
+  });
   if (group !== null) b.set_group(group);
   if (color !== null) {
     const css = new Gtk.CssProvider();
@@ -484,7 +568,18 @@ export function openPreferences(parent: Gtk.Widget): void {
   const appearance = new Adw.PreferencesGroup({ title: 'Apparence', description: 'Couleur d’accent de l’application (boutons, sélection, liens)' });
   const row = new Adw.ActionRow({ title: 'Couleur d’accent' });
   const label = new Gtk.Label({ cssClasses: ['dim-label'] });
-  const box = new Gtk.FlowBox({ selectionMode: Gtk.SelectionMode.NONE, maxChildrenPerLine: 11, minChildrenPerLine: 6, columnSpacing: 6, rowSpacing: 6, marginTop: 10, marginBottom: 10, marginStart: 12, marginEnd: 12, homogeneous: true });
+  const box = new Gtk.FlowBox({
+    selectionMode: Gtk.SelectionMode.NONE,
+    maxChildrenPerLine: 11,
+    minChildrenPerLine: 6,
+    columnSpacing: 6,
+    rowSpacing: 6,
+    marginTop: 10,
+    marginBottom: 10,
+    marginStart: 12,
+    marginEnd: 12,
+    homogeneous: true,
+  });
   let first: Gtk.ToggleButton | null = null;
   for (const a of ACCENTS) {
     const b = swatch(a, first);
@@ -504,7 +599,10 @@ export function openPreferences(parent: Gtk.Widget): void {
   appearance.add(new Adw.ActionRow({ title: 'Fond des conversations', subtitle: 'Motif, couleur unie ou image' }));
   appearance.add(new Adw.PreferencesRow({ child: wallpaperChooser(toast), activatable: false }));
   page.add(appearance);
-  const notifications = new Adw.PreferencesGroup({ title: 'Notifications', description: 'Le son et l’affichage sur l’écran verrouillé se règlent dans Paramètres › Notifications' });
+  const notifications = new Adw.PreferencesGroup({
+    title: 'Notifications',
+    description: 'Le son et l’affichage sur l’écran verrouillé se règlent dans Paramètres › Notifications',
+  });
   const preview = switchRow('Afficher le contenu', 'Auteur et texte du message dans la notification', current.preview, (on) => update({ preview: on }));
   preview.sensitive = current.notify;
   notifications.add(
@@ -514,7 +612,11 @@ export function openPreferences(parent: Gtk.Widget): void {
     }),
   );
   notifications.add(preview);
-  notifications.add(switchRow('Mentions dans les discussions silencieuses', 'Notifié quand on vous mentionne (@vous), même en mode silencieux', current.notifyMentions, (on) => update({ notifyMentions: on })));
+  notifications.add(
+    switchRow('Mentions dans les discussions silencieuses', 'Notifié quand on vous mentionne (@vous), même en mode silencieux', current.notifyMentions, (on) =>
+      update({ notifyMentions: on }),
+    ),
+  );
   const reject = new Adw.EntryRow({ title: 'Message de refus d’un appel', text: current.rejectMessage });
   reject.connect('changed', () => update({ rejectMessage: nonEmpty(reject.text) ?? DEFAULTS.rejectMessage }));
   notifications.add(reject);

@@ -124,82 +124,95 @@ function AccountView({ store, accounts, toast }: { store: Store; accounts: Accou
         self.add_breakpoint(bp);
       }}
     >
-        <Gtk.Stack visibleChildName={screen} transitionType={Gtk.StackTransitionType.CROSSFADE}>
-          <Adw.ToolbarView $type="named" name="daemon">
-            <Adw.HeaderBar $type="top" />
-            <Adw.StatusPage
-              iconName="network-offline-symbolic"
-              title="Service WhatsApp injoignable"
-              description={store.link((l) => `Le démon wa-gnome ne répond pas.\nDémarrez-le avec « systemctl --user start ${DAEMON_UNIT} ».${l.state === 'error' ? `\n\n${l.message}` : ''}`)}
-            />
-          </Adw.ToolbarView>
-          <Adw.ToolbarView $type="named" name="loading">
-            <Adw.HeaderBar $type="top" $={(self: Adw.HeaderBar) => switcherIn(self, accounts, toast)} />
-            <Adw.StatusPage title={store.status((s) => STATE_BANNER[s.state])} description={store.status((s) => s.error ?? '')}>
-              <Adw.Spinner widthRequest={32} heightRequest={32} />
-            </Adw.StatusPage>
-          </Adw.ToolbarView>
-          <Adw.ToolbarView $type="named" name="pair">
-            <Adw.HeaderBar $type="top" $={(self: Adw.HeaderBar) => switcherIn(self, accounts, toast)} />
-            <Gtk.ScrolledWindow hscrollbarPolicy={Gtk.PolicyType.NEVER}>
-              <Adw.Clamp maximumSize={480}>
-                <Gtk.Box orientation={Gtk.Orientation.VERTICAL} spacing={18} valign={Gtk.Align.CENTER} marginTop={24} marginBottom={24} marginStart={12} marginEnd={12}>
-                  <Gtk.Label label="Connecter WhatsApp" cssClasses={['title-1']} />
-                  <Gtk.Box
-                    halign={Gtk.Align.CENTER}
-                    cssClasses={['card', 'qr-frame']}
-                    $={(self: Gtk.Box) => {
-                      self.append(qrCode(store.status((s) => s.qr ?? '')));
-                    }}
-                  />
-                  <Gtk.Label
-                    useMarkup
-                    wrap
-                    justify={Gtk.Justification.CENTER}
-                    label={'1. Ouvrez WhatsApp sur votre téléphone\n2. Touchez <b>Appareils connectés</b> puis <b>Connecter un appareil</b>\n3. Scannez ce code'}
-                  />
-                  <Gtk.Button
-                    label="Annuler l’ajout de ce compte"
-                    visible={extra}
-                    halign={Gtk.Align.CENTER}
-                    cssClasses={['pill']}
-                    onClicked={() => {
-                      accounts.remove(store).catch((error: unknown) => toast(`Retrait impossible : ${errorMessage(error)}`));
-                    }}
-                  />
-                </Gtk.Box>
-              </Adw.Clamp>
-            </Gtk.ScrolledWindow>
-          </Adw.ToolbarView>
-          <Gtk.Box $type="named" name="main" orientation={Gtk.Orientation.VERTICAL}>
-            <Adw.Banner title={store.status((s) => STATE_BANNER[s.state])} revealed={store.status((s) => s.state !== 'open')} />
-            <Adw.NavigationSplitView
-              vexpand
-              minSidebarWidth={280}
-              maxSidebarWidth={400}
-              $={(self: Adw.NavigationSplitView) => {
-                split = self;
-                self.sidebar = asPage(ChatList({ store, pictures, toast, switcher: accountSwitcher(accounts, toast), removable: extra }));
-                self.content = asPage(ConversationPage({
-                    store,
-                    pictures,
-                    toast,
-                    panels: (s) => {
-                      side = s;
-                    },
-                  }));
-                onCleanup(
-                  store.current.subscribe(() => {
-                    self.showContent = store.current.peek() !== null;
-                  }),
-                );
-                self.connect('notify::show-content', () => {
-                  if (self.collapsed && !self.showContent) store.open(null);
-                });
-              }}
-            />
-          </Gtk.Box>
-        </Gtk.Stack>
+      <Gtk.Stack visibleChildName={screen} transitionType={Gtk.StackTransitionType.CROSSFADE}>
+        <Adw.ToolbarView $type="named" name="daemon">
+          <Adw.HeaderBar $type="top" />
+          <Adw.StatusPage
+            iconName="network-offline-symbolic"
+            title="Service WhatsApp injoignable"
+            description={store.link(
+              (l) =>
+                `Le démon wa-gnome ne répond pas.\nDémarrez-le avec « systemctl --user start ${DAEMON_UNIT} ».${l.state === 'error' ? `\n\n${l.message}` : ''}`,
+            )}
+          />
+        </Adw.ToolbarView>
+        <Adw.ToolbarView $type="named" name="loading">
+          <Adw.HeaderBar $type="top" $={(self: Adw.HeaderBar) => switcherIn(self, accounts, toast)} />
+          <Adw.StatusPage title={store.status((s) => STATE_BANNER[s.state])} description={store.status((s) => s.error ?? '')}>
+            <Adw.Spinner widthRequest={32} heightRequest={32} />
+          </Adw.StatusPage>
+        </Adw.ToolbarView>
+        <Adw.ToolbarView $type="named" name="pair">
+          <Adw.HeaderBar $type="top" $={(self: Adw.HeaderBar) => switcherIn(self, accounts, toast)} />
+          <Gtk.ScrolledWindow hscrollbarPolicy={Gtk.PolicyType.NEVER}>
+            <Adw.Clamp maximumSize={480}>
+              <Gtk.Box
+                orientation={Gtk.Orientation.VERTICAL}
+                spacing={18}
+                valign={Gtk.Align.CENTER}
+                marginTop={24}
+                marginBottom={24}
+                marginStart={12}
+                marginEnd={12}
+              >
+                <Gtk.Label label="Connecter WhatsApp" cssClasses={['title-1']} />
+                <Gtk.Box
+                  halign={Gtk.Align.CENTER}
+                  cssClasses={['card', 'qr-frame']}
+                  $={(self: Gtk.Box) => {
+                    self.append(qrCode(store.status((s) => s.qr ?? '')));
+                  }}
+                />
+                <Gtk.Label
+                  useMarkup
+                  wrap
+                  justify={Gtk.Justification.CENTER}
+                  label={'1. Ouvrez WhatsApp sur votre téléphone\n2. Touchez <b>Appareils connectés</b> puis <b>Connecter un appareil</b>\n3. Scannez ce code'}
+                />
+                <Gtk.Button
+                  label="Annuler l’ajout de ce compte"
+                  visible={extra}
+                  halign={Gtk.Align.CENTER}
+                  cssClasses={['pill']}
+                  onClicked={() => {
+                    accounts.remove(store).catch((error: unknown) => toast(`Retrait impossible : ${errorMessage(error)}`));
+                  }}
+                />
+              </Gtk.Box>
+            </Adw.Clamp>
+          </Gtk.ScrolledWindow>
+        </Adw.ToolbarView>
+        <Gtk.Box $type="named" name="main" orientation={Gtk.Orientation.VERTICAL}>
+          <Adw.Banner title={store.status((s) => STATE_BANNER[s.state])} revealed={store.status((s) => s.state !== 'open')} />
+          <Adw.NavigationSplitView
+            vexpand
+            minSidebarWidth={280}
+            maxSidebarWidth={400}
+            $={(self: Adw.NavigationSplitView) => {
+              split = self;
+              self.sidebar = asPage(ChatList({ store, pictures, toast, switcher: accountSwitcher(accounts, toast), removable: extra }));
+              self.content = asPage(
+                ConversationPage({
+                  store,
+                  pictures,
+                  toast,
+                  panels: (s) => {
+                    side = s;
+                  },
+                }),
+              );
+              onCleanup(
+                store.current.subscribe(() => {
+                  self.showContent = store.current.peek() !== null;
+                }),
+              );
+              self.connect('notify::show-content', () => {
+                if (self.collapsed && !self.showContent) store.open(null);
+              });
+            }}
+          />
+        </Gtk.Box>
+      </Gtk.Stack>
     </Adw.BreakpointBin>
   );
 }

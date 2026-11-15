@@ -22,7 +22,7 @@ export function scheduleChoices(now = GLib.DateTime.new_now_local()): { label: s
   if (now.get_hour() < 19) out.push({ label: 'Ce soir à 20:00', at: localAt(now, 0, 20) });
   out.push({ label: 'Demain à 09:00', at: localAt(now, 1, 9) });
   // lundi prochain (jamais aujourd'hui ni demain)
-  const toMonday = ((8 - now.get_day_of_week()) % 7) || 7;
+  const toMonday = (8 - now.get_day_of_week()) % 7 || 7;
   if (toMonday > 1) out.push({ label: 'Lundi à 09:00', at: localAt(now, toMonday, 9) });
   return out;
 }
@@ -37,8 +37,20 @@ export function scheduleButton(schedule: (at: number) => void): Gtk.MenuButton {
   const quick = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   box.append(quick);
   const calendar = new Gtk.Calendar();
-  const hour = new Gtk.SpinButton({ adjustment: new Gtk.Adjustment({ lower: 0, upper: 23, stepIncrement: 1 }), numeric: true, wrap: true, orientation: Gtk.Orientation.VERTICAL, tooltipText: 'Heure' });
-  const minute = new Gtk.SpinButton({ adjustment: new Gtk.Adjustment({ lower: 0, upper: 55, stepIncrement: 5 }), numeric: true, wrap: true, orientation: Gtk.Orientation.VERTICAL, tooltipText: 'Minutes' });
+  const hour = new Gtk.SpinButton({
+    adjustment: new Gtk.Adjustment({ lower: 0, upper: 23, stepIncrement: 1 }),
+    numeric: true,
+    wrap: true,
+    orientation: Gtk.Orientation.VERTICAL,
+    tooltipText: 'Heure',
+  });
+  const minute = new Gtk.SpinButton({
+    adjustment: new Gtk.Adjustment({ lower: 0, upper: 55, stepIncrement: 5 }),
+    numeric: true,
+    wrap: true,
+    orientation: Gtk.Orientation.VERTICAL,
+    tooltipText: 'Minutes',
+  });
   // minutes sur deux chiffres
   minute.connect('output', () => {
     minute.text = String(minute.value).padStart(2, '0');
@@ -57,7 +69,13 @@ export function scheduleButton(schedule: (at: number) => void): Gtk.MenuButton {
   box.append(new Gtk.Separator());
   box.append(expander);
   const popover = new Gtk.Popover({ child: box });
-  const button = new Gtk.MenuButton({ iconName: 'alarm-symbolic', tooltipText: 'Programmer l’envoi', popover, cssClasses: ['circular', 'flat'], valign: Gtk.Align.END });
+  const button = new Gtk.MenuButton({
+    iconName: 'alarm-symbolic',
+    tooltipText: 'Programmer l’envoi',
+    popover,
+    cssClasses: ['circular', 'flat'],
+    valign: Gtk.Align.END,
+  });
   const pick = (at: number): void => {
     popover.popdown();
     schedule(at);
@@ -84,7 +102,8 @@ export function scheduleButton(schedule: (at: number) => void): Gtk.MenuButton {
   });
   custom.connect('clicked', () => {
     const d = calendar.get_date();
-    const at = GLib.DateTime.new_local(d.get_year(), d.get_month(), d.get_day_of_month(), hour.get_value_as_int(), minute.get_value_as_int(), 0)?.to_unix() ?? 0;
+    const at =
+      GLib.DateTime.new_local(d.get_year(), d.get_month(), d.get_day_of_month(), hour.get_value_as_int(), minute.get_value_as_int(), 0)?.to_unix() ?? 0;
     pick(at);
   });
   return button;
@@ -97,10 +116,22 @@ export function ScheduledBar(store: Store, toast: (t: string) => void): Gtk.Widg
     const line = new Gtk.Box({ spacing: 8 });
     line.append(new Gtk.Image({ iconName: s.error === null ? 'alarm-symbolic' : 'dialog-warning-symbolic' }));
     const texts = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
-    texts.append(new Gtk.Label({ label: `Programmé · ${fmtDateTime(s.at)}${s.error === null ? '' : ` · échec : ${s.error}`}`, xalign: 0, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['caption-heading', s.error === null ? 'accent' : 'error'] }));
+    texts.append(
+      new Gtk.Label({
+        label: `Programmé · ${fmtDateTime(s.at)}${s.error === null ? '' : ` · échec : ${s.error}`}`,
+        xalign: 0,
+        ellipsize: Pango.EllipsizeMode.END,
+        cssClasses: ['caption-heading', s.error === null ? 'accent' : 'error'],
+      }),
+    );
     texts.append(new Gtk.Label({ label: s.text.replaceAll('\n', ' '), xalign: 0, ellipsize: Pango.EllipsizeMode.END, singleLineMode: true }));
     line.append(texts);
-    const cancel = new Gtk.Button({ iconName: 'window-close-symbolic', tooltipText: 'Annuler le message programmé', cssClasses: ['flat', 'circular'], valign: Gtk.Align.CENTER });
+    const cancel = new Gtk.Button({
+      iconName: 'window-close-symbolic',
+      tooltipText: 'Annuler le message programmé',
+      cssClasses: ['flat', 'circular'],
+      valign: Gtk.Align.CENTER,
+    });
     cancel.connect('clicked', () => {
       store.client.cancelScheduled(s.id).then(
         () => toast('Message programmé annulé'),

@@ -7,7 +7,14 @@ import { keyedBox } from '../src/app/KeyedBox.ts';
 Gtk.init();
 const box = new Gtk.Box();
 const [items, setItems] = createState<readonly string[]>([]);
-createRoot(() => keyedBox(box, items, (s) => s, (s) => new Gtk.Label({ label: s })));
+createRoot(() =>
+  keyedBox(
+    box,
+    items,
+    (s) => s,
+    (s) => new Gtk.Label({ label: s }),
+  ),
+);
 const labels = (): string[] => {
   const out: string[] = [];
   for (let c = box.get_first_child(); c !== null; c = c.get_next_sibling()) if (c instanceof Gtk.Label) out.push(c.label);

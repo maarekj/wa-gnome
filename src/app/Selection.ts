@@ -28,7 +28,8 @@ export function copyText(messages: readonly Message[], chatName: string): string
 }
 
 /** « Supprimer pour tous » possible : uniquement mes messages, dans le délai de WhatsApp. */
-export const canRevokeAll = (messages: readonly Message[], now = Date.now() / 1000): boolean => messages.length > 0 && messages.every((m) => m.fromMe && !m.deleted && now - m.timestamp < REVOKE_WINDOW_S);
+export const canRevokeAll = (messages: readonly Message[], now = Date.now() / 1000): boolean =>
+  messages.length > 0 && messages.every((m) => m.fromMe && !m.deleted && now - m.timestamp < REVOKE_WINDOW_S);
 
 /** Libellé « 3 messages ». */
 export const countText = (n: number): string => (n === 1 ? '1 message' : `${n} messages`);
@@ -38,7 +39,9 @@ export function confirmRemoveMany(parent: Gtk.Widget, store: Store, messages: re
   const forAll = canRevokeAll(messages);
   const dialog = new Adw.AlertDialog({
     heading: `Supprimer ${countText(messages.length)} ?`,
-    body: forAll ? '« Pour tous » les remplace par « Ce message a été supprimé » chez tous les participants.' : 'Ils seront supprimés de cet ordinateur et de vos autres appareils. Les autres participants les verront toujours.',
+    body: forAll
+      ? '« Pour tous » les remplace par « Ce message a été supprimé » chez tous les participants.'
+      : 'Ils seront supprimés de cet ordinateur et de vos autres appareils. Les autres participants les verront toujours.',
   });
   dialog.add_response('cancel', 'Annuler');
   dialog.add_response('delete-for-me', 'Pour moi');
@@ -90,10 +93,25 @@ function chatRow(c: Chat, pictures: Pictures, checked: Set<string>, changed: () 
 }
 
 /** Fenêtre de transfert : choix des discussions (recherche, plusieurs), puis envoi. */
-export function openForward(parent: Gtk.Widget, store: Store, pictures: Pictures, messages: readonly Message[], toast: (t: string) => void, done: () => void): void {
+export function openForward(
+  parent: Gtk.Widget,
+  store: Store,
+  pictures: Pictures,
+  messages: readonly Message[],
+  toast: (t: string) => void,
+  done: () => void,
+): void {
   const checked = new Set<string>();
   const send = new Gtk.Button({ label: 'Transférer', sensitive: false, cssClasses: ['suggested-action'] });
-  const chosen = new Gtk.Label({ xalign: 0, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['caption', 'dim-label'], marginStart: 12, marginEnd: 12, marginTop: 6, marginBottom: 6 });
+  const chosen = new Gtk.Label({
+    xalign: 0,
+    ellipsize: Pango.EllipsizeMode.END,
+    cssClasses: ['caption', 'dim-label'],
+    marginStart: 12,
+    marginEnd: 12,
+    marginTop: 6,
+    marginBottom: 6,
+  });
   const chats = store.chats.peek().filter((c) => !c.id.endsWith('@broadcast'));
   const names = new Map(chats.map((c) => [c.id, c.name]));
   const changed = (): void => {
@@ -101,7 +119,15 @@ export function openForward(parent: Gtk.Widget, store: Store, pictures: Pictures
     chosen.label = checked.size === 0 ? 'Choisissez une ou plusieurs discussions' : [...checked].map((id) => names.get(id) ?? id).join(', ');
   };
   changed();
-  const list = new Gtk.ListBox({ selectionMode: Gtk.SelectionMode.NONE, cssClasses: ['boxed-list'], marginStart: 12, marginEnd: 12, marginTop: 6, marginBottom: 12, valign: Gtk.Align.START });
+  const list = new Gtk.ListBox({
+    selectionMode: Gtk.SelectionMode.NONE,
+    cssClasses: ['boxed-list'],
+    marginStart: 12,
+    marginEnd: 12,
+    marginTop: 6,
+    marginBottom: 12,
+    valign: Gtk.Align.START,
+  });
   const rows = chats.map((c) => {
     const row = chatRow(c, pictures, checked, changed);
     list.append(row);

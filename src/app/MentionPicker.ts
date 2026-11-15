@@ -24,7 +24,14 @@ export function matchMembers(members: readonly Participant[], query: string): Pa
   const q = fold(query);
   return members
     .filter((p) => !p.me)
-    .filter((p) => q === '' || fold(mentionName(p.name)).split(/\s+/u).some((w) => w.startsWith(q)) || (p.id.split('@')[0] ?? '').startsWith(q))
+    .filter(
+      (p) =>
+        q === '' ||
+        fold(mentionName(p.name))
+          .split(/\s+/u)
+          .some((w) => w.startsWith(q)) ||
+        (p.id.split('@')[0] ?? '').startsWith(q),
+    )
     .slice(0, LIMIT);
 }
 
@@ -69,7 +76,15 @@ export function mentionPicker(view: Gtk.TextView, store: Store, pictures: Pictur
     return m;
   };
   const list = new Gtk.ListBox({ selectionMode: Gtk.SelectionMode.SINGLE, cssClasses: ['navigation-sidebar'] });
-  const popover = new Gtk.Popover({ child: list, autohide: false, hasArrow: false, position: Gtk.PositionType.TOP, halign: Gtk.Align.START, canFocus: false, widthRequest: 260 });
+  const popover = new Gtk.Popover({
+    child: list,
+    autohide: false,
+    hasArrow: false,
+    position: Gtk.PositionType.TOP,
+    halign: Gtk.Align.START,
+    canFocus: false,
+    widthRequest: 260,
+  });
   // pas un enfant de la zone de texte : GtkTextView ne sait pas retirer un enfant qui n'est pas
   // le sien (boucle d'avertissements sans fin à la fermeture de la fenêtre, processus jamais
   // terminé) ; rattachée au conteneur de la zone, dès qu'elle est placée

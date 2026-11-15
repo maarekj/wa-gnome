@@ -17,7 +17,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { deflateSync } from 'node:zlib';
-import { callText, type CallOutcome, ConnectionState, DEFAULT_ACCOUNT, type Event, type Media, type Message, type MessageKind, type Presence, TOKEN_FILE, type Status, uploadKind } from '../src/shared/api.ts';
+import {
+  callText,
+  type CallOutcome,
+  ConnectionState,
+  DEFAULT_ACCOUNT,
+  type Event,
+  type Media,
+  type Message,
+  type MessageKind,
+  type Presence,
+  TOKEN_FILE,
+  type Status,
+  uploadKind,
+} from '../src/shared/api.ts';
 import { type Account, type Backend, type Server, startServer } from '../src/daemon/server.ts';
 import { type Converted, optionHash } from '../src/daemon/convert.ts';
 import { Store } from '../src/daemon/store.ts';
@@ -74,7 +87,12 @@ const png = (w: number, h: number, pixel: (x: number, y: number) => [number, num
   ihdr.writeUInt32BE(w, 0);
   ihdr.writeUInt32BE(h, 4);
   ihdr.set([8, 6, 0, 0, 0], 8);
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
 };
 /** Paysage : ciel en dégradé, soleil, collines. */
 const landscape = (w: number, h: number): Buffer =>
@@ -148,7 +166,21 @@ const pdf = (text: string): Buffer => {
 /** Courte vidéo WebM générée par GStreamer s'il est installé (shell devenv), sinon vide. */
 const video = (): Buffer => {
   const file = path.join(os.tmpdir(), `wa-gnome-fake-${process.pid}.webm`);
-  const res = spawnSync('gst-launch-1.0', ['-q', 'videotestsrc', 'num-buffers=90', 'pattern=ball', '!', 'video/x-raw,width=480,height=320', '!', 'vp8enc', '!', 'webmmux', '!', 'filesink', `location=${file}`]);
+  const res = spawnSync('gst-launch-1.0', [
+    '-q',
+    'videotestsrc',
+    'num-buffers=90',
+    'pattern=ball',
+    '!',
+    'video/x-raw,width=480,height=320',
+    '!',
+    'vp8enc',
+    '!',
+    'webmmux',
+    '!',
+    'filesink',
+    `location=${file}`,
+  ]);
   if (res.status !== 0) return Buffer.alloc(0);
   const data = fs.readFileSync(file);
   fs.rmSync(file, { force: true });
@@ -180,7 +212,24 @@ const add = (
   seq += 1;
   const id = `fake${seq}`;
   if (attached !== null) media.set(id, { mimetype: attached.media.mimetype, data: attached.data });
-  store.upsertMessage({ id, chatId, fromMe, sender, senderName, timestamp: now - ago, kind: attached?.kind ?? 'text', text, media: attached?.media ?? null, quoted: quote(chatId, replyTo), status: fromMe ? (ago === 0 ? 'pending' : 'read') : null, forwarded, mentions: [...mentions] }, '{}');
+  store.upsertMessage(
+    {
+      id,
+      chatId,
+      fromMe,
+      sender,
+      senderName,
+      timestamp: now - ago,
+      kind: attached?.kind ?? 'text',
+      text,
+      media: attached?.media ?? null,
+      quoted: quote(chatId, replyTo),
+      status: fromMe ? (ago === 0 ? 'pending' : 'read') : null,
+      forwarded,
+      mentions: [...mentions],
+    },
+    '{}',
+  );
   const m = store.message(chatId, id);
   if (m === null) throw new Error('message de démonstration introuvable');
   return m;
@@ -203,7 +252,12 @@ const photo = { mimetype: 'image/png', width: 960, height: 600, thumbnail: lands
 add(ALICE, false, 'La vue depuis le chalet', 2 * H - 120, null, null, { kind: 'image', media: photo, data: landscape(960, 600) });
 add(ALICE, true, '', 2 * H - 60, null, null, { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });
 // photos plus anciennes (galerie : plusieurs mois)
-for (let i = 1; i <= 7; i += 1) add(ALICE, i % 2 === 0, '', i * 9 * 24 * H, null, null, { kind: 'image', media: { ...photo, width: 480, height: 300, thumbnail: null }, data: landscape(480, 300) });
+for (let i = 1; i <= 7; i += 1)
+  add(ALICE, i % 2 === 0, '', i * 9 * 24 * H, null, null, {
+    kind: 'image',
+    media: { ...photo, width: 480, height: 300, thumbnail: null },
+    data: landscape(480, 300),
+  });
 add(GROUP, false, 'Qui vient dimanche ?', 3 * H, BOB, 'Bob');
 const moi = add(GROUP, true, 'Moi !', 3 * H - 60);
 store.setReceipt({ chatId: GROUP, messageId: moi.id, user: BOB, delivered: now - 3 * H + 30, read: now - 3 * H + 120 });
@@ -217,31 +271,94 @@ const dessert = add(GROUP, false, 'Je ramène le dessert', 50 * 60, ALICE, 'Alic
 // sondage du groupe : Bob a voté « Samedi »
 seq += 1;
 const SONDAGE = `fake${seq}`;
-store.upsertMessage({ id: SONDAGE, chatId: GROUP, fromMe: false, sender: ALICE, senderName: 'Alice', timestamp: now - 48 * 60, kind: 'poll', text: 'Quel jour pour le pique-nique ?', media: null, quoted: null, status: null, poll: { options: ['Samedi', 'Dimanche'], multiple: false } }, '{}');
+store.upsertMessage(
+  {
+    id: SONDAGE,
+    chatId: GROUP,
+    fromMe: false,
+    sender: ALICE,
+    senderName: 'Alice',
+    timestamp: now - 48 * 60,
+    kind: 'poll',
+    text: 'Quel jour pour le pique-nique ?',
+    media: null,
+    quoted: null,
+    status: null,
+    poll: { options: ['Samedi', 'Dimanche'], multiple: false },
+  },
+  '{}',
+);
 store.setVote(GROUP, SONDAGE, BOB, [optionHash('Samedi')], Date.now() - 60_000);
 // mention de moi (et de Bob) dans le groupe
 add(GROUP, false, '@33600000000 tu prends le pain ? Et @33600000002 les boissons', 45 * 60, ALICE, 'Alice', null, undefined, 0, [ME, BOB]);
 // message épinglé dans le groupe (bandeau en haut de la discussion)
 store.setPin(GROUP, dimanche.id, true, now - 3 * H, now + 7 * 24 * H);
 // réactions de démonstration
-for (const [sender, emoji] of [[BOB, '❤️'], [ME, '❤️'], [ALICE, '😂']] as const) store.setReaction({ chatId: GROUP, targetId: dessert.id, sender: sender === ME ? 'me' : sender, emoji, timestamp: Date.now() });
-add(GROUP, false, '', 49 * 60, BOB, 'Bob', { kind: 'sticker', media: { mimetype: 'image/png', width: 512, height: 512, thumbnail: null, fileName: null, size: null, seconds: null }, data: sticker(512) });
+for (const [sender, emoji] of [
+  [BOB, '❤️'],
+  [ME, '❤️'],
+  [ALICE, '😂'],
+] as const)
+  store.setReaction({ chatId: GROUP, targetId: dessert.id, sender: sender === ME ? 'me' : sender, emoji, timestamp: Date.now() });
+add(GROUP, false, '', 49 * 60, BOB, 'Bob', {
+  kind: 'sticker',
+  media: { mimetype: 'image/png', width: 512, height: 512, thumbnail: null, fileName: null, size: null, seconds: null },
+  data: sticker(512),
+});
 store.upsertChat({ id: GROUP, unread: 1 });
 // mise en forme WhatsApp
-add(BOB, true, 'Pour samedi : *rendez-vous à 14 h*, _pas avant_, ~dimanche~ et le code `A1B2`\n> Il a dit : prends les places\n1. Billets\n2. Écharpes\n* parking\n- sandwichs\n```\nporte = 12\n```', 9 * 24 * H + 120);
+add(
+  BOB,
+  true,
+  'Pour samedi : *rendez-vous à 14 h*, _pas avant_, ~dimanche~ et le code `A1B2`\n> Il a dit : prends les places\n1. Billets\n2. Écharpes\n* parking\n- sandwichs\n```\nporte = 12\n```',
+  9 * 24 * H + 120,
+);
 add(BOB, false, 'Les infos sont sur https://exemple.fr/match_du_samedi.', 9 * 24 * H + 90);
 add(BOB, false, 'Oublie pas Naomie', 9 * 24 * H + 60, null, null, null, undefined, 1);
 add(BOB, false, 'Tu as vu le match hier ?', 9 * 24 * H);
 // photo à vue unique (contenu inaccessible depuis un appareil lié) ; discussion éphémère (7 jours)
 seq += 1;
-store.upsertMessage({ id: `fake${seq}`, chatId: BOB, fromMe: false, sender: null, senderName: null, timestamp: now - 9 * 24 * H + 30, kind: 'image', text: '', media: null, quoted: null, status: null, viewOnce: true }, '{}');
+store.upsertMessage(
+  {
+    id: `fake${seq}`,
+    chatId: BOB,
+    fromMe: false,
+    sender: null,
+    senderName: null,
+    timestamp: now - 9 * 24 * H + 30,
+    kind: 'image',
+    text: '',
+    media: null,
+    quoted: null,
+    status: null,
+    viewOnce: true,
+  },
+  '{}',
+);
 store.upsertChat({ id: BOB, ephemeral: 7 * 24 * H });
 const none = { width: null, height: null, thumbnail: null, fileName: null, size: null, seconds: null };
 const doc = pdf('Menu du dimanche');
-add(GROUP, false, '', 40 * 60, ALICE, 'Alice', { kind: 'document', media: { ...none, mimetype: 'application/pdf', fileName: 'Menu du dimanche.pdf', size: doc.length }, data: doc });
+add(GROUP, false, '', 40 * 60, ALICE, 'Alice', {
+  kind: 'document',
+  media: { ...none, mimetype: 'application/pdf', fileName: 'Menu du dimanche.pdf', size: doc.length },
+  data: doc,
+});
 const voice = wav(4);
-add(GROUP, false, '', 30 * 60, BOB, 'Bob', { kind: 'audio', media: { ...none, mimetype: 'audio/wav', seconds: 4, waveform: Array.from({ length: 64 }, (_, i) => Math.round(50 + 45 * Math.sin(i / 3) * Math.sin(i / 11))) }, data: voice });
-add(GROUP, false, 'Le chat du voisin', 20 * 60, BOB, 'Bob', { kind: 'video', media: { ...none, mimetype: 'video/webm', width: 480, height: 320, seconds: 3, thumbnail: landscape(48, 32).toString('base64') }, data: video() });
+add(GROUP, false, '', 30 * 60, BOB, 'Bob', {
+  kind: 'audio',
+  media: {
+    ...none,
+    mimetype: 'audio/wav',
+    seconds: 4,
+    waveform: Array.from({ length: 64 }, (_, i) => Math.round(50 + 45 * Math.sin(i / 3) * Math.sin(i / 11))),
+  },
+  data: voice,
+});
+add(GROUP, false, 'Le chat du voisin', 20 * 60, BOB, 'Bob', {
+  kind: 'video',
+  media: { ...none, mimetype: 'video/webm', width: 480, height: 320, seconds: 3, thumbnail: landscape(48, 32).toString('base64') },
+  data: video(),
+});
 const SHOP = '33600000004@s.whatsapp.net';
 const NEWS = '120363000000000002@g.us';
 store.upsertContact(SHOP, { name: 'Boulangerie' });
@@ -261,7 +378,15 @@ add(NEWS, false, 'Merci pour l’info', 4 * H, ALICE, 'Alice');
 store.upsertChat({ id: NEWS, unread: 2 });
 store.upsertChat({ id: ALICE, pinned: Date.now() });
 // listes, comme celles de WhatsApp : filtres prédéfinis et une liste personnalisée
-for (const [i, [name, type]] of ([['Non lues', 1], ['Favoris', 3], ['Groupes', 2], ['Voisinage', 5]] as const).entries()) store.upsertLabel({ id: String(i + 1), name, listType: type, orderIndex: i });
+for (const [i, [name, type]] of (
+  [
+    ['Non lues', 1],
+    ['Favoris', 3],
+    ['Groupes', 2],
+    ['Voisinage', 5],
+  ] as const
+).entries())
+  store.upsertLabel({ id: String(i + 1), name, listType: type, orderIndex: i });
 store.setChatLabel(NEWS, '4', true);
 store.setChatLabel(BOB, '4', true);
 store.setFavorites([GROUP]);
@@ -271,8 +396,27 @@ const STATUS = 'status@broadcast';
 add(STATUS, false, 'Vue du chalet ce matin', 3 * H, ALICE, 'Alice', { kind: 'image', media: { ...photo, width: 960, height: 600 }, data: landscape(960, 600) });
 add(STATUS, false, '', 2 * H, ALICE, 'Alice', { kind: 'image', media: { ...photo, width: 400, height: 700, thumbnail: null }, data: landscape(400, 700) });
 seq += 1;
-store.upsertMessage({ id: `fake${seq}`, chatId: STATUS, fromMe: false, sender: BOB, senderName: 'Bob', timestamp: now - H, kind: 'text', text: 'Allez l’équipe ! ⚽', media: null, quoted: null, status: null }, JSON.stringify({ message: { extendedTextMessage: { text: 'Allez l’équipe ! ⚽', backgroundArgb: 0xff_1c_71_d8 - 0x1_00_00_00_00 } } }));
-add(STATUS, true, 'En vacances 🏔️', 4 * H, null, null, { kind: 'image', media: { ...photo, width: 480, height: 300, thumbnail: null }, data: landscape(480, 300) });
+store.upsertMessage(
+  {
+    id: `fake${seq}`,
+    chatId: STATUS,
+    fromMe: false,
+    sender: BOB,
+    senderName: 'Bob',
+    timestamp: now - H,
+    kind: 'text',
+    text: 'Allez l’équipe ! ⚽',
+    media: null,
+    quoted: null,
+    status: null,
+  },
+  JSON.stringify({ message: { extendedTextMessage: { text: 'Allez l’équipe ! ⚽', backgroundArgb: 0xff_1c_71_d8 - 0x1_00_00_00_00 } } }),
+);
+add(STATUS, true, 'En vacances 🏔️', 4 * H, null, null, {
+  kind: 'image',
+  media: { ...photo, width: 480, height: 300, thumbnail: null },
+  data: landscape(480, 300),
+});
 
 /** longue discussion : de quoi remonter dans l'historique local (pagination) */
 const LONG = '33600000005@s.whatsapp.net';
@@ -289,13 +433,18 @@ const fakePresence = (chatId: string, typing: boolean): Presence => ({
 
 /** Coches d'un message envoyé : envoyé, reçu, puis lu (comme un vrai correspondant). */
 const progress = (chatId: string, id: string): void => {
-  for (const [delay, status] of [[1000, 'sent'], [3000, 'delivered'], [5000, 'read']] as const) {
+  for (const [delay, status] of [
+    [1000, 'sent'],
+    [3000, 'delivered'],
+    [5000, 'read'],
+  ] as const) {
     setTimeout(() => {
       store.setStatus(chatId, id, status);
       // destinataires : la personne, ou deux membres du groupe (Bob lit, Alice seulement distribué)
       const t = Math.floor(Date.now() / 1000);
       const users = chatId === GROUP ? [BOB, ALICE] : [chatId];
-      for (const user of users) store.setReceipt({ chatId, messageId: id, user, delivered: status === 'sent' ? null : t, read: status === 'read' && user !== ALICE ? t : null });
+      for (const user of users)
+        store.setReceipt({ chatId, messageId: id, user, delivered: status === 'sent' ? null : t, read: status === 'read' && user !== ALICE ? t : null });
       const m = store.message(chatId, id);
       if (m !== null) emit({ type: 'message.update', message: m });
     }, delay);
@@ -304,7 +453,12 @@ const progress = (chatId: string, id: string): void => {
 
 let server: Server | null = null;
 const emit = (e: Event): void => server?.emit(DEFAULT_ACCOUNT, e);
-let status: Status = { state: ConnectionState.parse(values.state), qr: values.state === 'qr' ? 'https://wa.me/settings/linked_devices#fake-qr-code' : null, me: values.state === 'open' ? { id: '33600000000@s.whatsapp.net', name: 'Moi' } : null, error: null };
+let status: Status = {
+  state: ConnectionState.parse(values.state),
+  qr: values.state === 'qr' ? 'https://wa.me/settings/linked_devices#fake-qr-code' : null,
+  me: values.state === 'open' ? { id: '33600000000@s.whatsapp.net', name: 'Moi' } : null,
+  error: null,
+};
 
 /** Appels simulés qui sonnent. */
 const ringing = new Map<string, { chatId: string; video: boolean }>();
@@ -314,7 +468,22 @@ const endCall = (id: string, outcome: CallOutcome): void => {
   if (c === undefined) return;
   ringing.delete(id);
   emit({ type: 'call', call: { id, chatId: c.chatId, video: c.video, group: false, state: 'ended' } });
-  store.upsertMessage({ id, chatId: c.chatId, fromMe: false, sender: null, senderName: null, timestamp: Math.floor(Date.now() / 1000), kind: 'call', text: callText(c.video, outcome), media: null, quoted: null, status: null }, '{}');
+  store.upsertMessage(
+    {
+      id,
+      chatId: c.chatId,
+      fromMe: false,
+      sender: null,
+      senderName: null,
+      timestamp: Math.floor(Date.now() / 1000),
+      kind: 'call',
+      text: callText(c.video, outcome),
+      media: null,
+      quoted: null,
+      status: null,
+    },
+    '{}',
+  );
   if (outcome === 'missed') store.incrementUnread(c.chatId);
   const m = store.message(c.chatId, id);
   if (m !== null) emit({ type: 'message', message: m });
@@ -333,7 +502,16 @@ const backend: Backend = {
     const chatId = store.removeScheduled(id);
     if (chatId !== null) emit({ type: 'scheduled', chatId });
   },
-  diagnostics: (id) => ({ id, status, webVersion: [2, 3000, 1], connectedAt: now - 2 * H, disconnectedAt: null, disconnects: 0, ...store.sizes(), mediaSize: 0 }),
+  diagnostics: (id) => ({
+    id,
+    status,
+    webVersion: [2, 3000, 1],
+    connectedAt: now - 2 * H,
+    disconnectedAt: null,
+    disconnects: 0,
+    ...store.sizes(),
+    mediaSize: 0,
+  }),
   seeStatus: (id) => {
     if (store.setStatusSeen(id)) emit({ type: 'statuses' });
     return Promise.resolve();
@@ -429,19 +607,56 @@ const backend: Backend = {
   setOnline: () => Promise.resolve(),
   info: (chatId) => {
     const name = store.chat(chatId)?.name ?? store.displayName(chatId);
-    const base = { id: chatId, name, group: false, phone: null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] };
+    const base = {
+      id: chatId,
+      name,
+      group: false,
+      phone: null,
+      publicName: null,
+      about: null,
+      aboutAt: null,
+      description: null,
+      created: null,
+      participants: [],
+      commonGroups: [],
+    };
     if (chatId === GROUP) {
       const p = (id: string, admin: 'admin' | 'superadmin' | null, me = false) => ({ id, name: me ? 'Vous' : store.displayName(id), admin, me });
-      return Promise.resolve({ ...base, group: true, description: 'Organisation des repas du dimanche 🍽️', created: now - 400 * 24 * H, participants: [p(ME, null, true), p(ALICE, 'superadmin'), p(BOB, null)] });
+      return Promise.resolve({
+        ...base,
+        group: true,
+        description: 'Organisation des repas du dimanche 🍽️',
+        created: now - 400 * 24 * H,
+        participants: [p(ME, null, true), p(ALICE, 'superadmin'), p(BOB, null)],
+      });
     }
-    return Promise.resolve({ ...base, phone: chatId.split('@')[0] ?? null, publicName: chatId === BOB ? 'Bob' : null, about: chatId === ALICE ? 'En vacances jusqu’à lundi ☀️' : null, aboutAt: chatId === ALICE ? now - 3 * 24 * H : null, commonGroups: chatId === ALICE || chatId === BOB ? [{ id: GROUP, name: 'Famille', size: 3 }, { id: NEWS, name: 'Voisins', size: 42 }] : [] });
+    return Promise.resolve({
+      ...base,
+      phone: chatId.split('@')[0] ?? null,
+      publicName: chatId === BOB ? 'Bob' : null,
+      about: chatId === ALICE ? 'En vacances jusqu’à lundi ☀️' : null,
+      aboutAt: chatId === ALICE ? now - 3 * 24 * H : null,
+      commonGroups:
+        chatId === ALICE || chatId === BOB
+          ? [
+              { id: GROUP, name: 'Famille', size: 3 },
+              { id: NEWS, name: 'Voisins', size: 42 },
+            ]
+          : [],
+    });
   },
   // faux annuaire : numéros commençant par 0 sans compte
   lookup: (digits) => Promise.resolve(digits.startsWith('0') ? null : `${digits}@s.whatsapp.net`),
   typing: () => Promise.resolve(),
   messageAction: (chatId, messageId, a) => {
     if (a.action === 'vote') {
-      store.setVote(chatId, messageId, 'me', a.options.map((o) => optionHash(o)), Date.now());
+      store.setVote(
+        chatId,
+        messageId,
+        'me',
+        a.options.map((o) => optionHash(o)),
+        Date.now(),
+      );
       const m = store.message(chatId, messageId);
       if (m !== null) emit({ type: 'message.update', message: m });
       return Promise.resolve();
@@ -451,7 +666,17 @@ const backend: Backend = {
       if (m === null) return Promise.reject(new Error('message introuvable'));
       const data = media.get(messageId)?.data;
       for (const to of a.to) {
-        const copy = add(to, true, m.text, 0, null, null, m.media === null || data === undefined ? null : { kind: m.kind, media: m.media, data }, undefined, m.forwarded + 1);
+        const copy = add(
+          to,
+          true,
+          m.text,
+          0,
+          null,
+          null,
+          m.media === null || data === undefined ? null : { kind: m.kind, media: m.media, data },
+          undefined,
+          m.forwarded + 1,
+        );
         progress(to, copy.id);
         emit({ type: 'message', message: copy });
         emit({ type: 'chats', chats: [store.chat(to)].filter((c) => c !== null) });
@@ -459,7 +684,13 @@ const backend: Backend = {
       return Promise.resolve();
     }
     if (a.action === 'pin') {
-      store.setPin(chatId, messageId, a.value, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000) + (a.duration === 86_400 || a.duration === 2_592_000 ? a.duration : 604_800));
+      store.setPin(
+        chatId,
+        messageId,
+        a.value,
+        Math.floor(Date.now() / 1000),
+        Math.floor(Date.now() / 1000) + (a.duration === 86_400 || a.duration === 2_592_000 ? a.duration : 604_800),
+      );
       emit({ type: 'pins', chatId });
       return Promise.resolve();
     }
@@ -484,11 +715,29 @@ const backend: Backend = {
   },
   sendMedia: (chatId, f) => {
     const kind = uploadKind(f.mimetype, f.asDocument);
-    const m = add(chatId, true, f.caption, 0, null, null, {
-      kind,
-      media: { mimetype: f.mimetype, width: null, height: null, thumbnail: null, fileName: kind === 'document' ? f.fileName : null, size: f.data.length, seconds: f.voice?.seconds ?? null, ...(f.voice === undefined ? {} : { waveform: [...f.voice.waveform] }) },
-      data: f.data,
-    }, f.replyTo);
+    const m = add(
+      chatId,
+      true,
+      f.caption,
+      0,
+      null,
+      null,
+      {
+        kind,
+        media: {
+          mimetype: f.mimetype,
+          width: null,
+          height: null,
+          thumbnail: null,
+          fileName: kind === 'document' ? f.fileName : null,
+          size: f.data.length,
+          seconds: f.voice?.seconds ?? null,
+          ...(f.voice === undefined ? {} : { waveform: [...f.voice.waveform] }),
+        },
+        data: f.data,
+      },
+      f.replyTo,
+    );
     progress(chatId, m.id);
     emit({ type: 'message', message: m });
     emit({ type: 'chats', chats: [store.chat(chatId)].filter((c) => c !== null) });
@@ -521,7 +770,23 @@ function extraAccount(id: string): Account & { pair: () => void; incoming: (chat
   const push = (chatId: string, fromMe: boolean, text: string): Message => {
     n += 1;
     const mid = `${id}-${n}`;
-    db.upsertMessage({ id: mid, chatId, fromMe, sender: null, senderName: null, timestamp: Math.floor(Date.now() / 1000), kind: 'text', text, media: null, quoted: null, status: fromMe ? 'sent' : null, forwarded: 0 }, '{}');
+    db.upsertMessage(
+      {
+        id: mid,
+        chatId,
+        fromMe,
+        sender: null,
+        senderName: null,
+        timestamp: Math.floor(Date.now() / 1000),
+        kind: 'text',
+        text,
+        media: null,
+        quoted: null,
+        status: fromMe ? 'sent' : null,
+        forwarded: 0,
+      },
+      '{}',
+    );
     const m = db.message(chatId, mid);
     if (m === null) throw new Error('message introuvable');
     send({ type: 'message', message: m });
@@ -558,7 +823,20 @@ function extraAccount(id: string): Account & { pair: () => void; incoming: (chat
     subscribe: () => Promise.resolve({ online: false, lastSeen: null, typing: [] }),
     setOnline: resolved,
     lookup: (digits) => Promise.resolve(`${digits}@s.whatsapp.net`),
-    info: (chatId) => Promise.resolve({ id: chatId, name: db.displayName(chatId), group: false, phone: chatId.split('@')[0] ?? null, publicName: null, about: null, aboutAt: null, description: null, created: null, participants: [], commonGroups: [] }),
+    info: (chatId) =>
+      Promise.resolve({
+        id: chatId,
+        name: db.displayName(chatId),
+        group: false,
+        phone: chatId.split('@')[0] ?? null,
+        publicName: null,
+        about: null,
+        aboutAt: null,
+        description: null,
+        created: null,
+        participants: [],
+        commonGroups: [],
+      }),
     typing: resolved,
     rejectCall: resolved,
     seeStatus: resolved,

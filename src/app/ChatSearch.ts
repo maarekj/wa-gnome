@@ -24,7 +24,18 @@ function resultRow(hit: SearchHit): Gtk.Widget {
   top.append(new Gtk.Label({ label: who, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['caption-heading'] }));
   top.append(new Gtk.Label({ label: fmtDateTime(hit.timestamp), cssClasses: ['caption', 'dim-label'] }));
   box.append(top);
-  box.append(new Gtk.Label({ useMarkup: true, label: snippetMarkup(hit.snippet), xalign: 0, wrap: true, wrapMode: Pango.WrapMode.WORD_CHAR, lines: 3, ellipsize: Pango.EllipsizeMode.END, cssClasses: ['dim-label'] }));
+  box.append(
+    new Gtk.Label({
+      useMarkup: true,
+      label: snippetMarkup(hit.snippet),
+      xalign: 0,
+      wrap: true,
+      wrapMode: Pango.WrapMode.WORD_CHAR,
+      lines: 3,
+      ellipsize: Pango.EllipsizeMode.END,
+      cssClasses: ['dim-label'],
+    }),
+  );
   row.set_child(box);
   return row;
 }
@@ -78,7 +89,12 @@ export function ChatSearch(store: Store, open: Accessor<boolean>, close: () => v
           const found = await store.client.search(q, LIMIT, chatId);
           if (gen !== generation) return;
           setHits(found);
-          status.label = found.length === 0 ? 'Aucun message trouvé' : found.length === 1 ? '1 message' : `${found.length >= LIMIT ? 'Plus de ' : ''}${found.length} messages`;
+          status.label =
+            found.length === 0
+              ? 'Aucun message trouvé'
+              : found.length === 1
+                ? '1 message'
+                : `${found.length >= LIMIT ? 'Plus de ' : ''}${found.length} messages`;
         } catch (error) {
           if (gen === generation) status.label = `Recherche impossible : ${errorMessage(error)}`;
         }

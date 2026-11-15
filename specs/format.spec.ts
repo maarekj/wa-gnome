@@ -98,7 +98,9 @@ describe('mentions', () => {
     expect(mentionQuery('salut @al')).toEqual({ query: 'al', at: 6 });
     expect(mentionQuery('@')).toEqual({ query: '', at: 0 });
     expect(mentionQuery('mail@exemple')).toBeNull();
-    expect(mentionMarkup('@336 &amp; @99', [{ token: '336', name: '~ Bob <b>', me: false }])).toBe('<span weight="bold" foreground="#1c71d8">@Bob &lt;b&gt;</span> &amp; @99');
+    expect(mentionMarkup('@336 &amp; @99', [{ token: '336', name: '~ Bob <b>', me: false }])).toBe(
+      '<span weight="bold" foreground="#1c71d8">@Bob &lt;b&gt;</span> &amp; @99',
+    );
     // ni dans un lien, ni un numéro plus long
     const link = waMarkup('https://x.fr/@336 @3361 <b>');
     expect(mentionMarkup(link, [{ token: '336', name: 'Bob', me: false }])).toBe(link);

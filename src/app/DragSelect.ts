@@ -65,7 +65,12 @@ function positionIn(widget: Gtk.Widget, event: Gdk.Event): { x: number; y: numbe
  * `selection` lit la sélection, `select` la remplace. Événements bruts en phase de capture : un
  * libellé sélectionnable qui prend le geste (sélection de texte) n'empêche pas de les voir.
  */
-export function attachDragSelect(box: Gtk.Widget, scroller: () => Gtk.ScrolledWindow | null, selection: () => ReadonlySet<string>, select: (ids: Set<string>) => void): void {
+export function attachDragSelect(
+  box: Gtk.Widget,
+  scroller: () => Gtk.ScrolledWindow | null,
+  selection: () => ReadonlySet<string>,
+  select: (ids: Set<string>) => void,
+): void {
   const legacy = new Gtk.EventControllerLegacy({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
   let pressed = false;
   let startY = 0;
@@ -109,7 +114,14 @@ export function attachDragSelect(box: Gtk.Widget, scroller: () => Gtk.ScrolledWi
         return GLib.SOURCE_CONTINUE;
       });
     }
-    select(rangeSelection(list.map((r) => r.id), base, startIndex, i));
+    select(
+      rangeSelection(
+        list.map((r) => r.id),
+        base,
+        startIndex,
+        i,
+      ),
+    );
   };
   const end = (): void => {
     stopTimer();

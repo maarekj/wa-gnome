@@ -21,7 +21,10 @@ const dbusDir = path.join(home, '.local', 'share', 'dbus-1', 'services');
 const iconsDir = path.join(home, '.local', 'share', 'icons', 'hicolor');
 
 const which = (bin: string): string => {
-  const found = (process.env['PATH'] ?? '').split(':').map((d) => path.join(d, bin)).find((p) => fs.existsSync(p));
+  const found = (process.env['PATH'] ?? '')
+    .split(':')
+    .map((d) => path.join(d, bin))
+    .find((p) => fs.existsSync(p));
   if (found === undefined) throw new Error(`${bin} introuvable dans le PATH (lance ce script depuis le shell devenv)`);
   return fs.realpathSync(found);
 };

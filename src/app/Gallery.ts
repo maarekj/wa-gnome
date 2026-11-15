@@ -80,8 +80,26 @@ function tile(ctx: GalleryContext, m: MediaMessage, open: () => void): Gtk.Widge
   frame.setPaintable(thumbnailTexture(m.media));
   const overlay = new Gtk.Overlay({ child: frame, tooltipText: m.kind === 'video' ? 'Lire la vidéo' : 'Ouvrir la photo', name: `g:${m.id}` });
   if (m.kind === 'video') {
-    overlay.add_overlay(new Gtk.Image({ iconName: 'media-playback-start-symbolic', pixelSize: 20, halign: Gtk.Align.CENTER, valign: Gtk.Align.CENTER, cssClasses: ['video-play'] }));
-    if (m.media.seconds !== null) overlay.add_overlay(new Gtk.Label({ label: fmtDuration(m.media.seconds), halign: Gtk.Align.START, valign: Gtk.Align.END, marginStart: 6, marginBottom: 4, cssClasses: ['video-duration', 'caption'] }));
+    overlay.add_overlay(
+      new Gtk.Image({
+        iconName: 'media-playback-start-symbolic',
+        pixelSize: 20,
+        halign: Gtk.Align.CENTER,
+        valign: Gtk.Align.CENTER,
+        cssClasses: ['video-play'],
+      }),
+    );
+    if (m.media.seconds !== null)
+      overlay.add_overlay(
+        new Gtk.Label({
+          label: fmtDuration(m.media.seconds),
+          halign: Gtk.Align.START,
+          valign: Gtk.Align.END,
+          marginStart: 6,
+          marginBottom: 4,
+          cssClasses: ['video-duration', 'caption'],
+        }),
+      );
   } else {
     void (async (): Promise<void> => {
       try {
@@ -107,7 +125,12 @@ function fileRow(ctx: GalleryContext, m: MediaMessage): Gtk.Widget {
   view.hexpand = true;
   box.append(view);
   box.append(new Gtk.Label({ label: fmtShortDate(m.timestamp), cssClasses: ['caption', 'dim-label'], valign: Gtk.Align.CENTER }));
-  const go = new Gtk.Button({ iconName: 'mail-reply-sender-symbolic', tooltipText: 'Aller au message', valign: Gtk.Align.CENTER, cssClasses: ['flat', 'circular'] });
+  const go = new Gtk.Button({
+    iconName: 'mail-reply-sender-symbolic',
+    tooltipText: 'Aller au message',
+    valign: Gtk.Align.CENTER,
+    cssClasses: ['flat', 'circular'],
+  });
   go.connect('clicked', () => ctx.goTo(m));
   box.append(go);
   row.set_child(box);
@@ -136,7 +159,17 @@ function tabPage(ctx: GalleryContext, chatId: string, tab: GalleryTab, empty: st
   const open = (m: MediaMessage, anchor: Gtk.Widget): void => {
     if (m.kind === 'image') {
       const all = photos();
-      openViewer(anchor, ctx.chatName(), all, Math.max(0, all.findIndex((p) => p.id === m.id)), ctx.loader, ctx.toast);
+      openViewer(
+        anchor,
+        ctx.chatName(),
+        all,
+        Math.max(
+          0,
+          all.findIndex((p) => p.id === m.id),
+        ),
+        ctx.loader,
+        ctx.toast,
+      );
       return;
     }
     void (async (): Promise<void> => {
@@ -159,7 +192,14 @@ function tabPage(ctx: GalleryContext, chatId: string, tab: GalleryTab, empty: st
     for (const group of byMonth(page)) {
       if (month?.label !== group.label) {
         content.append(new Gtk.Label({ label: group.label, xalign: 0, marginTop: month === null ? 0 : 12, cssClasses: ['heading'] }));
-        const grid = new Gtk.FlowBox({ selectionMode: Gtk.SelectionMode.NONE, homogeneous: true, columnSpacing: 4, rowSpacing: 4, minChildrenPerLine: 3, maxChildrenPerLine: 12 });
+        const grid = new Gtk.FlowBox({
+          selectionMode: Gtk.SelectionMode.NONE,
+          homogeneous: true,
+          columnSpacing: 4,
+          rowSpacing: 4,
+          minChildrenPerLine: 3,
+          maxChildrenPerLine: 12,
+        });
         content.append(grid);
         month = { label: group.label, grid };
       }
@@ -176,7 +216,9 @@ function tabPage(ctx: GalleryContext, chatId: string, tab: GalleryTab, empty: st
     void (async (): Promise<void> => {
       try {
         const last = loaded.at(-1);
-        const page = (await ctx.store.client.gallery(chatId, tab, PAGE, last === undefined ? undefined : { timestamp: last.timestamp, id: last.id })).filter((m) => hasMedia(m));
+        const page = (await ctx.store.client.gallery(chatId, tab, PAGE, last === undefined ? undefined : { timestamp: last.timestamp, id: last.id })).filter(
+          (m) => hasMedia(m),
+        );
         loaded.push(...page);
         append(page);
         if (page.length < PAGE) end = true;
@@ -231,7 +273,12 @@ export function openGallery(parent: Gtk.Widget, store: Store, loader: MediaLoade
   view.add_top_bar(header);
   const root = parent.get_root();
   const [ww, wh] = root instanceof Gtk.Window ? [root.get_width(), root.get_height()] : [900, 700];
-  dialog = new Adw.Dialog({ title: `Médias — ${chatName}`, child: view, contentWidth: Math.min(900, Math.round(ww * 0.9)), contentHeight: Math.round(wh * 0.9) });
+  dialog = new Adw.Dialog({
+    title: `Médias — ${chatName}`,
+    child: view,
+    contentWidth: Math.min(900, Math.round(ww * 0.9)),
+    contentHeight: Math.round(wh * 0.9),
+  });
   dialog.present(parent);
   loadVisible();
 }

@@ -52,7 +52,12 @@ const badge = new Badge(APP_ID, () => {
 });
 /** `removed` : compte en cours de retrait, encore dans la liste */
 const updateBadge = (removed?: Store): void => {
-  badge.set(accounts.list.peek().filter((s) => s !== removed).reduce((n, s) => n + unreadChats(s.chats.peek()), 0));
+  badge.set(
+    accounts.list
+      .peek()
+      .filter((s) => s !== removed)
+      .reduce((n, s) => n + unreadChats(s.chats.peek()), 0),
+  );
 };
 
 /** Compte retiré : notifications et abonnements libérés. */
@@ -163,8 +168,11 @@ accounts.onRemoved = (store) => {
 accounts.onSwitch = (store) => {
   rememberAccount(store.client.account);
   // présence : le compte quitté n'est plus « en ligne »
-  for (const s of accounts.list.peek()) if (s !== store && s.status.peek().state === 'open') void s.client.setOnline(false).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
-  if (mainWindow?.isActive === true && store.status.peek().state === 'open') void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+  for (const s of accounts.list.peek())
+    if (s !== store && s.status.peek().state === 'open')
+      void s.client.setOnline(false).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+  if (mainWindow?.isActive === true && store.status.peek().state === 'open')
+    void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
 };
 
 /** Fenêtre au premier plan sur le compte d'une discussion. */
@@ -218,7 +226,10 @@ function rejectCall(param: GLib.Variant | null, withMessage: boolean): void {
     api?.toast(`Refus impossible : ${errorMessage(error)}`);
   });
 }
-for (const [name, withMessage] of [['reject-call', false], ['reject-call-message', true]] as const) {
+for (const [name, withMessage] of [
+  ['reject-call', false],
+  ['reject-call-message', true],
+] as const) {
   const action = new Gio.SimpleAction({ name, parameterType: new GLib.VariantType('s') });
   action.connect('activate', (_a: Gio.SimpleAction, param: GLib.Variant | null) => {
     rejectCall(param, withMessage);
@@ -239,7 +250,9 @@ logout.connect('activate', () => {
   dialog.set_response_appearance('logout', Adw.ResponseAppearance.DESTRUCTIVE);
   dialog.connect('response', (_d: Adw.AlertDialog, response: string) => {
     if (response !== 'logout') return;
-    active().client.logout().catch((error: unknown) => api?.toast(`Déconnexion impossible : ${errorMessage(error)}`));
+    active()
+      .client.logout()
+      .catch((error: unknown) => api?.toast(`Déconnexion impossible : ${errorMessage(error)}`));
   });
   dialog.present(mainWindow);
 });
@@ -363,7 +376,8 @@ app.connect('activate', () => {
       onlineTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
         onlineTimer = 0;
         const store = active();
-        if (store.status.peek().state === 'open') void store.client.setOnline(win.isActive).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+        if (store.status.peek().state === 'open')
+          void store.client.setOnline(win.isActive).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
         return GLib.SOURCE_REMOVE;
       });
     });
@@ -374,7 +388,8 @@ app.connect('activate', () => {
       wasOpen.set(store, store.status.peek().state === 'open');
       return store.status.subscribe(() => {
         const open = store.status.peek().state === 'open';
-        if (open && wasOpen.get(store) !== true && win.isActive && active() === store) void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+        if (open && wasOpen.get(store) !== true && win.isActive && active() === store)
+          void store.client.setOnline(true).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
         wasOpen.set(store, open);
       });
     };
@@ -397,7 +412,9 @@ app.connect('activate', () => {
       }
     });
     win.connect('close-request', () => {
-      void active().client.setOnline(false).catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
+      void active()
+        .client.setOnline(false)
+        .catch((error: unknown) => console.error(`présence : ${errorMessage(error)}`));
       api = null;
       mainWindow = null;
       for (const s of accounts.list.peek()) s.open(null);
