@@ -42,6 +42,19 @@ programs.wa-gnome.enable = true;
 
 Paquet seul : `inputs.wa-gnome.packages.${system}.default` (binaires `wa-gnome` et `wa-gnome-daemon`).
 
+## Installation en Flatpak
+
+```sh
+devenv shell
+pnpm flatpak                # construit dist/wa-gnome.flatpak (--install : l'installe aussi)
+flatpak install --user dist/wa-gnome.flatpak
+```
+
+Le démon est embarqué : l'application le lance à l'ouverture et l'arrête en quittant (port 4181,
+données dans `~/.var/app/io.github.maarekj.WaGnome/`). La transcription (whisper.cpp) est incluse ;
+la traduction et le résumé lancent opencode ou claude installés sur la machine
+(`flatpak-spawn --host`).
+
 ## Feuille de route
 
 Voir les [issues](https://github.com/maarekj/wa-gnome/issues).

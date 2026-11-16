@@ -16,6 +16,7 @@ import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { cleanMediaCache } from './media.ts';
 import { type Command, openCommandPalette } from './CommandPalette.ts';
 import { openNewChat } from './NewChat.ts';
+import { startEmbeddedDaemon, stopEmbeddedDaemon } from './Sandbox.ts';
 import { PERF, runBench } from './Perf.ts';
 import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
 import { openShortcuts } from './Shortcuts.ts';
@@ -396,6 +397,8 @@ app.connect('activate', () => {
     mainWindow.present();
     return;
   }
+  // Flatpak : démon embarqué, lancé avec l'application
+  startEmbeddedDaemon();
   accounts.start();
   createRoot((dispose) => {
     const win = MainWindow({
@@ -473,6 +476,7 @@ app.connect('activate', () => {
 app.connect('shutdown', () => {
   badge.stop();
   accounts.stop();
+  stopEmbeddedDaemon();
 });
 
 // application terminée (dernière fenêtre fermée) : le processus aussi, même s'il reste des

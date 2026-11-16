@@ -10,6 +10,7 @@ import * as z from 'zod/mini';
 import type { Message } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { settings, VOICE_LANGUAGES, WHISPER_MODELS, type WhisperModel } from './Preferences.ts';
+import { hostArgv, inFlatpak, USER_BIN_DIRS } from './Sandbox.ts';
 import { downloadWhisper, whisperFile } from './Whisper.ts';
 
 export { VOICE_LANGUAGES };
@@ -120,15 +121,7 @@ export function opencodeText(out: string): string {
 function program(name: string): string {
   const found = GLib.find_program_in_path(name);
   if (found !== null) return found;
-  const home = GLib.get_home_dir();
-  for (const dir of [
-    `${home}/.local/bin`,
-    `${home}/.nix-profile/bin`,
-    `/etc/profiles/per-user/${GLib.get_user_name()}/bin`,
-    '/run/current-system/sw/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-  ]) {
+  for (const dir of USER_BIN_DIRS(GLib.get_home_dir(), GLib.get_user_name())) {
     const file = GLib.build_filenamev([dir, name]);
     if (GLib.file_test(file, GLib.FileTest.IS_EXECUTABLE)) return file;
   }
@@ -148,7 +141,7 @@ function workDir(): string {
 const RUN_TIMEOUT_S = 300;
 
 /** Lance un programme, `input` sur l'entrée standard ; sortie standard, erreur si le code n'est pas 0. */
-async function run(argv: string[], input: string | null, env: Record<string, string> = {}): Promise<string> {
+async function run(argv: string[], input: string | null, env: Record<string, string> = {}, label = GLib.path_get_basename(argv[0] ?? '')): Promise<string> {
   const launcher = new Gio.SubprocessLauncher({ flags: Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE });
   launcher.set_cwd(workDir());
   for (const [k, v] of Object.entries(env)) launcher.setenv(k, v, true);
@@ -167,12 +160,17 @@ async function run(argv: string[], input: string | null, env: Record<string, str
   } finally {
     if (!timedOut) GLib.source_remove(timer);
   }
-  if (timedOut) throw new Error(`${GLib.path_get_basename(argv[0] ?? '')} : pas de réponse après ${RUN_TIMEOUT_S / 60} min`);
+  if (timedOut) throw new Error(`${label} : pas de réponse après ${RUN_TIMEOUT_S / 60} min`);
   if (!proc.get_successful()) {
     const last = (err ?? '').trim().split('\n').at(-1) ?? '';
-    throw new Error(last === '' ? `${GLib.path_get_basename(argv[0] ?? '')} : échec` : last);
+    throw new Error(last === '' ? `${label} : échec` : last);
   }
   return out ?? '';
+}
+
+/** Outil de l'utilisateur (opencode, claude) : lancé sur la machine hôte depuis un Flatpak. */
+function userTool(name: string, args: string[], input: string, env: Record<string, string> = {}): Promise<string> {
+  return inFlatpak() ? run(hostArgv(name, args, workDir(), env), input, {}, name) : run([program(name), ...args], input, env);
 }
 
 /** Agent opencode de l'app : aucun outil, toute permission refusée (texte seulement). */
@@ -196,13 +194,13 @@ async function ask(prompt: string): Promise<string> {
     // consigne sur l'entrée standard (pas en argument : visible dans `ps`, taille limitée)
     // agent sans aucun outil : un message reçu ne peut pas faire lancer de commande (injection)
     return opencodeText(
-      await run([program('opencode'), 'run', '--agent', OPENCODE_AGENT, '--format', 'json', '--dir', workDir(), ...model], prompt, {
+      await userTool('opencode', ['run', '--agent', OPENCODE_AGENT, '--format', 'json', '--dir', workDir(), ...model], prompt, {
         OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
       }),
     );
   }
   // Claude Code : sans outils ni session gardée, consigne sur l'entrée standard
-  return run([program('claude'), '-p', '--tools', '', '--no-session-persistence', '--output-format', 'text'], prompt);
+  return userTool('claude', ['-p', '--tools', '', '--no-session-persistence', '--output-format', 'text'], prompt);
 }
 
 /** Une ligne de discussion à résumer. */

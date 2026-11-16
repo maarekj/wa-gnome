@@ -11,3 +11,4 @@ types/
 .idea/
 __pycache__/
 result
+.flatpak-builder/

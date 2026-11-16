@@ -77,6 +77,7 @@ in
     (pkgs.python3.withPackages (ps: [ ps.dogtail ps.pygobject3 ps.pytest ]))
     pkgs.at-spi2-core
     pkgs.gtk3 # requis par dogtail (utilitaires internes), pas par l'app
+    pkgs.flatpak-builder # paquet Flatpak (scripts/flatpak.ts)
   ];
 
   # bus d'accessibilité des tests e2e (scripts/e2e.ts) : programmes hors du PATH

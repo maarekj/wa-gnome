@@ -49,7 +49,7 @@ const WATCHDOG_MS = 30_000;
 const RETRY_MS = 2000;
 
 /** URL du démon (WA_GNOME_URL pour les tests). */
-export const daemonUrl = (): string => GLib.getenv('WA_GNOME_URL') ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+export const daemonUrl = (): string => GLib.getenv('WA_GNOME_URL') ?? `http://127.0.0.1:${GLib.getenv('WA_GNOME_PORT') ?? DEFAULT_PORT}`;
 
 /** Dossier de données du démon (même règle que src/daemon/main.ts). */
 export const dataDir = (): string => GLib.getenv('WA_GNOME_DATA_DIR') ?? GLib.build_filenamev([GLib.get_user_data_dir(), 'wa-gnome']);

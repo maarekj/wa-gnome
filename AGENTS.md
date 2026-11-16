@@ -66,6 +66,10 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
 - `nix build` : paquet Nix (`flake.nix`, `nix/package.nix`, module home-manager `nix/home-manager.nix`).
   Après tout changement de `pnpm-lock.yaml`, mettre à jour le `hash` de `fetchPnpmDeps` (le
   `got:` de l'erreur de `nix build`). Vérifier : `SCREENSHOT_APP=$PWD/result/bin/wa-gnome pnpm screenshot`.
+- `pnpm flatpak [--install]` : paquet Flatpak (`flatpak/io.github.maarekj.WaGnome.yml`, hors Flathub) et
+  bundle `dist/wa-gnome.flatpak`. Démon embarqué lancé par l'app (`WA_GNOME_DAEMON`, `src/app/Sandbox.ts`),
+  outils de l'utilisateur via `flatpak-spawn --host`. Essai sans installer :
+  `flatpak build --share=network --socket=x11 --env=… .flatpak-builder/build wa-gnome` sous Xvfb.
 - `node scripts/install.ts` : installe le démon (systemd), le lanceur `wa-gnome`, le .desktop, le
   service D-Bus et les icônes.
 

@@ -1,0 +1,90 @@
+# Paquet Flatpak de wa-gnome (hors Flathub) : application GJS, démon Node embarqué (lancé par
+# l'application, arrêté avec elle) et whisper.cpp (transcription des vocaux).
+# Construction : node scripts/flatpak.ts (bundle dist/wa-gnome.flatpak).
+id: io.github.maarekj.WaGnome
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node24
+command: wa-gnome
+finish-args:
+  - --share=network # WhatsApp ; API du démon sur 127.0.0.1
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=pulseaudio # vocaux (lecture, enregistrement)
+  # compteur de non-lus : icône de la barre du haut et docks
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.FileManager1 # « Ouvrir le dossier » des préférences
+  # traduction et résumé : opencode ou claude de l'utilisateur, lancés sur la machine
+  - --talk-name=org.freedesktop.Flatpak
+  # port distinct d'une installation hors Flatpak (autre dossier de données, autre jeton)
+  - --env=WA_GNOME_PORT=4181
+  - --env=WA_GNOME_DAEMON=/app/bin/wa-gnome-daemon
+  - --env=WA_GNOME_WHISPER=/app/bin/whisper-cli
+modules:
+  - name: whisper-cpp
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DWHISPER_BUILD_TESTS=OFF
+      - -DWHISPER_BUILD_EXAMPLES=ON
+      - -DWHISPER_SDL2=OFF
+      - -DGGML_NATIVE=OFF
+    sources:
+      - type: git
+        url: https://github.com/ggml-org/whisper.cpp.git
+        tag: v1.9.5
+        commit: d1be6fde11ac6e0407606b4e42fe72d34add8037
+    cleanup:
+      - /include
+      - /lib/cmake
+      - /lib/pkgconfig
+      - /bin/whisper-[!c]*
+      - /bin/whisper-command
+      - /bin/quantize
+      - /bin/vad-speech-segments
+
+  - name: wa-gnome
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/node24/bin
+      # dépendances npm téléchargées à la construction (paquet hors Flathub)
+      build-args:
+        - --share=network
+      env:
+        npm_config_cache: /run/build/wa-gnome/.npm
+    build-commands:
+      - /usr/lib/sdk/node24/install.sh # node dans /app/node
+      - npx --yes pnpm@12.9.0 install --frozen-lockfile
+      - node scripts/build.ts
+      - rm -rf node_modules && npx --yes pnpm@12.9.0 install --frozen-lockfile --prod --ignore-scripts
+      - mkdir -p /app/share/wa-gnome/src
+      - cp -r package.json node_modules dist /app/share/wa-gnome/
+      - cp -r src/daemon src/shared /app/share/wa-gnome/src/
+      - rm -f /app/share/wa-gnome/src/daemon/*.test.ts
+      - install -Dm755 flatpak/wa-gnome.sh /app/bin/wa-gnome
+      - install -Dm755 flatpak/wa-gnome-daemon.sh /app/bin/wa-gnome-daemon
+      - install -Dm644 flatpak/io.github.maarekj.WaGnome.desktop -t /app/share/applications
+      - install -Dm644 flatpak/io.github.maarekj.WaGnome.service -t /app/share/dbus-1/services
+      - install -Dm644 data/icons/app.svg /app/share/icons/hicolor/scalable/apps/io.github.maarekj.WaGnome.svg
+      - install -Dm644 data/icons/app-symbolic.svg /app/share/icons/hicolor/symbolic/apps/io.github.maarekj.WaGnome-symbolic.svg
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - node_modules
+          - dist
+          - .devenv
+          - .flatpak-builder
+          - result
+          - .git
+      - type: inline
+        dest: flatpak
+        dest-filename: io.github.maarekj.WaGnome.service
+        contents: |
+          [D-BUS Service]
+          Name=io.github.maarekj.WaGnome
+          Exec=/app/bin/wa-gnome --gapplication-service

@@ -5,6 +5,8 @@
 //   WA_GNOME_HOST      adresse d'écoute (défaut : 127.0.0.1)
 //   WA_GNOME_PORT      port (défaut : 4180)
 //   WA_GNOME_LOG       niveau de journal de Baileys (défaut : warn)
+//   WA_GNOME_EXIT_WITH_PARENT  1 : arrêt quand le processus parent disparaît (démon lancé par
+//                      l'application, paquet Flatpak)
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -156,3 +158,10 @@ const shutdown = (): void => {
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+// démon lancé par l'application : arrêté si elle disparaît sans l'arrêter (plantage)
+if (process.env['WA_GNOME_EXIT_WITH_PARENT'] === '1') {
+  const parent = process.ppid;
+  setInterval(() => {
+    if (process.ppid !== parent) shutdown();
+  }, 2000).unref();
+}

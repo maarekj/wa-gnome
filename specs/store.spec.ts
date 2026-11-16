@@ -9,6 +9,7 @@ import { bigEmoji, itemsOf, myReaction, presenceLine, senderColor } from '../src
 import { fold, inList, neighbourChat, previewMarkup, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { ranked, score } from '../src/app/CommandPalette.ts';
+import { hostArgv } from '../src/app/Sandbox.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
 import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
 import { splitReceipts, stepText } from '../src/app/MessageInfo.ts';
@@ -186,6 +187,14 @@ describe('sortChats', () => {
 
   it('épinglées en tête, la dernière épinglée d’abord', () => {
     expect(sortChats([chat('x', 9), chat('p1', 1, 'p1', { pinned: 100 }), chat('p2', 2, 'p2', { pinned: 200 })]).map((c) => c.id)).toEqual(['p2', 'p1', 'x']);
+  });
+});
+
+describe('Flatpak : outils lancés sur la machine', () => {
+  it('flatpak-spawn --host, variables transmises, arguments sans interprétation', () => {
+    const argv = hostArgv('opencode', ['run', '$(rm -rf ~)'], '/run/user/1000/w', { K: 'v w' });
+    expect(argv.slice(0, 3)).toEqual(['flatpak-spawn', '--host', '--env=K=v w']);
+    expect(argv.slice(-5)).toEqual(['sh', '/run/user/1000/w', 'opencode', 'run', '$(rm -rf ~)']);
   });
 });
 

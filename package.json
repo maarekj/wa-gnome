@@ -19,7 +19,8 @@
     "screenshot": "node scripts/screenshot.ts",
     "fake-daemon": "node scripts/fake-daemon.ts",
     "e2e": "node scripts/e2e.ts",
-    "bench": "node scripts/bench.ts"
+    "bench": "node scripts/bench.ts",
+    "flatpak": "node scripts/flatpak.ts"
   },
   "dependencies": {
     "baileys": "7.0.0-rc14",
