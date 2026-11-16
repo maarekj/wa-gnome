@@ -7,6 +7,7 @@ export const SHORTCUTS: readonly { title: string; items: readonly [string, strin
   {
     title: 'Discussions',
     items: [
+      ['Palette de commandes', '<Control>p'],
       ['Rechercher', '<Control>k'],
       ['Discussion précédente', '<Alt>Up'],
       ['Discussion suivante', '<Alt>Down'],

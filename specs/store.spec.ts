@@ -8,6 +8,7 @@ import { moveOf, spliceOf } from '../src/app/ChatListView.ts';
 import { bigEmoji, itemsOf, myReaction, presenceLine, senderColor } from '../src/app/Bubble.tsx';
 import { fold, inList, neighbourChat, previewMarkup, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
+import { ranked, score } from '../src/app/CommandPalette.ts';
 import { screenOf } from '../src/app/MainWindow.tsx';
 import { reactionCount, reactionPeople } from '../src/app/Reactions.ts';
 import { splitReceipts, stepText } from '../src/app/MessageInfo.ts';
@@ -185,6 +186,20 @@ describe('sortChats', () => {
 
   it('épinglées en tête, la dernière épinglée d’abord', () => {
     expect(sortChats([chat('x', 9), chat('p1', 1, 'p1', { pinned: 100 }), chat('p2', 2, 'p2', { pinned: 200 })]).map((c) => c.id)).toEqual(['p2', 'p1', 'x']);
+  });
+});
+
+describe('palette de commandes', () => {
+  it('début du texte, puis début de mot, puis ailleurs ; accents ignorés', () => {
+    expect(score('pref', 'Préférences')).toBe(3);
+    expect(score('disc', 'Nouvelle discussion')).toBe(2);
+    expect(score('ssion', 'Nouvelle discussion')).toBe(1);
+    expect(score('zz', 'Préférences')).toBe(0);
+  });
+  it('plus pertinents d’abord, limités', () => {
+    const items = ['Discussion archivée', 'Alice', 'Nouvelle discussion', 'Discussions archivées'];
+    expect(ranked(items, 'disc', (x) => x, 2)).toEqual(['Discussion archivée', 'Discussions archivées']);
+    expect(ranked(items, 'xyz', (x) => x, 5)).toEqual([]);
   });
 });
 

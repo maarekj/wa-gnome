@@ -325,6 +325,11 @@ export class Store {
     })();
   }
 
+  /** Focus rendu à la zone de saisie de la discussion affichée. */
+  focusComposer(): void {
+    this.#setFocusRequests(this.focusRequests.peek() + 1);
+  }
+
   /** Ouvre la discussion, zone de saisie active (réponse depuis une notification). */
   reply(id: string): void {
     this.open(id);

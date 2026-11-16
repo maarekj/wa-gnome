@@ -70,6 +70,8 @@ export function attachDragSelect(
   scroller: () => Gtk.ScrolledWindow | null,
   selection: () => ReadonlySet<string>,
   select: (ids: Set<string>) => void,
+  /** focus à reprendre au libellé du message de départ (zone de saisie : Échap y annule la sélection) */
+  unfocus: () => void,
 ): void {
   const legacy = new Gtk.EventControllerLegacy({ propagationPhase: Gtk.PropagationPhase.CAPTURE });
   let pressed = false;
@@ -134,6 +136,11 @@ export function attachDragSelect(
     if (row !== null) {
       GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
         clearTextSelection(row);
+        // libellé du message de départ plus focalisé : sinon une fenêtre qui se ferme (palette,
+        // confirmation) lui rend le focus, GTK sélectionne tout son texte, et le glissement
+        // suivant déplace ce texte au lieu de sélectionner des messages
+        const focus = row.get_root()?.get_focus() ?? null;
+        if (focus !== null && focus.is_ancestor(row)) unfocus();
         return GLib.SOURCE_REMOVE;
       });
     }

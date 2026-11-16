@@ -14,6 +14,7 @@ import { Badge } from './Badge.ts';
 import { openDiagnostics } from './Diagnostics.ts';
 import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { cleanMediaCache } from './media.ts';
+import { type Command, openCommandPalette } from './CommandPalette.ts';
 import { openNewChat } from './NewChat.ts';
 import { PERF, runBench } from './Perf.ts';
 import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
@@ -325,6 +326,44 @@ shortcuts.connect('activate', () => {
 });
 app.add_action(shortcuts);
 app.set_accels_for_action('app.shortcuts', ['<Control>question', '<Control><Shift>question']);
+
+/** Action de l'application, lancée depuis la palette. */
+const run = (name: string) => (): void => app.activate_action(name, null);
+
+/** app.palette : palette de commandes (Ctrl+P) */
+const palette = new Gio.SimpleAction({ name: 'palette' });
+palette.connect('activate', () => {
+  if (mainWindow === null || api === null) return;
+  const store = active();
+  const commands: Command[] = [
+    { title: 'Nouvelle discussion', icon: 'chat-message-new-symbolic', keywords: 'contact numéro', accel: '<Control>n', run: run('new-chat') },
+    { title: 'Préférences', icon: 'preferences-system-symbolic', keywords: 'réglages paramètres options', accel: '<Control>comma', run: run('preferences') },
+    {
+      title: 'Raccourcis clavier',
+      icon: 'preferences-desktop-keyboard-shortcuts-symbolic',
+      keywords: 'clavier aide',
+      accel: '<Control>question',
+      run: run('shortcuts'),
+    },
+    { title: 'Diagnostic', icon: 'dialog-information-symbolic', keywords: 'journal version état', run: run('diagnostics') },
+    { title: 'À propos de WhatsApp pour GNOME', icon: 'help-about-symbolic', keywords: 'version', run: run('about') },
+    { title: 'Déconnecter ce poste…', icon: 'system-log-out-symbolic', keywords: 'déconnexion compte', run: run('logout') },
+    { title: 'Quitter', icon: 'application-exit-symbolic', keywords: 'fermer', accel: '<Control>q', run: run('quit') },
+    // autres comptes : passer de l'un à l'autre
+    ...accounts.list
+      .peek()
+      .filter((s) => s !== store)
+      .map((s): Command => ({
+        title: `Passer au compte ${accountName(s)}`,
+        icon: 'system-users-symbolic',
+        keywords: 'compte changer basculer',
+        run: () => accounts.select(s),
+      })),
+  ];
+  openCommandPalette(mainWindow, store, api.pictures, commands);
+});
+app.add_action(palette);
+app.set_accels_for_action('app.palette', ['<Control>p']);
 
 const quit = new Gio.SimpleAction({ name: 'quit' });
 quit.connect('activate', () => app.quit());

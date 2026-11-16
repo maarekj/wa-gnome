@@ -9,6 +9,7 @@ import { type Chat, type ChatList as WaList, type SearchHit } from '../shared/ap
 import { errorMessage } from '../shared/errors.ts';
 import type { Store } from '../shared/store.ts';
 import { chatMenuActions } from './ChatMenu.ts';
+import { provideCommands } from './CommandPalette.ts';
 import { chatListView, type EntryId, type SideRow } from './ChatListView.ts';
 import { openStatuses, statusEntryLabel } from './Statuses.ts';
 import type { Pictures } from './pictures.ts';
@@ -219,6 +220,15 @@ export function ChatList({
           marginBottom={6}
           onSearchChanged={(self: Gtk.SearchEntry) => setQuery(self.text)}
           $={(self: Gtk.SearchEntry) => {
+            // palette de commandes : autres vues de la liste
+            onCleanup(
+              provideCommands(() => [
+                { title: 'Discussions archivées', icon: 'folder-symbolic', keywords: 'archives', run: () => setView('archived') },
+                { title: 'Chaînes suivies', icon: 'microphone-sensitivity-high-symbolic', keywords: 'actus newsletter', run: () => setView('channels') },
+                { title: 'Statuts des contacts', icon: 'camera-photo-symbolic', keywords: 'stories', run: () => openStatuses(self, store, pictures, toast) },
+                { title: 'Toutes les discussions', icon: 'view-list-symbolic', keywords: 'liste principale retour', run: () => setView('main') },
+              ]),
+            );
             // Échap : recherche vidée et quittée (focus rendu à la liste)
             self.connect('stop-search', () => {
               self.text = '';

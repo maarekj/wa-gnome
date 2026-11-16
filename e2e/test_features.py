@@ -643,3 +643,51 @@ def test_epingler_une_discussion(run_app):
     assert call['args'][1] == {'action': 'pin', 'value': True}
     # deuxième discussion épinglée (Alice l'était déjà) : icône sur sa ligne
     wait_until(lambda: len(app.all('image', 'Épinglée')) >= 2, 5, 'icône épinglée')
+
+
+def test_palette_de_commandes(run_app):
+    fake, app = run_app()
+    app.key('ctrl+p')
+    # sans saisie : discussions récentes, puis toutes les actions
+    assert app.text_visible('Discussions récentes')
+    assert app.text_visible('Raccourcis clavier')
+    # discussion trouvée, ouverte par Entrée
+    app.type('clai')
+    app.text_visible('Discussions')
+    app.key('Return')
+    wait_until(lambda: len(app.all('label', 'Claire (longue discussion)')) >= 2, 10, 'discussion ouverte')
+    # action de la discussion ouverte : épingler
+    app.key('ctrl+p')
+    app.type('epingler')
+    assert app.text_visible('Épingler la discussion')
+    app.key('Return')
+    call = fake.wait_call('chatAction')
+    assert call['args'][1] == {'action': 'pin', 'value': True}
+    # action de l'application (mot-clé) : préférences
+    app.key('ctrl+p')
+    app.type('reglages')
+    app.text_visible('Préférences')
+    app.key('Return')
+    assert app.text_visible('Outil de traduction')
+
+
+def test_palette_sur_les_messages_selectionnes(run_app):
+    _, app = run_app()
+    app.open_chat('Claire (longue discussion)')
+    end = lambda: max(app.all('label', 'Message n° 150'), key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).x)  # noqa: E731
+    # résumé de la sélection depuis la palette (outil simulé)
+    app.drag(app.find('label', 'Message n° 148'), end())
+    assert app.text_visible('3 messages sélectionnés')
+    app.key('ctrl+p')
+    app.type('resum')
+    assert app.text_visible('Résumer les 3 messages sélectionnés (IA)')
+    app.key('Return')
+    assert app.text_visible('Résumé de test (3 messages')
+    # traduction d'une nouvelle sélection depuis la palette
+    app.drag(app.find('label', 'Message n° 148'), end())
+    assert app.text_visible('3 messages sélectionnés')
+    app.key('ctrl+p')
+    app.type('tradu')
+    assert app.text_visible('Traduire les 3 messages sélectionnés')
+    app.key('Return')
+    assert app.text_visible('[français] Message n° 150')

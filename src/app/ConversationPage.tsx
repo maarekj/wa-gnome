@@ -6,7 +6,7 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup } from 'gnim';
-import { ephemeralText, type Message } from '../shared/api.ts';
+import { type ChatAction, ephemeralText, isMuted, type Message } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { type Store } from '../shared/store.ts';
 import { attachDrop } from './Attachments.ts';
@@ -22,11 +22,15 @@ import { openGallery } from './Gallery.ts';
 import { openChatInfo } from './ChatInfoDialog.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { keyedBox } from './KeyedBox.ts';
+import { type Command, provideCommands } from './CommandPalette.ts';
 import { PERF, perfCount, perfMark } from './Perf.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
 import { MediaLoader, type Photo } from './media.ts';
 import { bubble, findBubble, forwardable, type Item, itemsOf, presenceLine, quotePreview } from './Bubble.tsx';
 import { Composer } from './Composer.tsx';
+
+/** « le message sélectionné », « les 3 messages sélectionnés » */
+const countLabel = (n: number): string => (n === 1 ? 'le message sélectionné' : `les ${n} messages sélectionnés`);
 
 /** Éléments affichés à l'ouverture d'une discussion, puis ajoutés par image (voir `items`). */
 const FIRST_ITEMS = 6;
@@ -293,6 +297,97 @@ export function ConversationPage({
   };
   /** messages sélectionnés, dans l'ordre de la discussion */
   const selected = (): Message[] => store.messages.peek().filter((m) => selection.peek().has(m.id));
+  /** Résumé par IA des messages sélectionnés, dans le panneau de droite. */
+  const summarize = (): void => {
+    startSummary(summariesKey.peek(), chat.peek()?.name ?? '', selected(), (m) =>
+      m.media === null ? Promise.reject(new Error('pas de média')) : loader.file(m, m.media),
+    );
+    setSummarizing(true);
+    clearSelection();
+  };
+  // palette de commandes : actions de la discussion ouverte
+  onCleanup(
+    provideCommands(() => {
+      const c = chat.peek();
+      const full = c === null ? undefined : store.chat(c.id);
+      const parent = scroller;
+      if (c === null || parent === null) return [];
+      const act = (action: ChatAction) => (): void => {
+        store.chatAction(c.id, action).catch((error: unknown) => toast(errorMessage(error)));
+      };
+      // messages sélectionnés : traduire, transcrire (vocaux), résumer
+      const chosen = selected();
+      const forSelection: Command[] =
+        chosen.length === 0
+          ? []
+          : [
+              {
+                title: `Traduire ${countLabel(chosen.length)}`,
+                icon: 'preferences-desktop-locale-symbolic',
+                keywords: 'traduction sélection',
+                run: () => {
+                  translateAll(parent, chosen, 'translate');
+                  clearSelection();
+                },
+              },
+              ...(chosen.some((m) => m.kind === 'audio')
+                ? [
+                    {
+                      title: 'Transcrire les vocaux sélectionnés',
+                      icon: 'audio-input-microphone-symbolic',
+                      keywords: 'transcription vocal audio texte sélection',
+                      run: () => {
+                        translateAll(parent, chosen, 'transcribe');
+                        clearSelection();
+                      },
+                    },
+                  ]
+                : []),
+              {
+                title: `Résumer ${countLabel(chosen.length)} (IA)`,
+                icon: 'view-list-bullet-symbolic',
+                keywords: 'résumé ia synthèse sélection',
+                run: summarize,
+              },
+            ];
+      return [
+        ...forSelection,
+        { title: 'Rechercher dans la discussion', icon: 'system-search-symbolic', accel: '<Control>f', run: () => setSearching(true) },
+        {
+          title: 'Médias, liens et documents',
+          icon: 'image-x-generic-symbolic',
+          keywords: 'galerie photos fichiers',
+          run: () => openGallery(parent, store, loader, c.id, c.name, toast),
+        },
+        {
+          title: c.group ? 'Infos du groupe' : 'Infos du contact',
+          icon: 'contact-new-symbolic',
+          keywords: 'fiche membres',
+          run: () =>
+            openChatInfo(parent, store, pictures, c.id, c.name, {
+              toast,
+              search: () => setSearching(true),
+              gallery: () => openGallery(parent, store, loader, c.id, c.name, toast),
+            }),
+        },
+        full?.archived === true
+          ? { title: 'Désarchiver la discussion', icon: 'folder-symbolic', run: act({ action: 'archive', value: false }) }
+          : { title: 'Archiver la discussion', icon: 'folder-symbolic', run: act({ action: 'archive', value: true }) },
+        (full?.pinned ?? 0) > 0
+          ? { title: 'Désépingler la discussion', icon: 'view-pin-symbolic', run: act({ action: 'pin', value: false }) }
+          : { title: 'Épingler la discussion', icon: 'view-pin-symbolic', run: act({ action: 'pin', value: true }) },
+        full !== undefined && isMuted(full)
+          ? { title: 'Réactiver les notifications', icon: 'notifications-symbolic', keywords: 'silencieux', run: act({ action: 'mute', until: null }) }
+          : {
+              title: 'Mode silencieux (8 heures)',
+              icon: 'notifications-disabled-symbolic',
+              keywords: 'muet notifications',
+              run: act({ action: 'mute', until: Date.now() + 8 * 3_600_000 }),
+            },
+        { title: 'Marquer comme non lue', icon: 'mail-unread-symbolic', run: act({ action: 'unread', value: true }) },
+      ];
+    }),
+  );
   return (
     <Adw.NavigationPage title={chat((c) => c?.name ?? 'WhatsApp')} tag="conversation">
       <Adw.ToolbarView>
@@ -635,6 +730,7 @@ export function ConversationPage({
                           () => scroller,
                           () => selection.peek(),
                           setSelection,
+                          () => store.focusComposer(),
                         );
                         // lots suivants : à l'image d'après (la précédente est dessinée)
                         // taille du lot adaptée à la durée de l'image précédente (longs messages : lots petits)
@@ -787,18 +883,7 @@ export function ConversationPage({
                         clearSelection();
                       }}
                     />
-                    <Gtk.Button
-                      iconName="view-list-bullet-symbolic"
-                      tooltipText="Résumer (IA)"
-                      cssClasses={['circular', 'flat']}
-                      onClicked={() => {
-                        startSummary(summariesKey.peek(), chat.peek()?.name ?? '', selected(), (m) =>
-                          m.media === null ? Promise.reject(new Error('pas de média')) : loader.file(m, m.media),
-                        );
-                        setSummarizing(true);
-                        clearSelection();
-                      }}
-                    />
+                    <Gtk.Button iconName="view-list-bullet-symbolic" tooltipText="Résumer (IA)" cssClasses={['circular', 'flat']} onClicked={summarize} />
                     <Gtk.Button
                       iconName="mail-forward-symbolic"
                       tooltipText="Transférer"
