@@ -2,6 +2,8 @@
 // une capture, sans rien afficher à l'écran.
 // Usage : node scripts/screenshot.ts [sortie.png] [--state open|qr|connecting]
 // Variables : SCREENSHOT_DELAY (s, défaut 4), SCREENSHOT_SIZE (défaut 1100x720),
+// SCREENSHOT_APP : commande de l'application à la place de `gjs -m dist/app/main.js` (paquet
+// Nix ou Flatpak à vérifier),
 // SCREENSHOT_XDOTOOL : commandes xdotool jouées avant la capture, séparées par « ; »
 // (ex. « mousemove 200 150 click 1; sleep 1; type bonjour; key Return; sleep 2 » ;
 // « sh: commande » exécute une commande shell, ex. xclip pour remplir le presse-papier, ou
@@ -50,7 +52,7 @@ const script = [
   // son coupé : aucune lecture sur les haut-parleurs de l'utilisateur
   `export WA_GNOME_SILENT=1 PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=wa-gnome-none`,
   `export WA_GNOME_URL=http://127.0.0.1:${port} WA_GNOME_DATA_DIR=${quote(dir)} WA_GNOME_APP_ID=io.github.maarekj.WaGnome.Screenshot`,
-  `timeout ${Number(delay) + (process.env['SCREENSHOT_XDOTOOL'] === undefined ? 3 : 120)} dbus-run-session -- gjs -m ${quote(path.join(root, 'dist', 'app', 'main.js'))} > >(grep -v -e '^dbus-daemon' -e 'DRI3') 2>&1 &`,
+  `timeout ${Number(delay) + (process.env['SCREENSHOT_XDOTOOL'] === undefined ? 3 : 120)} dbus-run-session -- ${process.env['SCREENSHOT_APP'] ?? `gjs -m ${quote(path.join(root, 'dist', 'app', 'main.js'))}`} > >(grep -v -e '^dbus-daemon' -e 'DRI3') 2>&1 &`,
   'app=$!',
   `sleep ${delay}`,
   // fenêtre à la taille de l'écran (pas de gestionnaire de fenêtres sous Xvfb)

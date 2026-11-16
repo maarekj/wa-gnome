@@ -63,6 +63,9 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   de la session avec sa carte graphique (une fenêtre s'ouvre) — à proposer à l'utilisateur, jamais
   lancé par un agent.
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
+- `nix build` : paquet Nix (`flake.nix`, `nix/package.nix`, module home-manager `nix/home-manager.nix`).
+  Après tout changement de `pnpm-lock.yaml`, mettre à jour le `hash` de `fetchPnpmDeps` (le
+  `got:` de l'erreur de `nix build`). Vérifier : `SCREENSHOT_APP=$PWD/result/bin/wa-gnome pnpm screenshot`.
 - `node scripts/install.ts` : installe le démon (systemd), le lanceur `wa-gnome`, le .desktop, le
   service D-Bus et les icônes.
 

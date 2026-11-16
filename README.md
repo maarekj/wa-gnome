@@ -25,6 +25,23 @@ Puis lancer « WhatsApp » depuis GNOME et scanner le QR code.
 
 Journal du démon : `journalctl --user -u wa-gnome-daemon -f`.
 
+## Installation avec Nix (NixOS, home-manager)
+
+Essai sans installer : démon dans un terminal (`nix shell github:maarekj/wa-gnome -c wa-gnome-daemon`),
+puis l'application (`nix run github:maarekj/wa-gnome`).
+
+Avec home-manager (application, et démon en service systemd utilisateur `wa-gnome-daemon`) :
+
+```nix
+# flake.nix
+inputs.wa-gnome.url = "github:maarekj/wa-gnome";
+# module home-manager
+imports = [ inputs.wa-gnome.homeManagerModules.default ];
+programs.wa-gnome.enable = true;
+```
+
+Paquet seul : `inputs.wa-gnome.packages.${system}.default` (binaires `wa-gnome` et `wa-gnome-daemon`).
+
 ## Feuille de route
 
 Voir les [issues](https://github.com/maarekj/wa-gnome/issues).
