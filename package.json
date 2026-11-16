@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "gnim-types": "node scripts/gnim-types.ts",
-    "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/daemon && tsc -p src/shared && tsc -p src/app && tsc -p specs",
+    "typecheck": "node scripts/gnim-types.ts && tsc && tsc -p src/daemon && tsc -p src/cli && tsc -p src/shared && tsc -p src/app && tsc -p specs",
     "lint": "oxlint --type-aware",
     "format": "oxfmt 'src/**/*.{ts,tsx}' 'scripts/**/*.ts' 'specs/**/*.ts' 'tests/**/*.ts'",
     "format-check": "oxfmt --check 'src/**/*.{ts,tsx}' 'scripts/**/*.ts' 'specs/**/*.ts' 'tests/**/*.ts'",
@@ -23,6 +23,8 @@
     "flatpak": "node scripts/flatpak.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.9.0",
+    "@stricli/core": "^1.3.0",
     "baileys": "7.0.0-rc14",
     "gnim": "^1.9.1",
     "pino": "^9.0.0",

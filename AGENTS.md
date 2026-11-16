@@ -15,6 +15,10 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   - `server.ts` : API HTTP + SSE sur 127.0.0.1:4180, jeton `Authorization: Bearer` (fichier `token`).
     Plusieurs comptes : chacun sous `/accounts/:id/…` (mêmes routes) ; le premier (`default`) aussi
     sans préfixe. Données d'un compte ajouté dans `accounts/<id>/` (même structure que la racine).
+- `src/cli/` : CLI `wa` (Node 24, sans compilation) : Stricli (`commands.ts`), Clack (`prompt.ts` :
+  paramètres manquants demandés dans un terminal ; `interactive.ts` : menu de `wa` seul), client fetch
+  (`client.ts`, réponses validées par l'API). Humain et agent : `--json`, `--no-input`, codes 0/1/2/3.
+  Tests : `src/cli/cli.test.ts` (chaque commande en non interactif sur le faux démon).
 - `src/shared/api.ts` : **contrat** démon ↔ app (schémas zod/mini), importé des deux côtés ; sans
   dépendance à Node ni à GJS.
 - `src/shared/` (GJS) : client libsoup 3 (`client.ts`), état réactif (`store.ts`), formats.
@@ -64,8 +68,9 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
   lancé par un agent.
 - `pnpm build` / `pnpm start` : construire / lancer l'application.
 - `nix build` : paquet Nix (`flake.nix`, `nix/package.nix`, module home-manager `nix/home-manager.nix`).
-  Après tout changement de `pnpm-lock.yaml`, mettre à jour le `hash` de `fetchPnpmDeps` (le
-  `got:` de l'erreur de `nix build`). Vérifier : `SCREENSHOT_APP=$PWD/result/bin/wa-gnome pnpm screenshot`.
+  Après tout changement de `pnpm-lock.yaml`, mettre à jour le `hash` de `fetchPnpmDeps` : le remplacer
+  d'abord par un faux (`sha256-AAAA…=`, sinon l'ancien résultat est réutilisé), puis reprendre le `got:`
+  de l'erreur de `nix build`. Vérifier : `SCREENSHOT_APP=$PWD/result/bin/wa-gnome pnpm screenshot`.
 - `pnpm flatpak [--install]` : paquet Flatpak (`flatpak/io.github.maarekj.WaGnome.yml`, hors Flathub) et
   bundle `dist/wa-gnome.flatpak`. Démon embarqué lancé par l'app (`WA_GNOME_DAEMON`, `src/app/Sandbox.ts`),
   outils de l'utilisateur via `flatpak-spawn --host`. Essai sans installer :

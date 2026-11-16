@@ -25,6 +25,28 @@ Puis lancer « WhatsApp » depuis GNOME et scanner le QR code.
 
 Journal du démon : `journalctl --user -u wa-gnome-daemon -f`.
 
+## Ligne de commande : `wa`
+
+Pilote le démon (installée avec l'application : `scripts/install.ts`, paquet Nix ; Flatpak :
+`flatpak run --command=wa io.github.maarekj.WaGnome`).
+
+```sh
+wa                                  # menu interactif
+wa chats --unread                   # discussions non lues
+wa messages "Alice" -n 20           # 20 derniers messages (nom approché, identifiant ou numéro)
+wa send Alice "Bonjour !"           # ou : echo Bonjour | wa send Alice - ; --file photo.jpg ; --at 18:30
+wa search "rendez-vous" --chat Famille
+wa lists                            # listes ; wa lists show Travail ; wa lists add Travail Alice
+wa chat archive|pin|mute --for 8h|read|unread … Alice
+wa react|edit|delete|forward …      # sur un message (identifiant affiché par `wa messages`)
+wa --help                           # toutes les commandes ; wa <commande> --help
+```
+
+Ce qui manque est demandé dans un terminal. Pour un script ou un agent IA : `--json` (données de
+l'API) et `--no-input` (jamais de question). Codes de sortie : 0 succès, 1 erreur, 2 usage
+(paramètre manquant ou ambigu, candidats listés), 3 démon injoignable. Démon : celui de
+l'installation habituelle, sinon celui du Flatpak (`WA_GNOME_DATA_DIR`, `WA_GNOME_PORT` pour un autre).
+
 ## Installation avec Nix (NixOS, home-manager)
 
 Essai sans installer : démon dans un terminal (`nix shell github:maarekj/wa-gnome -c wa-gnome-daemon`),

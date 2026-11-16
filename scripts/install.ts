@@ -78,6 +78,16 @@ exec ${shq(which('gjs'))} -m ${shq(path.join(root, 'dist', 'app', 'main.js'))} "
   0o755,
 );
 
+// CLI `wa` (version de développement : sources du dossier)
+write(
+  path.join(binDir, 'wa'),
+  `#!/usr/bin/env bash
+# CLI wa-gnome (version de développement : ${root})
+exec ${shq(which('node'))} ${shq(path.join(root, 'src', 'cli', 'main.ts'))} "$@"
+`,
+  0o755,
+);
+
 write(path.join(iconsDir, 'scalable', 'apps', `${APP_ID}.svg`), fs.readFileSync(path.join(root, 'data', 'icons', 'app.svg'), 'utf8'));
 write(path.join(iconsDir, 'symbolic', 'apps', `${APP_ID}-symbolic.svg`), fs.readFileSync(path.join(root, 'data', 'icons', 'app-symbolic.svg'), 'utf8'));
 try {

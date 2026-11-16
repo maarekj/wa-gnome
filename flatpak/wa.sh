@@ -1,0 +1,3 @@
+#!/bin/sh
+# CLI : flatpak run --command=wa io.github.maarekj.WaGnome …
+exec /app/node/bin/node /app/share/wa-gnome/src/cli/main.ts "$@"

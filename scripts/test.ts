@@ -14,12 +14,12 @@ const root = path.resolve(import.meta.dirname, '..');
 const ENV = ['GDK_BACKEND=x11', 'GSK_RENDERER=cairo', 'GTK_A11Y=none', 'WA_GNOME_SILENT=1', 'PULSE_SERVER=unix:/nonexistent', 'PIPEWIRE_REMOTE=wa-gnome-none'];
 const list = (dir: string, suffix: string): string[] => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(suffix)) : []);
 
-// ---------------------------------------------------------------- démon (node --test)
-const daemonTests = list(path.join(root, 'src', 'daemon'), '.test.ts').map((f) => path.join(root, 'src', 'daemon', f));
+// ---------------------------------------------------------------- démon et CLI (node --test)
+const daemonTests = ['daemon', 'cli'].flatMap((d) => list(path.join(root, 'src', d), '.test.ts').map((f) => path.join(root, 'src', d, f)));
 if (process.argv.length <= 2 && daemonTests.length > 0) {
   const node = spawnSync(process.execPath, ['--test', '--test-reporter=dot', ...daemonTests], { stdio: 'inherit' });
   if (node.status !== 0) {
-    console.log('ÉCHEC tests du démon');
+    console.log('ÉCHEC tests du démon ou de la CLI');
     process.exit(1);
   }
 }

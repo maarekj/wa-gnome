@@ -63,10 +63,11 @@ modules:
       - rm -rf node_modules && npx --yes pnpm@12.9.0 install --frozen-lockfile --prod --ignore-scripts
       - mkdir -p /app/share/wa-gnome/src
       - cp -r package.json node_modules dist /app/share/wa-gnome/
-      - cp -r src/daemon src/shared /app/share/wa-gnome/src/
-      - rm -f /app/share/wa-gnome/src/daemon/*.test.ts
+      - cp -r src/daemon src/shared src/cli /app/share/wa-gnome/src/
+      - rm -f /app/share/wa-gnome/src/daemon/*.test.ts /app/share/wa-gnome/src/cli/*.test.ts
       - install -Dm755 flatpak/wa-gnome.sh /app/bin/wa-gnome
       - install -Dm755 flatpak/wa-gnome-daemon.sh /app/bin/wa-gnome-daemon
+      - install -Dm755 flatpak/wa.sh /app/bin/wa
       - install -Dm644 flatpak/io.github.maarekj.WaGnome.desktop -t /app/share/applications
       - install -Dm644 flatpak/io.github.maarekj.WaGnome.service -t /app/share/dbus-1/services
       - install -Dm644 data/icons/app.svg /app/share/icons/hicolor/scalable/apps/io.github.maarekj.WaGnome.svg

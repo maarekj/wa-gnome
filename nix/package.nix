@@ -44,7 +44,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-ndNDBKjgIaJktaxRkP8nuJ429bcyN45Is77vOYxXjiQ=";
+    hash = "sha256-+DDNi+hkZXpe4qA1vLkbSu3XrEkkUDk0Sy6qwEAkxYg=";
   };
 
   nativeBuildInputs = [
@@ -90,8 +90,8 @@ stdenv.mkDerivation (finalAttrs: {
     share=$out/share/wa-gnome
     mkdir -p $share/src $out/bin
     cp -r package.json node_modules dist $share/
-    cp -r src/daemon src/shared $share/src/
-    rm -f $share/src/daemon/*.test.ts
+    cp -r src/daemon src/shared src/cli $share/src/
+    rm -f $share/src/daemon/*.test.ts $share/src/cli/*.test.ts
 
     install -Dm644 data/icons/app.svg $out/share/icons/hicolor/scalable/apps/io.github.maarekj.WaGnome.svg
     install -Dm644 data/icons/app-symbolic.svg $out/share/icons/hicolor/symbolic/apps/io.github.maarekj.WaGnome-symbolic.svg
@@ -118,6 +118,8 @@ stdenv.mkDerivation (finalAttrs: {
 
     makeWrapper ${lib.getExe nodejs_24} $out/bin/wa-gnome-daemon \
       --add-flags $share/src/daemon/main.ts
+    makeWrapper ${lib.getExe nodejs_24} $out/bin/wa \
+      --add-flags $share/src/cli/main.ts
     runHook postInstall
   '';
 

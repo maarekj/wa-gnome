@@ -1,0 +1,5 @@
+{
+  // CLI `wa` (Node 24, exécutée sans compilation).
+  "extends": "../../tsconfig.json",
+  "include": ["./**/*", "../shared/api.ts"]
+}
