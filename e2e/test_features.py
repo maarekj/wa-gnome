@@ -725,3 +725,31 @@ def test_mention_cliquable(run_app):
     subprocess.run(['xdotool', 'mousemove', str(int(e.x + e.width * middle) + dx), str(e.y + e.height // 2 + dy), 'click', '1'], check=True, timeout=5)
     wait_until(lambda: app.root.findChild(lambda n: n.showing and n.description == 'Infos du contact', retry=False, requireResult=False), 5, 'discussion avec ~ Bob')
     assert app.text_visible('Photo à vue unique')
+
+
+def test_onglets_des_discussions(run_app):
+    fake, app = run_app()
+    described = lambda d: app.root.findChild(lambda n: n.showing and n.description == d, retry=False, requireResult=False)  # noqa: E731
+    tabs = lambda: sorted(n.name for n in app.root.findChildren(lambda n: n.showing and n.roleName == 'page tab'))  # noqa: E731
+    app.open_chat('Famille')
+    app.open_chat('Alice Martin')
+    wait_until(lambda: tabs() == ['Alice Martin', 'Famille'], 5, 'deux onglets')
+    # Ctrl+Tab : onglet suivant (en boucle : retour à Famille)
+    app.key('ctrl+Tab')
+    wait_until(lambda: described('Infos du groupe'), 5, 'Famille active')
+    # clic sur un onglet
+    app.point(app.find('page tab', 'Alice Martin'))
+    wait_until(lambda: described('Infos du contact'), 5, 'Alice active')
+    # Ctrl+W : onglet actif fermé, le voisin devient actif
+    app.key('ctrl+w')
+    wait_until(lambda: tabs() == ['Famille'], 5, 'onglet fermé')
+    wait_until(lambda: described('Infos du groupe'), 5, 'Famille active')
+    app.open_chat('~ Bob')
+    # relance : onglets et onglet actif restaurés
+    app.stop()
+    app2 = conftest.App(fake, 'Alice Martin')
+    try:
+        wait_until(lambda: sorted(n.name for n in app2.root.findChildren(lambda n: n.showing and n.roleName == 'page tab')) == ['Famille', '~ Bob'], 10, 'onglets restaurés')
+        wait_until(lambda: app2.root.findChild(lambda n: n.showing and n.description == 'Infos du contact', retry=False, requireResult=False), 10, '~ Bob active')
+    finally:
+        app2.stop()

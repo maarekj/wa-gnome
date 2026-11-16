@@ -15,6 +15,15 @@ export const SHORTCUTS: readonly { title: string; items: readonly [string, strin
     ],
   },
   {
+    title: 'Onglets',
+    items: [
+      ['Onglet suivant', '<Control>Tab'],
+      ['Onglet précédent', '<Control><Shift>Tab'],
+      ['Aller à l’onglet 1 à 8 (Alt+9 : le dernier)', '<Alt>1'],
+      ['Fermer l’onglet (sans discussion affichée : la fenêtre)', '<Control>w'],
+    ],
+  },
+  {
     title: 'Discussion ouverte',
     items: [
       ['Rechercher dans la discussion', '<Control>f'],
@@ -28,7 +37,6 @@ export const SHORTCUTS: readonly { title: string; items: readonly [string, strin
     items: [
       ['Préférences', '<Control>comma'],
       ['Raccourcis clavier', '<Control>question'],
-      ['Fermer la fenêtre', '<Control>w'],
       ['Quitter', '<Control>q'],
     ],
   },

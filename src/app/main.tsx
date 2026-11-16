@@ -16,9 +16,10 @@ import { MainWindow, type WindowApi } from './MainWindow.tsx';
 import { cleanMediaCache } from './media.ts';
 import { type Command, openCommandPalette } from './CommandPalette.ts';
 import { openNewChat } from './NewChat.ts';
+import { nthTab, stepTab } from './Tabs.ts';
 import { startEmbeddedDaemon, stopEmbeddedDaemon } from './Sandbox.ts';
 import { PERF, runBench } from './Perf.ts';
-import { initSettings, loadSettings, openPreferences, rememberAccount, settings } from './Preferences.ts';
+import { initSettings, loadSettings, openPreferences, rememberAccount, rememberTabs, savedTabs, settings } from './Preferences.ts';
 import { openShortcuts } from './Shortcuts.ts';
 import { STYLESHEET } from './style.ts';
 
@@ -153,7 +154,30 @@ function watch(store: Store): void {
       shown.delete(c.id);
     }
   });
+  // onglets : restaurés (l'actif, une fois les discussions connues), puis retenus à chaque changement
+  const saved = savedTabs(store.client.account);
+  store.setTabs(saved.ids);
+  let restored = saved.active === null;
+  const restore = (): void => {
+    if (restored || store.chats.peek().length === 0) return;
+    restored = true;
+    if (store.current.peek() === null) store.setTabs(store.tabs.peek(), saved.active);
+  };
+  const offChats = store.chats.subscribe(restore);
+  /** dernier onglet actif (fenêtre fermée, retour en vue étroite : aucune discussion affichée) */
+  let lastActive = saved.active;
+  const keep = (): void => {
+    const tabs = store.tabs.peek();
+    // tant que l'actif n'est pas rouvert, l'onglet retenu reste l'actif
+    if (restored) lastActive = store.current.peek() ?? lastActive;
+    rememberTabs(store.client.account, tabs, lastActive !== null && tabs.includes(lastActive) ? lastActive : null);
+  };
+  const offTabs = store.tabs.subscribe(keep);
+  const offCurrent = store.current.subscribe(keep);
   unwatch.set(store, () => {
+    offChats();
+    offTabs();
+    offCurrent();
     off();
     store.onIncoming = null;
     store.onCall = null;
@@ -370,7 +394,27 @@ const quit = new Gio.SimpleAction({ name: 'quit' });
 quit.connect('activate', () => app.quit());
 app.add_action(quit);
 app.set_accels_for_action('app.quit', ['<Control>q']);
-app.set_accels_for_action('window.close', ['<Control>w']);
+// onglets : fermer (Ctrl+W ; sans discussion affichée, liste seule en vue étroite comprise : la
+// fenêtre), suivant / précédent, n-ième
+const tabAction = (name: string, handler: () => void, accels: string[]): void => {
+  const a = new Gio.SimpleAction({ name });
+  a.connect('activate', handler);
+  app.add_action(a);
+  app.set_accels_for_action(`app.${name}`, accels);
+};
+tabAction(
+  'tab-close',
+  () => {
+    const store = active();
+    const id = store.current.peek();
+    if (id !== null && store.tabs.peek().includes(id)) store.closeTab(id);
+    else mainWindow?.close();
+  },
+  ['<Control>w'],
+);
+tabAction('tab-next', () => stepTab(active(), 1), ['<Control>Tab', '<Control>Page_Down']);
+tabAction('tab-prev', () => stepTab(active(), -1), ['<Control><Shift>Tab', '<Control><Shift>ISO_Left_Tab', '<Control>Page_Up']);
+for (let n = 1; n <= 9; n += 1) tabAction(`tab-${n}`, () => nthTab(active(), n), [`<Alt>${n}`]);
 
 // ------------------------------------------------------------------ fenêtre
 

@@ -311,6 +311,38 @@ describe('archivées, silencieux, menu', () => {
   });
 });
 
+describe('Store : onglets', () => {
+  it('ouverture après l’onglet actif, navigation, fermeture, discussion supprimée', () => {
+    // démon injoignable : les chargements échouent, seuls les onglets comptent ici
+    const store = new Store(new WaClient('http://127.0.0.1:1', () => ''));
+    store.open('a');
+    store.open('b');
+    store.open('a');
+    store.open('c');
+    expect(store.tabs.peek()).toEqual(['a', 'c', 'b']);
+    expect(store.current.peek()).toBe('c');
+    // Alt+Haut/Bas : remplace l'onglet actif
+    store.navigate('d');
+    expect(store.tabs.peek()).toEqual(['a', 'd', 'b']);
+    // fermer l'actif : le voisin de droite, sinon de gauche
+    store.closeTab('d');
+    expect(store.current.peek()).toBe('b');
+    store.closeTab('b');
+    expect(store.current.peek()).toBe('a');
+    store.open('e');
+    store.closeTab('a');
+    expect(store.tabs.peek()).toEqual(['e']);
+    expect(store.current.peek()).toBe('e');
+    store.apply({ type: 'chats.delete', ids: ['e'] });
+    expect(store.tabs.peek()).toEqual([]);
+    expect(store.current.peek()).toBeNull();
+    // restauration : onglets puis actif
+    store.setTabs(['x', 'y', 'x'], 'y');
+    expect(store.tabs.peek()).toEqual(['x', 'y']);
+    expect(store.current.peek()).toBe('y');
+  });
+});
+
 describe('Store.apply', () => {
   it('met à jour la liste et notifie les messages reçus', () => {
     const store = new Store(new WaClient('http://127.0.0.1:1', () => ''));
@@ -472,6 +504,7 @@ describe('préférences', () => {
     expect(parseSettings('pas du json').accent).toBe('system');
     expect(parseSettings(null).notify).toBeTrue();
     expect(parseSettings('{"accent":"red","preview":false}')).toEqual({
+      tabs: {},
       accent: 'red',
       notify: true,
       preview: false,

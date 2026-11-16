@@ -43,6 +43,7 @@ const SettingsFile = z.object({
   rejectMessage: z.optional(z.string()),
   sidePanelWidth: z.optional(z.number()),
   notifyMentions: z.optional(z.boolean()),
+  tabs: z.optional(z.record(z.string(), z.object({ ids: z.array(z.string()), active: z.nullable(z.string()) }))),
 });
 
 /** Outil de traduction : CLI installée par l'utilisateur (ses identifiants). */
@@ -100,12 +101,15 @@ export interface Settings {
   readonly sidePanelWidth: number;
   /** notifié des mentions même dans une discussion en mode silencieux */
   readonly notifyMentions: boolean;
+  /** onglets ouverts par compte (et l'actif), restaurés au lancement */
+  readonly tabs: Readonly<Record<string, { readonly ids: readonly string[]; readonly active: string | null }>>;
 }
 /** Panneau de droite : largeur par défaut et bornes (pixels). */
 export const SIDE_PANEL_DEFAULT = 340;
 export const sidePanelWidth = (w: number): number => Math.round(Math.min(Math.max(Number.isFinite(w) ? w : SIDE_PANEL_DEFAULT, 280), 600));
 
 const DEFAULTS: Settings = {
+  tabs: {},
   accent: 'system',
   notify: true,
   preview: true,
@@ -150,6 +154,7 @@ export function parseSettings(text: string | null): Settings {
       rejectMessage: nonEmpty(raw.rejectMessage) ?? DEFAULTS.rejectMessage,
       sidePanelWidth: sidePanelWidth(raw.sidePanelWidth ?? SIDE_PANEL_DEFAULT),
       notifyMentions: raw.notifyMentions ?? true,
+      tabs: raw.tabs ?? {},
     };
   } catch {
     return DEFAULTS;
@@ -190,7 +195,8 @@ export function accentCss(id: AccentId): string {
 }
 
 let provider: Gtk.CssProvider | null = null;
-let current: Settings = DEFAULTS;
+// lus dès le chargement du module : un réglage enregistré avant `initSettings` ne repart pas des valeurs par défaut
+let current: Settings = loadSettings();
 
 /** Applique l'accent à toute l'application (au démarrage puis à chaque changement). */
 function applyAccent(id: AccentId): void {
@@ -227,6 +233,17 @@ export function rememberSidePanelWidth(width: number): void {
   const w = sidePanelWidth(width);
   if (current.sidePanelWidth !== w) update({ sidePanelWidth: w });
 }
+
+/** Onglets d'un compte, retenus pour le prochain lancement. */
+export function rememberTabs(account: string, ids: readonly string[], active: string | null): void {
+  const saved = current.tabs[account];
+  if (saved !== undefined && saved.active === active && saved.ids.length === ids.length && saved.ids.every((id, i) => id === ids[i])) return;
+  update({ tabs: { ...current.tabs, [account]: { ids: [...ids], active } } });
+}
+
+/** Onglets retenus d'un compte. */
+// relu sur le disque : appelé avant le chargement des réglages (`initSettings`, au démarrage)
+export const savedTabs = (account: string): { ids: readonly string[]; active: string | null } => loadSettings().tabs[account] ?? { ids: [], active: null };
 
 /** Compte affiché, retenu pour le prochain lancement. */
 export function rememberAccount(account: string): void {

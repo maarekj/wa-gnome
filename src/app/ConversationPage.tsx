@@ -23,6 +23,7 @@ import { openChatInfo } from './ChatInfoDialog.ts';
 import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { type Command, provideCommands } from './CommandPalette.ts';
+import { tabBar } from './Tabs.ts';
 import { PERF, perfCount, perfMark } from './Perf.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
 import { MediaLoader, type Photo } from './media.ts';
@@ -480,6 +481,8 @@ export function ConversationPage({
             onToggled={(b: Gtk.ToggleButton) => setSearching(b.active)}
           />
         </Adw.HeaderBar>
+        {/* onglets des discussions ouvertes */}
+        <Gtk.Box $type="top">{tabBar(store, pictures)}</Gtk.Box>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Adw.StatusPage $type="named" name="none" iconName="chat-message-new-symbolic" title="WhatsApp pour GNOME" description="Choisissez une discussion" />
           {/* panneau à droite (recherche, résumés) : à côté de la conversation, ou par-dessus si la

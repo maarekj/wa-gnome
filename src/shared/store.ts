@@ -61,6 +61,9 @@ export class Store {
   readonly lists: Accessor<readonly ChatList[]>;
   /** discussion ouverte, ou null */
   readonly current: Accessor<string | null>;
+  /** onglets : discussions ouvertes, dans l'ordre de la barre (l'active : `current`) */
+  readonly tabs: Accessor<readonly string[]>;
+  readonly #setTabs: (ids: readonly string[]) => void;
   /** messages de la discussion ouverte */
   readonly messages: Accessor<readonly Message[]>;
   /** présence de la discussion ouverte (null : inconnue) */
@@ -122,6 +125,7 @@ export class Store {
     [this.chats, this.#setChats] = createState<readonly Chat[]>([]);
     [this.lists, this.#setLists] = createState<readonly ChatList[]>([]);
     [this.current, this.#setCurrent] = createState<string | null>(null);
+    [this.tabs, this.#setTabs] = createState<readonly string[]>([]);
     [this.messages, this.#setMessages] = createState<readonly Message[]>([]);
     [this.older, this.#setOlder] = createState<OlderState>('idle');
     [this.presence, this.#setPresence] = createState<Presence | null>(null);
@@ -219,6 +223,8 @@ export class Store {
         if (e.status.state === 'open' && before !== 'open') void this.reload();
         if (e.status.state === 'logged-out') {
           this.#replaceChats([]);
+          // onglets du compte déconnecté : fermés (un autre appairage n'en hérite pas)
+          this.#setTabs([]);
           this.open(null);
         }
         break;
@@ -230,7 +236,7 @@ export class Store {
       case 'chats.delete':
         for (const id of e.ids) this.#byId.delete(id);
         this.#setChats(sortChats(this.#byId.values()));
-        if (e.ids.includes(this.current.peek() ?? '')) this.open(null);
+        for (const id of e.ids) this.closeTab(id);
         break;
       case 'presence': {
         if (e.chatId === this.current.peek()) this.#setPresence(e.presence);
@@ -350,8 +356,44 @@ export class Store {
     this.open(id);
   }
 
+  /**
+   * Discussion affichée dans l'onglet actif à la place de la sienne (Alt+Haut/Bas : navigation
+   * dans la liste) ; déjà dans un onglet : celui-ci devient actif.
+   */
+  navigate(id: string): void {
+    const tabs = this.tabs.peek();
+    const at = tabs.indexOf(this.current.peek() ?? '');
+    if (!tabs.includes(id) && at >= 0) this.#setTabs(tabs.with(at, id));
+    this.open(id);
+  }
+
+  /** Ferme l'onglet ; actif : le voisin de droite (sinon de gauche) devient actif. */
+  closeTab(id: string): void {
+    const tabs = this.tabs.peek();
+    const at = tabs.indexOf(id);
+    if (at < 0) {
+      if (this.current.peek() === id) this.open(null);
+      return;
+    }
+    const rest = tabs.toSpliced(at, 1);
+    this.#setTabs(rest);
+    if (this.current.peek() === id) this.open(rest[Math.min(at, rest.length - 1)] ?? null);
+  }
+
+  /** Onglets dans un nouvel ordre (glissés, ou restaurés au lancement : `active` ouvert). */
+  setTabs(ids: readonly string[], active?: string | null): void {
+    this.#setTabs([...new Set(ids)]);
+    if (active !== undefined && active !== null && ids.includes(active)) this.open(active);
+  }
+
   /** Ouvre une discussion (null : aucune) et charge ses derniers messages (sauf `load` faux). */
   open(id: string | null, load = true): void {
+    // pas encore d'onglet : ouvert après l'onglet actif
+    if (id !== null && !this.tabs.peek().includes(id)) {
+      const tabs = this.tabs.peek();
+      const at = tabs.indexOf(this.current.peek() ?? '');
+      this.#setTabs(at < 0 ? [...tabs, id] : tabs.toSpliced(at + 1, 0, id));
+    }
     if (id === this.current.peek()) return;
     this.#setCurrent(id);
     this.#setMessages([]);
