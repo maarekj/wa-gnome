@@ -783,6 +783,10 @@ export function ConversationPage({
                               selection,
                               toggleSelect,
                               forward: (parent, m) => openForward(parent, store, pictures, [m], toast, clearSelection),
+                              openPerson: (id, name) => store.startChat(id, name),
+                              openAuthor: (m) => {
+                                if (m.sender !== null && !m.fromMe) store.startChat(m.sender, m.senderName ?? m.sender.split('@')[0] ?? '');
+                              },
                               translate: (parent, m, mode, lang) => translateAll(parent, [m], mode, lang),
                               pinned: () => new Set(store.pins.peek().map((p) => p.id)),
                               pin: (m, duration) => pinMessage(m, duration),

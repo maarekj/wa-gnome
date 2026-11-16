@@ -1560,7 +1560,7 @@ export class Store {
     return ids.data.map((jid) => {
       const who = this.canonical(jid);
       const me = this.isMe(jid);
-      return { token: jid.split('@')[0]?.split(':')[0] ?? jid, name: me ? 'Vous' : this.displayName(who), me };
+      return { token: jid.split('@')[0]?.split(':')[0] ?? jid, name: me ? 'Vous' : this.displayName(who), me, id: who };
     });
   }
 

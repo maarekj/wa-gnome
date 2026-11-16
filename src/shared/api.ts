@@ -225,8 +225,11 @@ export const Poll = z.object({
 });
 export type Poll = z.infer<typeof Poll>;
 
-/** Mention d'une personne dans un texte (`@token`, partie utilisateur de son identifiant). */
-export const Mention = z.object({ token: z.string(), name: z.string(), me: z.boolean() });
+/**
+ * Mention d'une personne dans un texte (`@token`, partie utilisateur de son identifiant) ; `id` :
+ * son identifiant (clic : sa discussion).
+ */
+export const Mention = z.object({ token: z.string(), name: z.string(), me: z.boolean(), id: z.string() });
 export type Mention = z.infer<typeof Mention>;
 
 /** Échappe un texte pour une expression régulière. */

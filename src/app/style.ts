@@ -137,6 +137,17 @@ export const STYLESHEET = `
 .chat-title {
   padding: 2px 10px;
 }
+/* nom de l'auteur en tête de bulle (groupe) : bouton sans marge ; souligné au survol */
+button.sender-link {
+  padding: 0;
+  min-height: 0;
+  margin: 0;
+  background: none;
+  box-shadow: none;
+}
+button.sender-link:hover label {
+  text-decoration: underline;
+}
 .chat-search {
   border-left: 1px solid var(--border-color);
   background: var(--sidebar-bg-color);

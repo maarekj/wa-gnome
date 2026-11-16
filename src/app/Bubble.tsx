@@ -24,7 +24,7 @@ import {
   type Quoted,
 } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { dayKey, emojiOnly, esc, fmtDay, fmtTime, mentionMarkup, readMoreCut, waMarkup } from '../shared/format.ts';
+import { dayKey, emojiOnly, esc, fmtDay, fmtTime, MENTION_LINK, mentionMarkup, readMoreCut, waMarkup } from '../shared/format.ts';
 import { typingText } from '../shared/store.ts';
 import { avatarText } from './ChatList.tsx';
 import { settings } from './Preferences.ts';
@@ -190,19 +190,27 @@ export function withAuthor(ctx: BubbleContext, w: Gtk.Widget, m: Message, live: 
     showInitials: /\p{L}/u.test(name),
     valign: Gtk.Align.START,
     marginTop: 2,
-    tooltipText: name,
   });
   if (m.sender !== null) bindAvatar(avatar, ctx.pictures.texture(m.sender, true));
+  // clic sur la photo : discussion avec l'auteur (photo visible seulement au premier message)
+  const click = new Gtk.GestureClick();
+  click.connect('released', () => {
+    if (avatar.opacity > 0) ctx.openAuthor(m);
+  });
+  avatar.add_controller(click);
   const first = (): boolean => {
     const it = live.peek();
     return it.kind === 'message' && it.showSender;
   };
-  avatar.opacity = first() ? 1 : 0;
-  onCleanup(
-    live.subscribe(() => {
-      avatar.opacity = first() ? 1 : 0;
-    }),
-  );
+  // photo cachée (messages suivants d'une suite) : ni infobulle ni clic
+  const sync = (): void => {
+    const shown = first();
+    avatar.opacity = shown ? 1 : 0;
+    avatar.tooltipText = shown ? `Écrire à ${name}` : '';
+    avatar.cursor = shown ? Gdk.Cursor.new_from_name('pointer', null) : null;
+  };
+  sync();
+  onCleanup(live.subscribe(sync));
   const row = new Gtk.Box({ name: w.name, spacing: 6, halign: Gtk.Align.START, marginEnd: w.marginEnd });
   w.name = '';
   w.marginEnd = 0;
@@ -248,6 +256,37 @@ export interface BubbleContext {
   readonly vote: (m: Message, options: readonly string[]) => void;
   /** mon identifiant (ma photo), null s'il n'est pas connu */
   readonly me: () => string | null;
+  /** ouvre la discussion avec l'auteur d'un message de groupe */
+  readonly openAuthor: (m: Message) => void;
+  /** ouvre la discussion avec une personne (mention @) */
+  readonly openPerson: (id: string, name: string) => void;
+}
+
+/** Nom affiché de l'auteur d'un message. */
+const authorName = (m: Message): string => m.senderName ?? m.sender?.split('@')[0] ?? '';
+
+/**
+ * Nom de l'auteur en tête de bulle (groupe) : couleur propre à chaque participant ; clic : sa
+ * discussion. `msg` : message à jour (nom appris après coup).
+ */
+function SenderName(ctx: BubbleContext, msg: () => Message, visible: Accessor<boolean>, refresh?: Accessor<unknown>): Gtk.Widget {
+  const label = new Gtk.Label({ useMarkup: true, xalign: 0, cssClasses: ['caption-heading'] });
+  const button = new Gtk.Button({ child: label, halign: Gtk.Align.START, cssClasses: ['flat', 'sender-link'] });
+  const sync = (): void => {
+    const m = msg();
+    label.label = `<span foreground="${senderColor(m.sender ?? '')}">${esc(authorName(m))}</span>`;
+    button.tooltipText = `Écrire à ${authorName(m)}`;
+  };
+  sync();
+  button.visible = visible.peek();
+  onCleanup(
+    visible.subscribe(() => {
+      button.visible = visible.peek();
+    }),
+  );
+  if (refresh !== undefined) onCleanup(refresh.subscribe(sync));
+  button.connect('clicked', () => ctx.openAuthor(msg()));
+  return button;
 }
 
 /** Messages transférables (pas ceux supprimés pour tous). */
@@ -614,13 +653,11 @@ export function DeletedBubble(ctx: BubbleContext, m: Message, msg: () => Message
           attachBubbleMenu(ctx, self, msg);
         }}
       >
-        <Gtk.Label
-          visible={live((it) => it.kind === 'message' && it.showSender)}
-          useMarkup
-          label={`<span foreground="${senderColor(m.sender ?? '')}">${esc(m.senderName ?? '')}</span>`}
-          xalign={0}
-          cssClasses={['caption-heading']}
-        />
+        {SenderName(
+          ctx,
+          () => m,
+          live((it) => it.kind === 'message' && it.showSender),
+        )}
         <Gtk.Box spacing={6}>
           <Gtk.Image iconName="action-unavailable-symbolic" cssClasses={['dim-label']} />
           <Gtk.Label label={m.fromMe ? 'Vous avez supprimé ce message' : DELETED_TEXT} xalign={0} cssClasses={['dim-label', 'deleted-text']} />
@@ -828,14 +865,12 @@ export function bubble(ctx: BubbleContext) {
                 onCleanup(live.subscribe(sync));
               }}
             >
-              <Gtk.Label
-                visible={live((it) => it.kind === 'message' && it.showSender)}
-                useMarkup
-                // couleur propre à chaque participant (comme WhatsApp)
-                label={live(() => `<span foreground="${senderColor(msg().sender ?? '')}">${esc(msg().senderName ?? msg().sender?.split('@')[0] ?? '')}</span>`)}
-                xalign={0}
-                cssClasses={['caption-heading']}
-              />
+              {SenderName(
+                ctx,
+                msg,
+                live((it) => it.kind === 'message' && it.showSender),
+                live,
+              )}
               {m.forwarded === 0 ? null : ForwardedMark(m.forwarded)}
               {m.quoted === null ? null : QuoteBlock(ctx, m.quoted)}
               {picture}
@@ -845,7 +880,7 @@ export function bubble(ctx: BubbleContext) {
                 useMarkup
                 label={live(() =>
                   msg().kind === 'text' || picture !== null
-                    ? mentionMarkup(waMarkup(expanded() ? msg().text : (readMoreCut(msg().text) ?? msg().text)), msg().mentions)
+                    ? mentionMarkup(waMarkup(expanded() ? msg().text : (readMoreCut(msg().text) ?? msg().text)), msg().mentions, true)
                     : esc(previewOf(msg())),
                 )}
                 cssClasses={live(() => (msg().kind === 'text' || picture !== null ? ['body', ...emojiClasses()] : ['body', 'dim-label']))}
@@ -859,8 +894,16 @@ export function bubble(ctx: BubbleContext) {
                 // caractère : des dizaines de ms par long message). Un texte long occupe de toute façon
                 // la largeur maximale ; un court garde la sienne.
                 widthChars={picture === null && m.text.length > 100 ? 20 : -1}
-                // liens : ouverts dans le navigateur par défaut
-                $={(self: Gtk.Label) => openLinks(self)}
+                // mention @ : discussion de la personne ; liens : ouverts dans le navigateur par défaut
+                $={(self: Gtk.Label) => {
+                  self.connect('activate-link', (_l: Gtk.Label, uri: string) => {
+                    if (!uri.startsWith(MENTION_LINK)) return false;
+                    const id = uri.slice(MENTION_LINK.length);
+                    ctx.openPerson(id, msg().mentions.find((x) => x.id === id)?.name ?? id.split('@')[0] ?? '');
+                    return true;
+                  });
+                  openLinks(self);
+                }}
               />
               {/* très long message : début seulement, comme WhatsApp */}
               <Gtk.Button

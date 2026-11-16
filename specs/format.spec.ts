@@ -99,12 +99,24 @@ describe('mentions', () => {
     expect(mentionQuery('@')).toEqual({ query: '', at: 0 });
     expect(mentionQuery('mail@exemple')).toBeNull();
     expect(mentionMarkup('@336 &amp; @99', [{ token: '336', name: '~ Bob <b>', me: false }])).toBe(
-      '<span weight="bold" foreground="#1c71d8">@Bob &lt;b&gt;</span> &amp; @99',
+      '<span weight="bold" foreground="#1c71d8" underline="none">@Bob &lt;b&gt;</span> &amp; @99',
     );
     // ni dans un lien, ni un numéro plus long
     const link = waMarkup('https://x.fr/@336 @3361 <b>');
     expect(mentionMarkup(link, [{ token: '336', name: 'Bob', me: false }])).toBe(link);
-    expect(mentionMarkup('<b>@336</b>', [{ token: '336', name: 'Bob', me: true }])).toBe('<b><span weight="bold" foreground="#e66100">@Bob</span></b>');
+    expect(mentionMarkup('<b>@336</b>', [{ token: '336', name: 'Bob', me: true }])).toBe(
+      '<b><span weight="bold" foreground="#e66100" underline="none">@Bob</span></b>',
+    );
+  });
+  it('liens vers la discussion de la personne (pas moi, pas dans un lien)', () => {
+    const bob = { token: '336', name: 'Bob', me: false, id: '336@s.whatsapp.net' };
+    expect(mentionMarkup('<b>@336</b>', [bob], true)).toBe(
+      '<b><a href="wa-mention:336@s.whatsapp.net"><span weight="bold" foreground="#1c71d8" underline="none">@Bob</span></a></b>',
+    );
+    expect(mentionMarkup('@336', [{ ...bob, me: true }], true)).not.toContain('<a ');
+    const link = waMarkup('https://x.fr/ @336');
+    expect(mentionMarkup('<a href="https://x.fr/">x @336</a>', [bob], true)).not.toContain('wa-mention');
+    expect(mentionMarkup(link, [bob], true)).toContain('wa-mention:336@s.whatsapp.net');
   });
 });
 

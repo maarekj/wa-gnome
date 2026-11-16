@@ -319,17 +319,26 @@ export function markdownMarkup(text: string): string {
   return out.join('\n');
 }
 
-/** Mentions dans un texte déjà balisé (`@33612…` → `@Alice` en évidence ; moi : accentué). */
-export function mentionMarkup(markup: string, mentions: readonly { token: string; name: string; me: boolean }[]): string {
+/** Lien d'une mention (`activate-link` : discussion de la personne). */
+export const MENTION_LINK = 'wa-mention:';
+
+/**
+ * Mentions dans un texte déjà balisé (`@33612…` → `@Alice` en évidence ; moi : accentué) ;
+ * `links` : mentions des autres en liens `wa-mention:<id>` (sauf dans un lien existant).
+ */
+export function mentionMarkup(markup: string, mentions: readonly { token: string; name: string; me: boolean; id?: string }[], links = false): string {
   let out = markup;
   for (const m of mentions) {
     const name = esc(m.name.replace(/^~\s*/u, ''));
     const token = esc(m.token).replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
     // après un espace ou une balise seulement (jamais dans un lien ni un attribut), nombre entier
-    out = out.replaceAll(
-      new RegExp(`(^|[\\s>])@${token}(?![\\p{L}\\p{N}])`, 'gu'),
-      (_all, before: string) => `${before}<span weight="bold" foreground="${m.me ? '#e66100' : '#1c71d8'}">@${name}</span>`,
-    );
+    out = out.replaceAll(new RegExp(`(^|[\\s>])@${token}(?![\\p{L}\\p{N}])`, 'gu'), (_all, before: string, offset: number, whole: string) => {
+      const span = `<span weight="bold" foreground="${m.me ? '#e66100' : '#1c71d8'}" underline="none">@${name}</span>`;
+      // dans un lien existant (adresse contenant @…) : pas de lien imbriqué
+      const head = whole.slice(0, offset);
+      const inLink = head.lastIndexOf('<a ') > head.lastIndexOf('</a>');
+      return links && !m.me && m.id !== undefined && !inLink ? `${before}<a href="${MENTION_LINK}${esc(m.id)}">${span}</a>` : `${before}${span}`;
+    });
   }
   return out;
 }

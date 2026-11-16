@@ -691,3 +691,37 @@ def test_palette_sur_les_messages_selectionnes(run_app):
     assert app.text_visible('Traduire les 3 messages sélectionnés')
     app.key('Return')
     assert app.text_visible('[français] Message n° 150')
+
+
+def test_auteur_d_un_message_de_groupe(run_app):
+    _, app = run_app()
+
+    def lowest(description, role):
+        """Nœud le plus bas de la conversation (le plus récent, à l'écran ; les plus anciens sont aussi « showing »)."""
+        nodes = [n for n in app.root.findChildren(lambda n: n.showing and n.roleName == role and n.description == description)]
+        return max(nodes, key=lambda n: n.get_extents(Atspi.CoordType.WINDOW).y) if nodes else None
+
+    contact_info = lambda: app.root.findChild(lambda n: n.showing and n.description == 'Infos du contact', retry=False, requireResult=False)  # noqa: E731
+    app.open_chat('Famille')
+    # clic sur le nom de l'auteur : sa discussion
+    app.point(wait_until(lambda: lowest('Écrire à ~ Bob', 'button'), 5, 'nom de l’auteur'))
+    wait_until(contact_info, 5, 'discussion avec ~ Bob')
+    assert app.text_visible('Photo à vue unique')
+    # retour au groupe ; clic sur la photo de l'auteur
+    app.open_chat('Famille')
+    app.point(wait_until(lambda: lowest('Écrire à ~ Bob', 'image'), 5, 'photo de l’auteur'))
+    wait_until(contact_info, 5, 'discussion avec ~ Bob')
+
+
+def test_mention_cliquable(run_app):
+    _, app = run_app()
+    app.open_chat('Famille')
+    label = app.find('label', '@Vous tu prends le pain ? Et @Bob les boissons')
+    # clic au milieu de « @Bob » (position estimée d'après la longueur du texte, une seule ligne)
+    content = label.name or ''
+    middle = (content.index('@Bob') + 2) / len(content)
+    e = label.get_extents(Atspi.CoordType.WINDOW)
+    dx, dy = conftest._OFFSET or (0, 0)
+    subprocess.run(['xdotool', 'mousemove', str(int(e.x + e.width * middle) + dx), str(e.y + e.height // 2 + dy), 'click', '1'], check=True, timeout=5)
+    wait_until(lambda: app.root.findChild(lambda n: n.showing and n.description == 'Infos du contact', retry=False, requireResult=False), 5, 'discussion avec ~ Bob')
+    assert app.text_visible('Photo à vue unique')

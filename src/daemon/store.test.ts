@@ -433,8 +433,8 @@ void describe('statuts et diffusions', () => {
     store.upsertContact('99@lid', { name: 'Zoé' });
     if (m !== null) store.upsertMessage(m, '{}');
     assert.deepEqual(store.message('1@g.us', 'mm')?.mentions, [
-      { token: '33611', name: 'Vous', me: true },
-      { token: '99', name: 'Zoé', me: false },
+      { token: '33611', name: 'Vous', me: true, id: '33611@s.whatsapp.net' },
+      { token: '99', name: 'Zoé', me: false, id: '99@lid' },
     ]);
     assert.equal(store.chats()[0]?.preview, '@Vous et @Zoé');
   });
