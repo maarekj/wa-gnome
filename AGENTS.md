@@ -97,7 +97,8 @@ multi-appareils, sans navigateur). Même pile technique qu'opencode-gnome.
 - **Une branche par issue** : `git switch -c issue-<numéro>` depuis `main` à jour
   (`git fetch && git merge --ff-only origin/main`). Jamais de commit direct sur `main`.
 - **Fusion**, une fois l'issue validée et sur ordre de l'utilisateur :
-  1. `git fetch && git rebase origin/main`, puis `pnpm check` ;
+  1. `git fetch && git rebase origin/main`, puis `pnpm check` et `pnpm e2e` : **arrêt avant le push si l'un
+     échoue** (vérifier leur code de sortie, pas seulement leur sortie filtrée) ;
   2. `git push origin issue-<numéro>:main` (refusé si `main` a avancé : refaire l'étape 1) ;
   3. `git switch main && git merge --ff-only origin/main && git branch -D issue-<numéro>`.
 - Travail en parallèle : un worktree par agent (`wa-gnome-2`, `wa-gnome-3`…), jamais deux agents

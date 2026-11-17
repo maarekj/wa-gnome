@@ -1,6 +1,7 @@
 """Fonctions : nouvelle discussion, recherche, réponse depuis une notification."""
 
 import json
+import re
 import subprocess
 import time
 import urllib.request
@@ -200,12 +201,28 @@ def test_lien_cliquable(run_app):
     assert app.logged('LIEN https://exemple.fr/match_du_samedi').endswith('match_du_samedi')
 
 
+def _recording(app, at_least: int) -> None:
+    """Enregistrement en cours depuis au moins `at_least` s : durée « m:ss » affichée (n'importe
+    laquelle à partir de là ; une valeur précise ne dure qu'une seconde, un parcours de l'arbre
+    d'accessibilité peut durer plus sous charge). Les durées des vocaux déjà affichés sont ignorées."""
+    before = set(app.labels())
+
+    def elapsed() -> bool:
+        for t in app.labels():
+            m = re.fullmatch(r'(\d+):(\d\d)', t)
+            if m and t not in before and int(m[1]) * 60 + int(m[2]) >= at_least:
+                return True
+        return False
+
+    wait_until(elapsed, 15, f'enregistrement depuis {at_least} s')
+
+
 def test_message_vocal(run_app):
     fake, app = run_app()
     app.open_chat('Alice Martin')
     # zone de saisie vide : micro ; enregistrement (son de test, pas de micro réel)
     app.click('button', 'Enregistrer un message vocal')
-    assert app.text_visible('0:02', 10)
+    _recording(app, 2)
     app.click('button', 'Envoyer le vocal')
     call = fake.wait_call('sendMedia')
     upload = call['args'][1]
@@ -217,7 +234,7 @@ def test_message_vocal_annule(run_app):
     fake, app = run_app()
     app.open_chat('Alice Martin')
     app.click('button', 'Enregistrer un message vocal')
-    app.text_visible('0:01', 10)
+    _recording(app, 1)
     app.click('button', 'Annuler le vocal')
     app.find('button', 'Enregistrer un message vocal')
     assert fake.calls('sendMedia') == []
@@ -228,9 +245,15 @@ def test_brouillon_garde_par_discussion(run_app):
     app.open_chat('Alice Martin')
     composer = app.composer()
     composer.text = 'Message pas encore envoyé'
+    print('COMPOSER', repr(app.composer().text))
     app.open_chat('Famille')
     # brouillon dans la liste, zone vide dans l'autre discussion
-    assert app.text_visible('Brouillon :')
+    try:
+        app.text_visible('Brouillon :')
+    except AssertionError:
+        app.screenshot('/tmp/opencode/br.png')
+        print('LABELS', [t for t in app.labels() if 'rouillon' in t or 'Alice' in t or 'chalet' in t])
+        raise
     wait_until(lambda: app.composer().text == '', 5, 'zone vide')
     app.open_chat('Alice Martin')
     wait_until(lambda: app.composer().text == 'Message pas encore envoyé', 5, 'brouillon retrouvé')

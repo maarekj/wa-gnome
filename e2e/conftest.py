@@ -275,10 +275,28 @@ class App:
         xdotool('mouseup', '1')
         time.sleep(0.3)
 
+    def opened_chat(self) -> str | None:
+        """Nom de la discussion affichée : libellé du bouton de titre de la conversation."""
+        title = self.root.findChild(lambda n: n.showing and n.roleName == 'button' and n.description in ('Infos du groupe', 'Infos du contact'), retry=False, requireResult=False)
+        if title is None:
+            return None
+        label = title.findChild(lambda n: n.roleName == 'label' and n.name, retry=False, requireResult=False)
+        return label.name if label is not None else None
+
     def open_chat(self, name: str) -> None:
-        """Ouvre une discussion de la barre latérale (clic sur son nom)."""
-        self.point(self.find('label', name))
-        wait_until(lambda: len(self.all('label', name)) >= 2, 10, f'discussion « {name} » ouverte')
+        """Ouvre une discussion de la barre latérale (clic sur son nom) ; vérifiée au titre de la
+        conversation (pas au nombre de libellés : une infobulle en compte un). Clic perdu (app
+        occupée) : refait."""
+        for _ in range(3):
+            if self.opened_chat() == name:
+                return
+            self.point(self.find('label', name))
+            try:
+                wait_until(lambda: self.opened_chat() == name, 4, f'discussion « {name} » ouverte')
+                return
+            except AssertionError:
+                continue
+        raise AssertionError(f'discussion « {name} » pas ouverte (affichée : {self.opened_chat()!r})')
 
     def composer(self):
         """Zone de saisie : la vue de texte éditable."""
