@@ -776,3 +776,18 @@ def test_onglets_des_discussions(run_app):
         wait_until(lambda: app2.root.findChild(lambda n: n.showing and n.description == 'Infos du contact', retry=False, requireResult=False), 10, '~ Bob active')
     finally:
         app2.stop()
+
+
+def test_groupe_reserve_aux_administrateurs(run_app):
+    fake, app = run_app()
+    app.open_chat('Voisins')
+    assert app.text_visible('Seuls les administrateurs peuvent envoyer des messages')
+    assert not app.root.findChild(lambda n: n.showing and n.roleName == 'button' and n.name == 'Enregistrer un message vocal', retry=False, requireResult=False)
+    # autre groupe : zone de saisie
+    app.open_chat('Famille')
+    app.composer()
+    assert app.text_gone('Seuls les administrateurs peuvent envoyer des messages')
+    # groupe quitté (dans les archivées)
+    app.click('button', None, contains='Archivées')
+    app.open_chat('Ancien club de foot')
+    assert app.text_visible('Vous ne faites plus partie de ce groupe')

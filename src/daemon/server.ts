@@ -60,6 +60,7 @@ import {
   UPLOAD_REPLY,
   UPLOAD_VOICE_SECONDS,
   UPLOAD_VOICE_WAVEFORM,
+  READ_ONLY_TEXT,
 } from '../shared/api.ts';
 import { recentLogs } from './log.ts';
 import type { Store } from './store.ts';
@@ -257,6 +258,11 @@ export function startServer(opts: { host: string; port: number; token: string; a
     const route = `${req.method ?? 'GET'} /${parts.map((p, i) => ((parts[0] === 'chats' || parts[0] === 'calls' || parts[0] === 'statuses' || parts[0] === 'scheduled') && (i === 1 || (i === 3 && parts[2] === 'messages')) ? (i === 1 ? ':id' : ':mid') : p)).join('/')}`;
     const chatId = parts[1] ?? '';
     const messageId = parts[3] ?? '';
+    // groupe réservé aux administrateurs, ou quitté : envoi refusé (WhatsApp ne le distribuerait jamais)
+    if (['POST /chats/:id/messages', 'POST /chats/:id/media', 'POST /chats/:id/scheduled'].includes(route)) {
+      const reason = store.readOnly(chatId);
+      if (reason !== null) throw new HttpError(403, READ_ONLY_TEXT[reason]);
+    }
     switch (route) {
       case 'GET /status':
         json(res, 200, wa.status);

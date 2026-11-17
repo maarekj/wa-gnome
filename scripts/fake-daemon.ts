@@ -367,12 +367,18 @@ store.upsertContact('33600000020@s.whatsapp.net', { name: 'Élodie Bernard' });
 store.upsertContact('33600000021@s.whatsapp.net', { name: 'Marc Dubois' });
 add(SHOP, false, 'Votre commande est prête', 20 * 24 * H);
 store.upsertChat({ id: SHOP, archived: true });
+// groupe quitté (archivé) : plus de zone de saisie
+const OLD_CLUB = '120363000000000008@g.us';
+store.upsertChat({ id: OLD_CLUB, name: 'Ancien club de foot' });
+add(OLD_CLUB, false, 'Saison terminée, merci à tous', 30 * 24 * H, BOB, 'Bob');
+store.upsertChat({ id: OLD_CLUB, archived: true, left: true });
 // chaîne suivie (onglet « Actus » du téléphone) : à part, lecture seule
 const CHANNEL = '120363000000000009@newsletter';
 store.upsertChat({ id: CHANNEL, name: 'Actualités du quartier' });
 add(CHANNEL, false, '*Travaux* rue des Lilas jusqu’à vendredi', 5 * H);
 store.upsertChat({ id: CHANNEL, unread: 1 });
-store.upsertChat({ id: NEWS, name: 'Voisins', mutedUntil: -1 });
+// groupe où seuls les administrateurs écrivent (je n'en suis pas un) : pas de zone de saisie
+store.upsertChat({ id: NEWS, name: 'Voisins', mutedUntil: -1, announce: true, admin: false });
 add(NEWS, false, 'Ramassage des encombrants jeudi', 5 * H, BOB, 'Bob');
 add(NEWS, false, 'Merci pour l’info', 4 * H, ALICE, 'Alice');
 store.upsertChat({ id: NEWS, unread: 2 });

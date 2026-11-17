@@ -71,8 +71,20 @@ export const Chat = z.object({
   favorite: z.boolean(),
   /** messages éphémères : durée en secondes (0 : désactivés) */
   ephemeral: z.number(),
+  /**
+   * impossible d'y écrire : groupe où seuls les administrateurs écrivent (et je n'en suis pas un),
+   * ou groupe quitté (ou dont j'ai été retiré) ; null : écriture possible
+   */
+  readOnly: z.nullable(z.enum(['admins', 'left'])),
 });
 export type Chat = z.infer<typeof Chat>;
+export type ReadOnly = NonNullable<Chat['readOnly']>;
+
+/** Raison affichée à la place de la zone de saisie (et de l'envoi refusé). */
+export const READ_ONLY_TEXT: Readonly<Record<ReadOnly, string>> = {
+  admins: 'Seuls les administrateurs peuvent envoyer des messages',
+  left: 'Vous ne faites plus partie de ce groupe',
+};
 
 /** Durée des messages éphémères, lisible (« 24 heures », « 7 jours », « 90 jours »). */
 export function ephemeralText(seconds: number): string {

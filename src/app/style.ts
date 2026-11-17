@@ -137,6 +137,10 @@ export const STYLESHEET = `
 .chat-title {
   padding: 2px 10px;
 }
+/* groupe réservé aux administrateurs : à la place de la zone de saisie */
+.read-only-chat {
+  padding: 14px 12px;
+}
 /* nom de l'auteur en tête de bulle (groupe) : bouton sans marge ; souligné au survol */
 button.sender-link {
   padding: 0;

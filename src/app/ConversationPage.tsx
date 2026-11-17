@@ -6,7 +6,7 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import Pango from 'gi://Pango';
 import { createMemo, createState, onCleanup } from 'gnim';
-import { type ChatAction, ephemeralText, isMuted, type Message } from '../shared/api.ts';
+import { type ChatAction, ephemeralText, isMuted, type Message, READ_ONLY_TEXT } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { type Store } from '../shared/store.ts';
 import { attachDrop } from './Attachments.ts';
@@ -163,6 +163,11 @@ export function ConversationPage({
     return id === null
       ? null
       : { id, name: c?.name ?? store.nameHint(id) ?? id.split('@')[0] ?? id, group: c?.group ?? id.endsWith('@g.us'), ephemeral: c?.ephemeral ?? 0 };
+  });
+  /** groupe où seuls les administrateurs écrivent (et je n'en suis pas un) */
+  const readOnly = createMemo(() => {
+    const id = store.current();
+    return id === null ? null : (store.chats().find((c) => c.id === id)?.readOnly ?? null);
   });
   // groupe ou non seulement : un changement de la liste des discussions ne recalcule rien ici
   const group = createMemo(() => chat()?.group ?? false);
@@ -909,15 +914,25 @@ export function ConversationPage({
                     />
                   </Gtk.Box>
                   <Gtk.Box $type="named" name="compose" orientation={Gtk.Orientation.VERTICAL}>
-                    <Composer
-                      store={store}
-                      pictures={pictures}
-                      chatId={store.current}
-                      toast={toast}
-                      register={(add) => {
-                        dropFiles = add;
-                      }}
+                    {/* groupe réservé aux administrateurs, ou quitté : pas de zone de saisie (comme WhatsApp) */}
+                    <Gtk.Label
+                      label={readOnly((r) => (r === null ? '' : READ_ONLY_TEXT[r]))}
+                      visible={readOnly((r) => r !== null)}
+                      cssClasses={['dim-label', 'read-only-chat']}
+                      wrap
+                      justify={Gtk.Justification.CENTER}
                     />
+                    <Gtk.Box orientation={Gtk.Orientation.VERTICAL} visible={readOnly((r) => r === null)}>
+                      <Composer
+                        store={store}
+                        pictures={pictures}
+                        chatId={store.current}
+                        toast={toast}
+                        register={(add) => {
+                          dropFiles = add;
+                        }}
+                      />
+                    </Gtk.Box>
                   </Gtk.Box>
                 </Gtk.Stack>
               </Adw.Clamp>

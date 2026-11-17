@@ -29,7 +29,7 @@ import {
   type WAMessageKey,
   type WASocket,
 } from 'baileys';
-import type { BaileysEventMap } from 'baileys';
+import type { BaileysEventMap, GroupMetadata, GroupParticipant } from 'baileys';
 import * as z from 'zod/mini';
 import {
   type AccountDiagnostics,
@@ -532,17 +532,33 @@ export class WhatsApp {
       }
     });
 
-    // groupe renommé
+    // groupe renommé, ou réservé aux administrateurs (ou plus)
     on('groups.update', (groups) => {
-      const named = groups.filter((g): g is typeof g & { id: string; subject: string } => g.id !== undefined && g.subject !== undefined);
-      for (const g of named) this.#store.upsertChat({ id: g.id, name: g.subject });
-      this.#emitChats(named.map((g) => g.id));
+      const changed = groups.filter((g): g is typeof g & { id: string } => g.id !== undefined && (g.subject !== undefined || g.announce !== undefined));
+      for (const g of changed) this.#store.upsertChat({ id: g.id, name: g.subject ?? null, announce: g.announce ?? null });
+      this.#emitChats(changed.map((g) => g.id));
+    });
+
+    // je deviens administrateur d'un groupe, ou ne le suis plus
+    // ou je suis retiré du groupe, ou ajouté de nouveau
+    on('group-participants.update', ({ id, participants, action }) => {
+      if (!participants.some((p) => this.#isMeIn(p))) return;
+      if (action === 'promote' || action === 'demote') this.#store.upsertChat({ id, admin: action === 'promote' });
+      else if (action === 'remove' || action === 'add') this.#store.upsertChat({ id, left: action === 'remove' });
+      else return;
+      this.#emitChats([id]);
     });
 
     // noms de groupes : pas toujours présents dans l'historique
     on('groups.upsert', (groups) => {
       for (const g of groups)
-        this.#store.upsertChat({ id: this.#jid(g.id), name: g.subject, ...(g.ephemeralDuration === undefined ? {} : { ephemeral: g.ephemeralDuration }) });
+        this.#store.upsertChat({
+          id: this.#jid(g.id),
+          name: g.subject,
+          left: false,
+          ...this.#roleIn(g),
+          ...(g.ephemeralDuration === undefined ? {} : { ephemeral: g.ephemeralDuration }),
+        });
       this.#emitChats(groups.map((g) => g.id));
     });
   }
@@ -882,18 +898,31 @@ export class WhatsApp {
     return patch;
   }
 
+  /** Moi parmi ces participants (identifiant, numéro ou lid). */
+  #isMeIn(p: GroupParticipant): boolean {
+    return [p.id, p.phoneNumber, p.lid].some((j) => typeof j === 'string' && j !== '' && this.#store.isMe(this.#jid(j)));
+  }
+
+  /** Réglage du groupe (seuls les administrateurs écrivent) et mon rôle. */
+  #roleIn(g: GroupMetadata): { announce: boolean; admin: boolean } {
+    const me = g.participants.find((p) => this.#isMeIn(p));
+    return { announce: g.announce === true, admin: me?.admin !== undefined && me.admin !== null };
+  }
+
   /** Noms des groupes (absents de l'historique pour les groupes sans message récent). */
   async #fetchGroups(sock: WASocket): Promise<void> {
     try {
       const groups = Object.values(await sock.groupFetchAllParticipating());
       this.#store.transaction(() => {
         for (const g of groups) {
-          this.#store.upsertChat({ id: g.id, name: g.subject, ephemeral: g.ephemeralDuration ?? 0 });
+          this.#store.upsertChat({ id: g.id, name: g.subject, ephemeral: g.ephemeralDuration ?? 0, ...this.#roleIn(g) });
           // participants : correspondances lid / numéro et noms publics éventuels
           for (const p of g.participants) this.#saveContact(p);
         }
+        // liste complète (jamais vide si j'ai des groupes) : les autres groupes connus sont quittés
+        if (groups.length > 0) this.#store.setParticipating(groups.map((g) => g.id));
       });
-      this.#emitChats(groups.map((g) => g.id));
+      this.#emitChats(this.#store.chats().flatMap((c) => (c.group ? [c.id] : [])));
     } catch (error) {
       logger.warn({ error }, 'groupes');
     }
@@ -1520,6 +1549,10 @@ export class WhatsApp {
     if (chatId.endsWith('@g.us')) {
       const g = await sock.groupMetadata(chatId);
       for (const p of g.participants) this.#saveContact(p);
+      // réglage et rôle à jour (fiche ouverte : la discussion l'est souvent aussi)
+      const role = this.#roleIn(g);
+      this.#store.upsertChat({ id: chatId, ...role });
+      this.#emitChats([chatId]);
       const participants = g.participants
         .map((p) => {
           const id = this.#jid(p.phoneNumber ?? p.id);
@@ -1634,6 +1667,7 @@ export class WhatsApp {
         return;
       case 'leave':
         await sock.groupLeave(chatId);
+        this.#store.upsertChat({ id: chatId, left: true });
         break;
       case 'favorite':
         await this.#setFavorite(sock, chatId, a.value);

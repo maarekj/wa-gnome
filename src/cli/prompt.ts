@@ -123,6 +123,7 @@ const emptyChat: Chat = {
   labels: [],
   favorite: false,
   ephemeral: 0,
+  readOnly: null,
 };
 
 /** Liste désignée par son nom ou son identifiant ; absente : choisie (terminal). */

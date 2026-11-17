@@ -663,7 +663,7 @@ void describe('Store : migrations et déconnexion', () => {
     assert.equal(store.needsMediaBackfill, true);
     store.close();
     const db = new DatabaseSync(file);
-    assert.equal(db.prepare('PRAGMA user_version').get()?.['user_version'], 19);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.['user_version'], 21);
     db.close();
     // réouverture : aucune migration rejouée
     new Store(file).close();
@@ -676,12 +676,38 @@ void describe('Store : migrations et déconnexion', () => {
     new Store(file).close();
     // arrêt juste avant la dernière migration : seule celle-ci est rejouée au démarrage suivant
     const db = new DatabaseSync(file);
-    db.exec('PRAGMA user_version = 18');
+    db.exec('PRAGMA user_version = 20');
     db.close();
     const store = new Store(file);
     assert.equal(store.messages(PN, 10).length, 2);
     store.close();
     remove(file);
+  });
+
+  void it('groupe réservé aux administrateurs ou quitté : lecture seule', () => {
+    const store = new Store(':memory:');
+    const g = '1@g.us';
+    store.upsertChat({ id: g, name: 'Annonces', timestamp: 1, announce: true, admin: false });
+    assert.equal(store.readOnly(g), 'admins');
+    assert.equal(store.chats().find((c) => c.id === g)?.readOnly, 'admins');
+    // champs absents : inchangés ; promu administrateur : plus en lecture seule
+    store.upsertChat({ id: g, name: 'Annonces 2' });
+    assert.equal(store.readOnly(g), 'admins');
+    store.upsertChat({ id: g, admin: true });
+    assert.equal(store.readOnly(g), null);
+    store.upsertChat({ id: g, admin: false, announce: false });
+    assert.equal(store.readOnly(g), null);
+    // discussion directe : jamais
+    store.upsertChat({ id: PN, announce: true });
+    assert.equal(store.readOnly(PN), null);
+    // groupes dont je fais partie : les autres sont quittés ; quitté l'emporte sur « admins »
+    store.upsertChat({ id: '2@g.us', name: 'Ancien', announce: true });
+    store.setParticipating([g]);
+    assert.equal(store.readOnly('2@g.us'), 'left');
+    assert.equal(store.readOnly(g), null);
+    store.upsertChat({ id: '2@g.us', left: false });
+    assert.equal(store.readOnly('2@g.us'), 'admins');
+    store.close();
   });
 
   void it('déconnexion : tout est effacé, messages programmés compris', () => {

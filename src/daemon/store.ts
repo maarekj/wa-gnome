@@ -28,6 +28,7 @@ import {
   effectiveStatus,
   statusOf,
   statusRank,
+  type ReadOnly,
 } from '../shared/api.ts';
 
 const SCHEMA = `
@@ -44,7 +45,12 @@ CREATE TABLE IF NOT EXISTS chats (
   pinned INTEGER NOT NULL DEFAULT 0,
   marked_unread INTEGER NOT NULL DEFAULT 0,
   -- messages éphémères : durée en secondes, 0 : désactivés
-  ephemeral INTEGER NOT NULL DEFAULT 0
+  ephemeral INTEGER NOT NULL DEFAULT 0,
+  -- groupe : seuls les administrateurs peuvent écrire ; moi administrateur
+  announce INTEGER NOT NULL DEFAULT 0,
+  admin INTEGER NOT NULL DEFAULT 0,
+  -- groupe quitté, ou dont j'ai été retiré
+  left_group INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY,
@@ -219,6 +225,9 @@ const ChatRow = z.object({
   last_view_once: z.nullable(z.number()),
   last_mentions: z.nullable(z.string()),
   ephemeral: z.number(),
+  announce: z.number(),
+  admin: z.number(),
+  left_group: z.number(),
 });
 
 /** JSON lu sans échec (null si invalide). */
@@ -319,7 +328,7 @@ const parseMedia = (json: string | null): Media | null => {
 };
 
 /** Version du schéma (PRAGMA user_version) ; migrations ci-dessous. */
-const VERSION = 19;
+const VERSION = 21;
 
 /** Nom public d'une personne absente du carnet, comme dans WhatsApp. */
 const publicName = (notify: string): string => `~ ${notify}`;
@@ -334,6 +343,13 @@ const userPart = (jid: string): string => {
   const user = jid.split('@')[0] ?? jid;
   return jid.endsWith('@s.whatsapp.net') ? formatPhone(user.split(':')[0] ?? user) : user;
 };
+
+/** Raison de la lecture seule d'une discussion (groupes seulement). */
+function readOnlyOf(id: string, r: { announce: number; admin: number; left_group: number }): ReadOnly | null {
+  if (!id.endsWith('@g.us')) return null;
+  if (r.left_group === 1) return 'left';
+  return r.announce === 1 && r.admin === 0 ? 'admins' : null;
+}
 
 /** Champs modifiables d'une discussion (absents : inchangés). */
 /** Booléen → 0/1 pour SQLite ; absent : null (inchangé). */
@@ -354,6 +370,12 @@ export interface ChatPatch {
   markedUnread?: boolean | null;
   /** messages éphémères (secondes, 0 : désactivés) */
   ephemeral?: number | null;
+  /** groupe : seuls les administrateurs peuvent écrire */
+  announce?: boolean | null;
+  /** groupe : moi administrateur */
+  admin?: boolean | null;
+  /** groupe quitté, ou dont j'ai été retiré */
+  left?: boolean | null;
 }
 
 export class Store {
@@ -392,6 +414,17 @@ export class Store {
     for (const r of this.#db.prepare('SELECT lid, pn FROM lid_map').all()) {
       if (typeof r['lid'] === 'string' && typeof r['pn'] === 'string') this.#pn.set(r['lid'], r['pn']);
     }
+  }
+
+  /** Colonnes entières (0 par défaut) ajoutées aux discussions si absentes (migration rejouable). */
+  #addChatColumns(names: readonly string[]): void {
+    const columns = new Set(
+      this.#db
+        .prepare('PRAGMA table_info(chats)')
+        .all()
+        .map((c) => String(c['name'])),
+    );
+    for (const col of names) if (!columns.has(col)) this.#db.exec(`ALTER TABLE chats ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`);
   }
 
   /** Passage d'une base à la version `v` (depuis v - 1) ; vrai : médias à reconvertir. */
@@ -533,6 +566,16 @@ export class Store {
         this.#db.exec(SCHEMA);
         break;
       }
+      case 20: {
+        // groupes réservés aux administrateurs (lus au prochain chargement des groupes)
+        this.#addChatColumns(['announce', 'admin']);
+        break;
+      }
+      case 21: {
+        // groupes quittés (lus au prochain chargement des groupes)
+        this.#addChatColumns(['left_group']);
+        break;
+      }
       default:
         break;
     }
@@ -659,8 +702,9 @@ export class Store {
     if (c.id.endsWith('@broadcast')) return;
     this.#db
       .prepare(
-        `INSERT INTO chats (id, name, unread, timestamp, archived, muted_until, pinned, marked_unread, ephemeral)
-         VALUES (:id, :name, coalesce(:unread, 0), coalesce(:timestamp, 0), coalesce(:archived, 0), coalesce(:muted, 0), coalesce(:pinned, 0), coalesce(:marked, 0), coalesce(:ephemeral, 0))
+        `INSERT INTO chats (id, name, unread, timestamp, archived, muted_until, pinned, marked_unread, ephemeral, announce, admin, left_group)
+         VALUES (:id, :name, coalesce(:unread, 0), coalesce(:timestamp, 0), coalesce(:archived, 0), coalesce(:muted, 0), coalesce(:pinned, 0), coalesce(:marked, 0), coalesce(:ephemeral, 0),
+                 coalesce(:announce, 0), coalesce(:admin, 0), coalesce(:left, 0))
          ON CONFLICT (id) DO UPDATE SET
            name = coalesce(excluded.name, chats.name),
            unread = coalesce(:unread, chats.unread),
@@ -669,7 +713,10 @@ export class Store {
            muted_until = coalesce(:muted, chats.muted_until),
            pinned = coalesce(:pinned, chats.pinned),
            marked_unread = coalesce(:marked, chats.marked_unread),
-           ephemeral = coalesce(:ephemeral, chats.ephemeral)`,
+           ephemeral = coalesce(:ephemeral, chats.ephemeral),
+           announce = coalesce(:announce, chats.announce),
+           admin = coalesce(:admin, chats.admin),
+           left_group = coalesce(:left, chats.left_group)`,
       )
       .run({
         id: c.id,
@@ -681,6 +728,9 @@ export class Store {
         pinned: c.pinned ?? null,
         marked: flag(c.markedUnread),
         ephemeral: c.ephemeral ?? null,
+        announce: flag(c.announce),
+        admin: flag(c.admin),
+        left: flag(c.left),
       });
   }
 
@@ -902,7 +952,7 @@ export class Store {
   #chats(where: string, params: SQLInputValue[]): Chat[] {
     const rows = this.#db
       .prepare(
-        `SELECT c.id, c.name, c.unread, c.timestamp, c.archived, c.muted_until, c.pinned, c.marked_unread, c.ephemeral,
+        `SELECT c.id, c.name, c.unread, c.timestamp, c.archived, c.muted_until, c.pinned, c.marked_unread, c.ephemeral, c.announce, c.admin, c.left_group,
                 (SELECT group_concat(label_id, ',') FROM chat_labels cl WHERE cl.chat_id = c.id) AS labels,
                 EXISTS (SELECT 1 FROM favorites f WHERE f.chat_id = c.id) AS favorite,
                 ct.name AS contact, ct.notify,
@@ -935,6 +985,7 @@ export class Store {
       labels: r.labels === null ? [] : r.labels.split(','),
       favorite: r.favorite !== 0,
       ephemeral: r.ephemeral,
+      readOnly: readOnlyOf(r.id, r),
     }));
   }
 
@@ -1254,6 +1305,24 @@ export class Store {
   // ------------------------------------------------------------------ messages éphémères
 
   /** Durée éphémère d'une discussion (secondes, 0 : désactivés). */
+  /** Impossible d'écrire : groupe réservé aux administrateurs (je n'en suis pas un), ou quitté. */
+  readOnly(chatId: string): ReadOnly | null {
+    const r = this.#db.prepare('SELECT announce, admin, left_group FROM chats WHERE id = ?').get(chatId);
+    return r === undefined ? null : readOnlyOf(chatId, { announce: Number(r['announce']), admin: Number(r['admin']), left_group: Number(r['left_group']) });
+  }
+
+  /**
+   * Groupes dont je fais partie (liste complète du serveur) : les autres groupes connus sont
+   * quittés, ceux-ci ne le sont pas.
+   */
+  setParticipating(ids: readonly string[]): void {
+    this.transaction(() => {
+      this.#db.exec("UPDATE chats SET left_group = 1 WHERE id LIKE '%@g.us'");
+      const upd = this.#db.prepare('UPDATE chats SET left_group = 0 WHERE id = ?');
+      for (const id of ids) upd.run(id);
+    });
+  }
+
   ephemeralOf(chatId: string): number {
     return Number(this.#db.prepare('SELECT ephemeral FROM chats WHERE id = ?').get(chatId)?.['ephemeral'] ?? 0);
   }

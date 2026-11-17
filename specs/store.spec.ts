@@ -66,6 +66,7 @@ const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {
   labels: [],
   favorite: false,
   ephemeral: 0,
+  readOnly: null,
   ...extra,
 });
 

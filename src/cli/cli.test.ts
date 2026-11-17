@@ -25,6 +25,7 @@ const chat = (id: string, name: string): Chat => ({
   labels: [],
   favorite: false,
   ephemeral: 0,
+  readOnly: null,
 });
 
 void describe('désignation', () => {
@@ -150,6 +151,13 @@ void describe('commandes sur le faux démon', () => {
     assert.deepEqual((await lastCall())?.args[1], { action: 'archive', value: true });
     json('lists', 'add', 'Voisinage', 'Alice');
     assert.deepEqual((await lastCall())?.args, ['33600000001@s.whatsapp.net', { action: 'label', labelId: '4', value: true }]);
+  });
+
+  void it('groupe réservé aux administrateurs : envoi refusé par le démon', async () => {
+    const r = wa('send', 'Voisins', 'Bonjour', '--json');
+    assert.equal(r.code, 1);
+    assert.match(r.err, /Seuls les administrateurs/u);
+    assert.notEqual((await lastCall())?.args[1], 'Bonjour');
   });
 
   void it('agent : entrée standard ouverte jamais fermée, pas de blocage', async () => {
