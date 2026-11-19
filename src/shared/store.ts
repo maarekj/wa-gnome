@@ -64,6 +64,9 @@ export class Store {
   /** onglets : discussions ouvertes, dans l'ordre de la barre (l'active : `current`) */
   readonly tabs: Accessor<readonly string[]>;
   readonly #setTabs: (ids: readonly string[]) => void;
+  /** onglet temporaire (clic dans la liste) : remplacé par le suivant tant qu'il n'est pas gardé */
+  readonly preview: Accessor<string | null>;
+  readonly #setPreview: (id: string | null) => void;
   /** messages de la discussion ouverte */
   readonly messages: Accessor<readonly Message[]>;
   /** présence de la discussion ouverte (null : inconnue) */
@@ -126,6 +129,7 @@ export class Store {
     [this.lists, this.#setLists] = createState<readonly ChatList[]>([]);
     [this.current, this.#setCurrent] = createState<string | null>(null);
     [this.tabs, this.#setTabs] = createState<readonly string[]>([]);
+    [this.preview, this.#setPreview] = createState<string | null>(null);
     [this.messages, this.#setMessages] = createState<readonly Message[]>([]);
     [this.older, this.#setOlder] = createState<OlderState>('idle');
     [this.presence, this.#setPresence] = createState<Presence | null>(null);
@@ -225,6 +229,7 @@ export class Store {
           this.#replaceChats([]);
           // onglets du compte déconnecté : fermés (un autre appairage n'en hérite pas)
           this.#setTabs([]);
+          this.#setPreview(null);
           this.open(null);
         }
         break;
@@ -310,7 +315,9 @@ export class Store {
   }
 
   /** Ouvre une discussion sur un message (résultat de recherche), mis en évidence. */
-  openAt(chatId: string, id: string, timestamp: number): void {
+  openAt(chatId: string, id: string, timestamp: number, preview = false): void {
+    // résultat de recherche de la liste : onglet temporaire, comme un clic sur une discussion
+    if (preview) this.#placePreview(chatId);
     const target = { id, n: (this.scrollTarget.peek()?.n ?? 0) + 1 };
     if (this.current.peek() === chatId && this.messages.peek().some((m) => m.id === id)) {
       this.#setScrollTarget(target);
@@ -357,14 +364,35 @@ export class Store {
   }
 
   /**
-   * Discussion affichée dans l'onglet actif à la place de la sienne (Alt+Haut/Bas : navigation
-   * dans la liste) ; déjà dans un onglet : celui-ci devient actif.
+   * Discussion ouverte dans l'onglet temporaire (clic dans la liste, Alt+Haut/Bas), comme VS Code :
+   * il remplace le précédent onglet temporaire. Déjà dans un onglet : celui-ci devient actif ;
+   * déjà affichée dans l'onglet temporaire (second clic) : onglet gardé.
    */
-  navigate(id: string): void {
-    const tabs = this.tabs.peek();
-    const at = tabs.indexOf(this.current.peek() ?? '');
-    if (!tabs.includes(id) && at >= 0) this.#setTabs(tabs.with(at, id));
+  openPreview(id: string): void {
+    this.#placePreview(id);
     this.open(id);
+  }
+
+  /** Onglet de `id` placé comme temporaire (voir `openPreview`), sans ouvrir la discussion. */
+  #placePreview(id: string): void {
+    const tabs = this.tabs.peek();
+    if (tabs.includes(id)) {
+      if (id === this.current.peek()) this.keepTab(id);
+      return;
+    }
+    const preview = this.preview.peek();
+    const at = preview === null ? -1 : tabs.indexOf(preview);
+    if (at >= 0) this.#setTabs(tabs.with(at, id));
+    else {
+      const current = tabs.indexOf(this.current.peek() ?? '');
+      this.#setTabs(current < 0 ? [...tabs, id] : tabs.toSpliced(current + 1, 0, id));
+    }
+    this.#setPreview(id);
+  }
+
+  /** Onglet temporaire gardé (devenu un onglet normal) : envoi, historique chargé, second clic. */
+  keepTab(id: string | null): void {
+    if (id !== null && this.preview.peek() === id) this.#setPreview(null);
   }
 
   /** Ferme l'onglet ; actif : le voisin de droite (sinon de gauche) devient actif. */
@@ -376,13 +404,18 @@ export class Store {
       return;
     }
     const rest = tabs.toSpliced(at, 1);
+    if (this.preview.peek() === id) this.#setPreview(null);
     this.#setTabs(rest);
     if (this.current.peek() === id) this.open(rest[Math.min(at, rest.length - 1)] ?? null);
   }
 
-  /** Onglets dans un nouvel ordre (glissés, ou restaurés au lancement : `active` ouvert). */
-  setTabs(ids: readonly string[], active?: string | null): void {
+  /**
+   * Onglets dans un nouvel ordre (glissés, ou restaurés au lancement : `active` ouvert, `preview`
+   * temporaire).
+   */
+  setTabs(ids: readonly string[], active?: string | null, preview?: string | null): void {
     this.#setTabs([...new Set(ids)]);
+    if (preview !== undefined) this.#setPreview(preview !== null && ids.includes(preview) ? preview : null);
     if (active !== undefined && active !== null && ids.includes(active)) this.open(active);
   }
 

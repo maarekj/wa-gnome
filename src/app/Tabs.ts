@@ -2,6 +2,7 @@
 // partagée : l'Adw.TabView n'a que des pages vides (affichées par l'Adw.TabBar), changer
 // d'onglet ouvre la discussion dans le Store (`store.tabs`, `store.current`).
 import Adw from 'gi://Adw?version=1';
+import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk?version=4.0';
 import { onCleanup } from 'gnim';
 import type { Store } from '../shared/store.ts';
@@ -31,9 +32,14 @@ export function tabBar(store: Store, pictures: Pictures): Gtk.Widget {
   const label = (page: Adw.TabPage, id: string): void => {
     const chat = store.chats.peek().find((c) => c.id === id);
     page.title = nameOf(id);
-    page.tooltip = nameOf(id);
     // non lue : onglet signalé (point de la barre)
     page.needsAttention = chat !== undefined && id !== store.current.peek() && (chat.unread > 0 || chat.markedUnread);
+    // onglet temporaire (comme VS Code) : icône, clic dessus pour le garder
+    const temporary = store.preview.peek() === id;
+    page.indicatorIcon = temporary ? Gio.ThemedIcon.new('view-reveal-symbolic') : null;
+    page.indicatorTooltip = temporary ? 'Onglet temporaire, remplacé par la prochaine discussion ouverte : cliquer pour le garder' : '';
+    page.indicatorActivatable = temporary;
+    page.tooltip = temporary ? `${nameOf(id)} (onglet temporaire)` : nameOf(id);
   };
   const pageFor = (id: string): Adw.TabPage => {
     let page = pages.get(id);
@@ -75,6 +81,10 @@ export function tabBar(store: Store, pictures: Pictures): Gtk.Widget {
     }
   };
 
+  // icône de l'onglet temporaire : gardé
+  view.connect('indicator-activated', (_v: Adw.TabView, page: Adw.TabPage) => {
+    store.keepTab([...pages].find(([, p]) => p === page)?.[0] ?? null);
+  });
   view.connect('notify::selected-page', () => {
     if (syncing) return;
     const page = view.selectedPage;
@@ -103,6 +113,7 @@ export function tabBar(store: Store, pictures: Pictures): Gtk.Widget {
   onCleanup(store.tabs.subscribe(sync));
   onCleanup(store.current.subscribe(sync));
   onCleanup(store.chats.subscribe(sync));
+  onCleanup(store.preview.subscribe(sync));
   onCleanup(() => {
     for (const off of icons.values()) off();
   });

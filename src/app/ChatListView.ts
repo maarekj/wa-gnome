@@ -318,8 +318,8 @@ export function chatListView({ store, pictures, rows, openEntry, menu }: ChatLis
   /** action d'un élément (clic, Entrée) */
   const activate = (item: RowItem | null): void => {
     const r = item?.row;
-    if (r?.kind === 'chat') store.open(r.chat.id);
-    else if (r?.kind === 'hit') store.openAt(r.hit.chatId, r.hit.id, r.hit.timestamp);
+    if (r?.kind === 'chat') store.openPreview(r.chat.id);
+    else if (r?.kind === 'hit') store.openAt(r.hit.chatId, r.hit.id, r.hit.timestamp, true);
   };
 
   factory.connect('setup', (_f: Gtk.SignalListItemFactory, obj: GObject.Object) => {

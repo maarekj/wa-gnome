@@ -43,7 +43,7 @@ const SettingsFile = z.object({
   rejectMessage: z.optional(z.string()),
   sidePanelWidth: z.optional(z.number()),
   notifyMentions: z.optional(z.boolean()),
-  tabs: z.optional(z.record(z.string(), z.object({ ids: z.array(z.string()), active: z.nullable(z.string()) }))),
+  tabs: z.optional(z.record(z.string(), z.object({ ids: z.array(z.string()), active: z.nullable(z.string()), preview: z.optional(z.nullable(z.string())) }))),
 });
 
 /** Outil de traduction : CLI installée par l'utilisateur (ses identifiants). */
@@ -102,7 +102,7 @@ export interface Settings {
   /** notifié des mentions même dans une discussion en mode silencieux */
   readonly notifyMentions: boolean;
   /** onglets ouverts par compte (et l'actif), restaurés au lancement */
-  readonly tabs: Readonly<Record<string, { readonly ids: readonly string[]; readonly active: string | null }>>;
+  readonly tabs: Readonly<Record<string, { readonly ids: readonly string[]; readonly active: string | null; readonly preview?: string | null | undefined }>>;
 }
 /** Panneau de droite : largeur par défaut et bornes (pixels). */
 export const SIDE_PANEL_DEFAULT = 340;
@@ -235,15 +235,23 @@ export function rememberSidePanelWidth(width: number): void {
 }
 
 /** Onglets d'un compte, retenus pour le prochain lancement. */
-export function rememberTabs(account: string, ids: readonly string[], active: string | null): void {
+export function rememberTabs(account: string, ids: readonly string[], active: string | null, preview: string | null): void {
   const saved = current.tabs[account];
-  if (saved !== undefined && saved.active === active && saved.ids.length === ids.length && saved.ids.every((id, i) => id === ids[i])) return;
-  update({ tabs: { ...current.tabs, [account]: { ids: [...ids], active } } });
+  if (
+    saved !== undefined &&
+    saved.active === active &&
+    (saved.preview ?? null) === preview &&
+    saved.ids.length === ids.length &&
+    saved.ids.every((id, i) => id === ids[i])
+  )
+    return;
+  update({ tabs: { ...current.tabs, [account]: { ids: [...ids], active, preview } } });
 }
 
 /** Onglets retenus d'un compte. */
 // relu sur le disque : appelé avant le chargement des réglages (`initSettings`, au démarrage)
-export const savedTabs = (account: string): { ids: readonly string[]; active: string | null } => loadSettings().tabs[account] ?? { ids: [], active: null };
+export const savedTabs = (account: string): { ids: readonly string[]; active: string | null; preview?: string | null | undefined } =>
+  loadSettings().tabs[account] ?? { ids: [], active: null };
 
 /** Compte affiché, retenu pour le prochain lancement. */
 export function rememberAccount(account: string): void {

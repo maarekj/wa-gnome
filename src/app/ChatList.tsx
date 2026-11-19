@@ -126,7 +126,7 @@ export function ChatList({
   /** Alt+Haut / Alt+Bas : discussion précédente / suivante de la liste affichée */
   const step = (delta: number): void => {
     const id = neighbourChat(shown.peek(), store.current.peek(), delta);
-    if (id !== null) store.navigate(id);
+    if (id !== null) store.openPreview(id);
   };
   const archivedCount = createMemo(() => store.chats().filter((c) => inView(c, 'archived')).length);
   const channelCount = createMemo(() => store.chats().filter((c) => isChannel(c.id)).length);

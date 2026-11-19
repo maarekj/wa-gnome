@@ -156,7 +156,7 @@ function watch(store: Store): void {
   });
   // onglets : restaurés (l'actif, une fois les discussions connues), puis retenus à chaque changement
   const saved = savedTabs(store.client.account);
-  store.setTabs(saved.ids);
+  store.setTabs(saved.ids, undefined, saved.preview ?? null);
   let restored = saved.active === null;
   const restore = (): void => {
     if (restored || store.chats.peek().length === 0) return;
@@ -170,14 +170,16 @@ function watch(store: Store): void {
     const tabs = store.tabs.peek();
     // tant que l'actif n'est pas rouvert, l'onglet retenu reste l'actif
     if (restored) lastActive = store.current.peek() ?? lastActive;
-    rememberTabs(store.client.account, tabs, lastActive !== null && tabs.includes(lastActive) ? lastActive : null);
+    rememberTabs(store.client.account, tabs, lastActive !== null && tabs.includes(lastActive) ? lastActive : null, store.preview.peek());
   };
   const offTabs = store.tabs.subscribe(keep);
   const offCurrent = store.current.subscribe(keep);
+  const offPreview = store.preview.subscribe(keep);
   unwatch.set(store, () => {
     offChats();
     offTabs();
     offCurrent();
+    offPreview();
     off();
     store.onIncoming = null;
     store.onCall = null;

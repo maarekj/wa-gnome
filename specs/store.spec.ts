@@ -322,9 +322,11 @@ describe('Store : onglets', () => {
     store.open('c');
     expect(store.tabs.peek()).toEqual(['a', 'c', 'b']);
     expect(store.current.peek()).toBe('c');
-    // Alt+Haut/Bas : remplace l'onglet actif
-    store.navigate('d');
-    expect(store.tabs.peek()).toEqual(['a', 'd', 'b']);
+    // clic dans la liste : onglet temporaire après l'actif
+    store.openPreview('d');
+    expect(store.tabs.peek()).toEqual(['a', 'c', 'd', 'b']);
+    expect(store.preview.peek()).toBe('d');
+    store.closeTab('c');
     // fermer l'actif : le voisin de droite, sinon de gauche
     store.closeTab('d');
     expect(store.current.peek()).toBe('b');
@@ -341,6 +343,36 @@ describe('Store : onglets', () => {
     store.setTabs(['x', 'y', 'x'], 'y');
     expect(store.tabs.peek()).toEqual(['x', 'y']);
     expect(store.current.peek()).toBe('y');
+  });
+
+  it('onglet temporaire : remplacé, gardé par un second clic ou une action', () => {
+    const store = new Store(new WaClient('http://127.0.0.1:1', () => ''));
+    store.open('a');
+    store.openPreview('b');
+    expect(store.tabs.peek()).toEqual(['a', 'b']);
+    // autre clic : le temporaire est remplacé, à sa place
+    store.openPreview('c');
+    expect(store.tabs.peek()).toEqual(['a', 'c']);
+    expect(store.preview.peek()).toBe('c');
+    // onglet déjà ouvert : activé, le temporaire reste
+    store.openPreview('a');
+    expect(store.current.peek()).toBe('a');
+    expect(store.preview.peek()).toBe('c');
+    // second clic sur la discussion affichée en temporaire : gardée
+    store.openPreview('c');
+    store.openPreview('c');
+    expect(store.preview.peek()).toBeNull();
+    // nouveau temporaire, gardé par une action (envoi…) ; le suivant s'ajoute
+    store.openPreview('d');
+    store.keepTab('d');
+    store.openPreview('e');
+    expect(store.tabs.peek()).toEqual(['a', 'c', 'd', 'e']);
+    // fermé : plus de temporaire
+    store.closeTab('e');
+    expect(store.preview.peek()).toBeNull();
+    // restauration avec un temporaire
+    store.setTabs(['a', 'x'], 'x', 'x');
+    expect(store.preview.peek()).toBe('x');
   });
 });
 

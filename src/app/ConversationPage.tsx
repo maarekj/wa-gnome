@@ -620,7 +620,11 @@ export function ConversationPage({
                     const settled = GLib.get_monotonic_time() - openedAt > 1_000_000;
                     // messages chargés pas encore affichés (affichage progressif) : eux d'abord
                     if (settled && adj.upper > adj.pageSize && adj.value < 400 && Number.isFinite(shownCount.peek())) showAll();
-                    else if (settled && adj.upper > adj.pageSize && adj.value < 400 && store.older.peek() === 'idle') void store.loadOlder();
+                    else if (settled && adj.upper > adj.pageSize && adj.value < 400 && store.older.peek() === 'idle') {
+                      // remonté jusqu'aux anciens messages : l'onglet temporaire devient un onglet normal
+                      store.keepTab(store.current.peek());
+                      void store.loadOlder();
+                    }
                   });
                   // page ajoutée en tête (ou lot de l'affichage progressif) : la position à l'écran reste la même
                   let firstId = '';
@@ -715,7 +719,10 @@ export function ConversationPage({
                         label="Messages plus anciens"
                         tooltipText="Charger les messages plus anciens"
                         cssClasses={['flat', 'caption']}
-                        onClicked={() => void store.loadOlder()}
+                        onClicked={() => {
+                          store.keepTab(store.current.peek());
+                          void store.loadOlder();
+                        }}
                       />
                       <Gtk.Box $type="named" name="loading" spacing={8}>
                         <Adw.Spinner />

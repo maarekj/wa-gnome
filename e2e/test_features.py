@@ -754,26 +754,44 @@ def test_onglets_des_discussions(run_app):
     fake, app = run_app()
     described = lambda d: app.root.findChild(lambda n: n.showing and n.description == d, retry=False, requireResult=False)  # noqa: E731
     tabs = lambda: sorted(n.name for n in app.root.findChildren(lambda n: n.showing and n.roleName == 'page tab'))  # noqa: E731
+    # clic dans la liste : onglet temporaire, remplacé par le suivant
     app.open_chat('Famille')
     app.open_chat('Alice Martin')
+    wait_until(lambda: tabs() == ['Alice Martin'], 5, 'onglet temporaire remplacé')
+    # second clic : onglet gardé, le suivant s'ajoute
+    app.point(app.find('label', 'Alice Martin'))
+    app.open_chat('Famille')
     wait_until(lambda: tabs() == ['Alice Martin', 'Famille'], 5, 'deux onglets')
-    # Ctrl+Tab : onglet suivant (en boucle : retour à Famille)
+    # envoi : onglet gardé aussi
+    app.point(app.composer())
+    app.type('Bonjour')
+    app.key('Return')
+    fake.wait_call('send')
+    app.open_chat('Voisins')
+    wait_until(lambda: tabs() == ['Alice Martin', 'Famille', 'Voisins'], 5, 'trois onglets')
+    app.open_chat('Famille')
+    # Ctrl+Tab : onglet suivant
     app.key('ctrl+Tab')
-    wait_until(lambda: described('Infos du groupe'), 5, 'Famille active')
+    wait_until(lambda: app.opened_chat() == 'Voisins', 5, 'Voisins active')
     # clic sur un onglet
     app.point(app.find('page tab', 'Alice Martin'))
     wait_until(lambda: described('Infos du contact'), 5, 'Alice active')
     # Ctrl+W : onglet actif fermé, le voisin devient actif
     app.key('ctrl+w')
-    wait_until(lambda: tabs() == ['Famille'], 5, 'onglet fermé')
-    wait_until(lambda: described('Infos du groupe'), 5, 'Famille active')
+    wait_until(lambda: tabs() == ['Famille', 'Voisins'], 5, 'onglet fermé')
+    wait_until(lambda: app.opened_chat() == 'Famille', 5, 'Famille active')
+    # Voisins est resté temporaire : remplacé
     app.open_chat('~ Bob')
-    # relance : onglets et onglet actif restaurés
+    wait_until(lambda: tabs() == ['Famille', '~ Bob'], 5, 'temporaire remplacé')
+    # relance : onglets, onglet actif et onglet temporaire restaurés
     app.stop()
     app2 = conftest.App(fake, 'Alice Martin')
     try:
-        wait_until(lambda: sorted(n.name for n in app2.root.findChildren(lambda n: n.showing and n.roleName == 'page tab')) == ['Famille', '~ Bob'], 10, 'onglets restaurés')
-        wait_until(lambda: app2.root.findChild(lambda n: n.showing and n.description == 'Infos du contact', retry=False, requireResult=False), 10, '~ Bob active')
+        tabs2 = lambda: sorted(n.name for n in app2.root.findChildren(lambda n: n.showing and n.roleName == 'page tab'))  # noqa: E731
+        wait_until(lambda: tabs2() == ['Famille', '~ Bob'], 10, 'onglets restaurés')
+        wait_until(lambda: app2.opened_chat() == '~ Bob', 10, '~ Bob active')
+        app2.open_chat('Claire (longue discussion)')
+        wait_until(lambda: tabs2() == ['Claire (longue discussion)', 'Famille'], 5, 'temporaire restauré puis remplacé')
     finally:
         app2.stop()
 

@@ -141,6 +141,8 @@ export function Composer({
     if (r === null || id === null) return;
     endRecording(id);
     setSending(true);
+    // envoi : l'onglet temporaire devient un onglet normal
+    store.keepTab(id);
     void (async (): Promise<void> => {
       try {
         const rec = await r.stop();
@@ -192,6 +194,7 @@ export function Composer({
     }
     const replyTo = store.replyTo.peek()?.id;
     const out = resolveMentions(text, mentions?.chosen(id) ?? new Map<string, string>());
+    store.keepTab(id);
     void (async (): Promise<void> => {
       try {
         await store.client.schedule(id, out.text, at, replyTo, out.mentions);
@@ -240,6 +243,7 @@ export function Composer({
     setSending(true);
     // réponse : portée par le message texte, ou par le premier fichier
     const replyTo = store.replyTo.peek()?.id;
+    store.keepTab(id);
     const run = async (): Promise<void> => {
       // le texte sert de légende au premier fichier (comme WhatsApp)
       for (const [i, f] of files.entries()) {
