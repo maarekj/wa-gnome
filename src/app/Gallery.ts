@@ -248,6 +248,7 @@ export function openGallery(parent: Gtk.Widget, store: Store, loader: MediaLoade
     loader,
     toast,
     chatName: () => chatName,
+    account: store.client.account,
     goTo: (m) => {
       dialog?.close();
       store.openAt(m.chatId, m.id, m.timestamp);

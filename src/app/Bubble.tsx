@@ -224,6 +224,8 @@ export interface BubbleContext {
   readonly loader: MediaLoader;
   readonly toast: (text: string) => void;
   readonly chatName: () => string;
+  /** compte de la discussion */
+  readonly account: string;
   /** photos chargées de la discussion (visionneuse : précédente / suivante) */
   readonly photos: () => readonly Photo[];
   /** répondre à ce message (bandeau dans la zone de saisie) */

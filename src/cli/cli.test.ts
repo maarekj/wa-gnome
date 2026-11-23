@@ -99,7 +99,8 @@ void describe('commandes sur le faux démon', () => {
       [path.join(root, 'scripts', 'fake-daemon.ts'), '--port', String(port), '--dir', dir, '--control', String(control), '--no-replies'],
       { stdio: 'ignore' },
     );
-    for (let i = 0; i < 50; i += 1) {
+    // démarrage du faux démon : jusqu'à 20 s (machine chargée)
+    for (let i = 0; i < 200; i += 1) {
       try {
         await fetch(`http://127.0.0.1:${port}/status`); // oxlint-disable-line no-await-in-loop -- attente du démarrage
         return;

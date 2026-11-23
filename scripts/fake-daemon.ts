@@ -359,6 +359,8 @@ add(GROUP, false, 'Le chat du voisin', 20 * 60, BOB, 'Bob', {
   media: { ...none, mimetype: 'video/webm', width: 480, height: 320, seconds: 3, thumbnail: landscape(48, 32).toString('base64') },
   data: video(),
 });
+// vocal d'Alice (plus long) : deux vocaux pour la lecture globale (un seul à la fois)
+add(ALICE, false, '', 28 * H, null, null, { kind: 'audio', media: { ...none, mimetype: 'audio/wav', seconds: 8 }, data: wav(8) });
 const SHOP = '33600000004@s.whatsapp.net';
 const NEWS = '120363000000000002@g.us';
 store.upsertContact(SHOP, { name: 'Boulangerie' });

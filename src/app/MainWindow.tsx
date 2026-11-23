@@ -199,6 +199,11 @@ function AccountView({ store, accounts, toast }: { store: Store; accounts: Accou
                   panels: (s) => {
                     side = s;
                   },
+                  selectAccount: (id) => {
+                    const other = accounts.byId(id) ?? null;
+                    if (other !== null) accounts.select(other);
+                    return other;
+                  },
                 }),
               );
               onCleanup(

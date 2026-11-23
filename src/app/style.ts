@@ -137,6 +137,14 @@ export const STYLESHEET = `
 .chat-title {
   padding: 2px 10px;
 }
+/* lecteur audio de l'application, sous les onglets */
+.playback-bar {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+button.playback-title {
+  padding: 2px 6px;
+}
 /* groupe réservé aux administrateurs : à la place de la zone de saisie */
 .read-only-chat {
   padding: 14px 12px;

@@ -809,3 +809,27 @@ def test_groupe_reserve_aux_administrateurs(run_app):
     app.click('button', None, contains='Archivées')
     app.open_chat('Ancien club de foot')
     assert app.text_visible('Vous ne faites plus partie de ce groupe')
+
+
+def test_lecture_audio_globale(run_app):
+    _, app = run_app()
+    bar_title = lambda: [t for t in app.labels() if t.startswith('Vocal de ')]  # noqa: E731
+    # vocal d'Alice : barre du lecteur sous les onglets
+    app.open_chat('Alice Martin')
+    app.click('button', 'Lire')
+    wait_until(lambda: bar_title() == ['Vocal de Alice Martin'], 10, 'barre du lecteur')
+    # autre discussion : la lecture continue, la barre reste
+    app.open_chat('Famille')
+    assert bar_title() == ['Vocal de Alice Martin']
+    assert app.root.findChild(lambda n: n.showing and n.roleName == 'button' and n.name == 'Pause', retry=False, requireResult=False)
+    # vocal de Bob : celui d'Alice est arrêté, un seul vocal à la fois
+    app.click('button', 'Lire')
+    wait_until(lambda: bar_title() == ['Vocal de ~ Bob'], 10, 'vocal de Bob')
+    # retour au message depuis la barre
+    app.open_chat('Alice Martin')
+    # bouton à libellés (auteur, discussion) : trouvé par son infobulle
+    app.point(app.root.findChild(lambda n: n.showing and n.roleName == 'button' and n.description == 'Aller au message'))
+    wait_until(lambda: app.opened_chat() == 'Famille', 5, 'retour au vocal')
+    # arrêt : barre cachée
+    app.click('button', 'Arrêter la lecture')
+    wait_until(lambda: bar_title() == [], 5, 'barre cachée')

@@ -8,7 +8,8 @@ import Pango from 'gi://Pango';
 import type { Media, Message } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { displaySize, extensionOf, fmtDuration, fmtSize, type MediaLoader, openExternal, save, suggestedName, thumbnailTexture } from './media.ts';
-import { AudioPlayer, nextSpeed, type PlayerState, type Speed, speedLabel } from './AudioPlayer.ts';
+import { nextSpeed, speedLabel } from './AudioPlayer.ts';
+import { playback, trackOf } from './Playback.ts';
 import { MediaFrame } from './MediaFrame.ts';
 import { waveformView } from './Waveform.ts';
 
@@ -16,6 +17,8 @@ export interface MediaContext {
   readonly loader: MediaLoader;
   readonly toast: (text: string) => void;
   readonly chatName: () => string;
+  /** compte de la discussion (lecteur audio : retour au bon compte) */
+  readonly account: string;
 }
 
 type MediaMessage = Message & { media: Media };
@@ -25,13 +28,21 @@ function withFile(ctx: MediaContext, m: MediaMessage, button: Gtk.Button, then: 
   const icon = button.iconName;
   button.sensitive = false;
   button.set_child(new Adw.Spinner());
+  // bouton rendu avant `then` : celui-ci peut changer son icône (lecture : pause)
+  const restore = (): void => {
+    button.sensitive = true;
+    button.iconName = icon;
+  };
   ctx.loader
     .file(m, m.media)
-    .then(then)
-    .catch((error: unknown) => ctx.toast(`Média indisponible : ${errorMessage(error)}`))
-    .finally(() => {
-      button.sensitive = true;
-      button.iconName = icon;
+    .then((file) => {
+      restore();
+      then(file);
+      return file;
+    })
+    .catch((error: unknown) => {
+      restore();
+      ctx.toast(`Média indisponible : ${errorMessage(error)}`);
     });
 }
 
@@ -69,7 +80,11 @@ export function DocumentView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
 
 // ---------------------------------------------------------------- vocaux et audio
 
-/** Lecteur audio dans la bulle : lecture / pause, position (glissable), durée, vitesse ×1 / ×1,5 / ×2. */
+/**
+ * Lecteur audio dans la bulle : lecture / pause, position (glissable), durée, vitesse ×1 / ×1,5 / ×2.
+ * Vue du lecteur de l'application (`playback`) : un seul vocal à la fois, qui continue hors de
+ * la discussion.
+ */
 export function AudioView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
   const box = new Gtk.Box({ spacing: 8, cssClasses: ['audio'], widthRequest: 280 });
   const play = new Gtk.Button({ iconName: 'media-playback-start-symbolic', tooltipText: 'Lire', valign: Gtk.Align.CENTER, cssClasses: ['circular'] });
@@ -82,71 +97,76 @@ export function AudioView(ctx: MediaContext, m: MediaMessage): Gtk.Widget {
   });
   const time = new Gtk.Label({ label: fmtDuration(m.media.seconds ?? 0), widthChars: 5, xalign: 1, cssClasses: ['caption', 'dim-label', 'numeric'] });
   const speed = new Gtk.Button({
-    label: speedLabel(1),
+    label: speedLabel(playback.state.peek().speed),
     tooltipText: 'Vitesse de lecture',
     valign: Gtk.Align.CENTER,
     cssClasses: ['flat', 'pill', 'speed', 'caption-heading'],
   });
   box.append(play);
+  const current = (): boolean => playback.isCurrent(ctx.account, m.chatId, m.id);
   // vocal avec forme d'onde : barres à la place de la barre de progression (comme WhatsApp)
   const wave =
     m.media.waveform === null || m.media.waveform === undefined || m.media.waveform.length === 0
       ? null
       : waveformView(m.media.waveform, (fraction) => {
-          if (player !== null) scale.set_value(fraction * scale.adjustment.upper);
+          if (current()) scale.set_value(fraction * scale.adjustment.upper);
         });
   box.append(wave?.widget ?? scale);
   box.append(time);
   box.append(speed);
-
-  let player: AudioPlayer | null = null;
-  let current: Speed = 1;
   /** position mise à jour par le lecteur (pas un glissement de l'utilisateur) */
   let syncing = false;
-  const show = (st: PlayerState): void => {
-    if (st.duration > 0) scale.adjustment.upper = st.duration;
+  /** affichage précédent : une bulle qui ne joue pas n'est redessinée qu'à un changement */
+  let shown: { mine: boolean; speed: number } | null = null;
+  const show = (): void => {
+    const st = playback.state.peek();
+    const mine = current();
+    if (!mine && shown !== null && !shown.mine && shown.speed === st.speed) return;
+    shown = { mine, speed: st.speed };
+    const position = mine ? st.position : 0;
+    if (mine && st.duration > 0) scale.adjustment.upper = st.duration;
     syncing = true;
-    scale.set_value(st.position);
+    scale.set_value(position);
     syncing = false;
-    wave?.setProgress(scale.adjustment.upper > 0 ? st.position / scale.adjustment.upper : 0);
-    time.label = fmtDuration(st.playing || st.position > 0 ? st.position : st.duration || (m.media.seconds ?? 0));
-    play.iconName = st.playing ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
-    play.tooltipText = st.playing ? 'Pause' : 'Lire';
+    scale.sensitive = mine;
+    if (wave !== null) {
+      wave.widget.sensitive = mine;
+      wave.setProgress(scale.adjustment.upper > 0 ? position / scale.adjustment.upper : 0);
+    }
+    const playing = mine && st.playing;
+    time.label = fmtDuration(mine && (st.playing || st.position > 0) ? st.position : (m.media.seconds ?? st.duration));
+    play.iconName = playing ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
+    play.tooltipText = playing ? 'Pause' : 'Lire';
+    speed.label = speedLabel(st.speed);
   };
+  // abonnée tant qu'elle est à l'écran (retirée : désabonnée, la lecture continue) ; le lecteur
+  // global ne retient donc pas les bulles des discussions fermées
+  let off: (() => void) | null = null;
+  box.connect('realize', () => {
+    shown = null;
+    show();
+    off ??= playback.state.subscribe(show);
+  });
+  box.connect('unrealize', () => {
+    off?.();
+    off = null;
+  });
   scale.connect('value-changed', () => {
-    if (!syncing) player?.seek(scale.get_value());
+    if (!syncing && current()) playback.seek(scale.get_value());
   });
-  speed.connect('clicked', () => {
-    current = nextSpeed(current);
-    speed.label = speedLabel(current);
-    player?.setSpeed(current);
-  });
+  speed.connect('clicked', () => playback.setSpeed(nextSpeed(playback.state.peek().speed)));
   play.connect('clicked', () => {
-    if (player !== null) {
-      player.toggle();
+    if (current()) {
+      playback.toggle();
       return;
     }
     withFile(ctx, m, play, (file) => {
-      const uri = file.get_uri();
       try {
-        player = new AudioPlayer(uri, show, (message) => ctx.toast(`Lecture impossible : ${message}`));
+        playback.play(trackOf(m, ctx.chatName(), ctx.account), file, (message) => ctx.toast(`Lecture impossible : ${message}`));
       } catch (error) {
         ctx.toast(errorMessage(error));
-        return;
       }
-      if (current !== 1) player.setSpeed(current);
-      scale.sensitive = true;
-      // forme d'onde : déplacement possible une fois la lecture lancée (comme la barre)
-      if (wave !== null) wave.widget.sensitive = true;
-      player.play();
     });
-  });
-  // bulle supprimée (discussion fermée) : lecteur libéré
-  box.connect('unrealize', () => {
-    player?.dispose();
-    player = null;
-    scale.sensitive = false;
-    if (wave !== null) wave.widget.sensitive = false;
   });
   return box;
 }

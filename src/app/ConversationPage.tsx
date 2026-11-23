@@ -24,6 +24,7 @@ import { confirmRemoveMany, copyText, openForward } from './Selection.ts';
 import { keyedBox } from './KeyedBox.ts';
 import { type Command, provideCommands } from './CommandPalette.ts';
 import { tabBar } from './Tabs.ts';
+import { playbackBar } from './PlaybackBar.ts';
 import { PERF, perfCount, perfMark } from './Perf.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
 import { MediaLoader, type Photo } from './media.ts';
@@ -150,11 +151,14 @@ export function ConversationPage({
   pictures,
   toast,
   panels,
+  selectAccount,
 }: {
   store: Store;
   pictures: Pictures;
   toast: (text: string) => void;
   panels?: (split: Adw.OverlaySplitView) => void;
+  /** affiche un autre compte et renvoie son store (barre du lecteur : vocal d'un autre compte) */
+  selectAccount?: (account: string) => Store | null;
 }): JSX.Element {
   const chat = createMemo(() => {
     const id = store.current();
@@ -488,6 +492,8 @@ export function ConversationPage({
         </Adw.HeaderBar>
         {/* onglets des discussions ouvertes */}
         <Gtk.Box $type="top">{tabBar(store, pictures)}</Gtk.Box>
+        {/* vocal en cours (toutes discussions confondues) */}
+        <Gtk.Box $type="top">{playbackBar(store, selectAccount)}</Gtk.Box>
         <Gtk.Stack visibleChildName={chat((c) => (c === null ? 'none' : 'chat'))} transitionType={Gtk.StackTransitionType.CROSSFADE}>
           <Adw.StatusPage $type="named" name="none" iconName="chat-message-new-symbolic" title="WhatsApp pour GNOME" description="Choisissez une discussion" />
           {/* panneau à droite (recherche, résumés) : à côté de la conversation, ou par-dessus si la
@@ -789,6 +795,7 @@ export function ConversationPage({
                               loader,
                               toast,
                               chatName: () => chat.peek()?.name ?? '',
+                              account: store.client.account,
                               photos: () =>
                                 store.messages.peek().filter((x): x is Photo => x.kind === 'image' && x.media !== null && !x.deleted && !x.viewOnce),
                               pictures,
