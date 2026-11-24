@@ -137,6 +137,10 @@ export const STYLESHEET = `
 .chat-title {
   padding: 2px 10px;
 }
+/* contacts partagés : une fiche par contact */
+.shared-contact {
+  padding: 4px 2px;
+}
 /* lecteur audio de l'application, sous les onglets */
 .playback-bar {
   padding: 4px 10px;

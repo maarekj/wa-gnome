@@ -857,3 +857,28 @@ def test_filtres_compteurs_et_personnes(run_app):
     app.click('toggle button', 'Personnes')
     app.text_gone('Famille', 5)
     assert app.has('label', 'Alice Martin')
+
+
+def test_contact_partage(run_app):
+    _, app = run_app()
+    app.open_chat('~ Bob')
+    # fiche complète : nom, société, numéros (dont un sur WhatsApp), e-mail
+    assert app.text_visible('Boulangerie du port')
+    assert app.text_visible('+33 6 00 00 00 30')
+    assert app.text_visible('+33 1 23 45 67 89')
+    assert app.text_visible('pas sur WhatsApp')
+    assert app.text_visible('esther@exemple.fr')
+    # carnet d'adresses : fiche .vcf ouverte par l'application des contacts (journalisée en test)
+    app.click('button', 'Ajouter au carnet d’adresses')
+    path = app.logged('OUVRIR ')
+    assert path.endswith('/contacts/Esther Brami.vcf')
+    with open(path.split('OUVRIR ', 1)[-1].strip(), encoding='utf-8') as f:
+        card = f.read()
+    # carte standard (sans les paramètres propres à WhatsApp)
+    assert 'TEL;TYPE=CELL:+33 6 00 00 00 30' in card
+    assert 'waid' not in card
+    # enregistrement en .vcf (fenêtre d'enregistrement du système : non ouverte en test)
+    app.find('button', 'Enregistrer la fiche…')
+    # « Écrire » : discussion avec le contact
+    app.click('button', 'Écrire à Esther Brami')
+    wait_until(lambda: app.opened_chat() == 'Esther Brami', 10, 'discussion avec Esther')

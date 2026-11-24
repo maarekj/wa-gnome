@@ -361,6 +361,32 @@ add(GROUP, false, 'Le chat du voisin', 20 * 60, BOB, 'Bob', {
 });
 // vocal d'Alice (plus long) : deux vocaux pour la lecture globale (un seul à la fois)
 add(ALICE, false, '', 28 * H, null, null, { kind: 'audio', media: { ...none, mimetype: 'audio/wav', seconds: 8 }, data: wav(8) });
+// contact partagé par Bob (fiche complète dans la bulle)
+seq += 1;
+store.upsertMessage(
+  {
+    id: `fake${seq}`,
+    chatId: BOB,
+    fromMe: false,
+    sender: null,
+    senderName: null,
+    timestamp: now - 10 * 24 * H,
+    kind: 'contact',
+    text: 'Esther Brami',
+    media: null,
+    quoted: null,
+    status: null,
+  },
+  JSON.stringify({
+    message: {
+      contactMessage: {
+        displayName: 'Esther Brami',
+        vcard:
+          'BEGIN:VCARD\nVERSION:3.0\nN:Brami;Esther;;;\nFN:Esther Brami\nORG:Boulangerie du port\nTEL;type=CELL;type=VOICE;waid=33600000030:+33 6 00 00 00 30\nTEL;type=WORK:+33 1 23 45 67 89\nEMAIL:esther@exemple.fr\nEND:VCARD',
+      },
+    },
+  }),
+);
 const SHOP = '33600000004@s.whatsapp.net';
 const NEWS = '120363000000000002@g.us';
 store.upsertContact(SHOP, { name: 'Boulangerie' });

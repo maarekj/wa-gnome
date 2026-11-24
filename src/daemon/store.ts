@@ -29,6 +29,8 @@ import {
   statusOf,
   statusRank,
   type ReadOnly,
+  parseVcard,
+  type SharedContact,
 } from '../shared/api.ts';
 
 const SCHEMA = `
@@ -297,9 +299,24 @@ const MessageRow = z.object({
   view_once: z.number(),
   mentions: z.nullable(z.string()),
   poll: z.nullable(z.string()),
+  raw: z.nullable(z.string()),
   contact: z.nullable(z.string()),
   notify: z.nullable(z.string()),
 });
+
+/**
+ * Contacts partagés d'un message brut (JSON) : vCards de `contactMessage` ou de
+ * `contactsArrayMessage`, où qu'elles soient (enveloppes éphémère, vue unique…), pas celles d'un
+ * message cité.
+ */
+export function contactsIn(value: unknown, depth = 0): SharedContact[] {
+  if (depth > 8 || typeof value !== 'object' || value === null) return [];
+  if ('vcard' in value && typeof value.vcard === 'string') {
+    const name = 'displayName' in value && typeof value.displayName === 'string' ? value.displayName : '';
+    return [parseVcard(value.vcard, name)];
+  }
+  return Object.entries(value).flatMap(([k, v]) => (k === 'quotedMessage' ? [] : contactsIn(v, depth + 1)));
+}
 
 const LabelRow = z.object({ id: z.string(), name: z.string(), color: z.number(), list_type: z.number(), order_index: z.number() });
 
@@ -1140,6 +1157,7 @@ export class Store {
       viewOnce: r.view_once !== 0,
       mentions: this.#mentions(r.mentions),
       poll: r.poll === null || r.deleted !== 0 ? null : this.#poll(r.chat_id, r.id, r.poll),
+      contacts: r.kind === 'contact' && r.deleted === 0 && r.raw !== null ? contactsIn(parseJson(r.raw)) : null,
       status: r.from_me === 1 ? effectiveStatus(MessageStatus.safeParse(r.status).data ?? 'sent', r.timestamp) : null,
     }));
   }

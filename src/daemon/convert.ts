@@ -36,6 +36,8 @@ const EXTRACT: Partial<Record<keyof proto.IMessage, Extract>> = {
   locationMessage: (c) => ({ kind: 'location', text: c.locationMessage?.name ?? '' }),
   liveLocationMessage: (c) => ({ kind: 'location', text: c.liveLocationMessage?.caption ?? '' }),
   contactMessage: (c) => ({ kind: 'contact', text: c.contactMessage?.displayName ?? '' }),
+  // plusieurs contacts partagés d'un coup
+  contactsArrayMessage: (c) => ({ kind: 'contact', text: c.contactsArrayMessage?.displayName ?? `${c.contactsArrayMessage?.contacts?.length ?? 0} contacts` }),
   reactionMessage: (c) => ({ kind: 'reaction', text: c.reactionMessage?.text ?? '' }),
   // sondages (V2 : groupes d'annonces d'une communauté, V3 : une seule réponse)
   pollCreationMessage: (c) => ({ kind: 'poll', text: c.pollCreationMessage?.name ?? '' }),
@@ -132,7 +134,7 @@ export const isReceivedBroadcast = (remoteJid: string, fromMe: boolean): boolean
 
 /** Message affichable, ou null (message technique, sans contenu, statut). */
 /** Message converti : citation brute en plus, sans réactions (noms résolus par le Store). */
-export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded' | 'viewOnce' | 'mentions' | 'poll'> & {
+export type Converted = Omit<Message, 'quoted' | 'reactions' | 'edited' | 'deleted' | 'forwarded' | 'viewOnce' | 'mentions' | 'poll' | 'contacts'> & {
   quoted: RawQuoted | null;
   deleted?: boolean;
   forwarded?: number;

@@ -227,6 +227,11 @@ export async function save(parent: Gtk.Widget, name: string, content: GLib.Bytes
 
 /** Ouvre un fichier avec l'application par défaut de son type. */
 export async function openExternal(parent: Gtk.Widget, file: Gio.File, toast: (t: string) => void): Promise<void> {
+  // tests : fichier journalisé au lieu d'ouvrir une application
+  if (GLib.getenv('WA_GNOME_TEST_LINKS') !== null) {
+    console.log(`OUVRIR ${file.get_path() ?? file.get_uri()}`);
+    return;
+  }
   const root = parent.get_root();
   try {
     await new Gtk.FileLauncher({ file }).launch(root instanceof Gtk.Window ? root : null, null);

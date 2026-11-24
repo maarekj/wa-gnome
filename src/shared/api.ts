@@ -266,6 +266,101 @@ export function withMentionNames(text: string, mentions: readonly Mention[]): st
 /** Je suis mentionné dans ce message. */
 export const mentionsMe = (m: { mentions?: readonly Mention[] }): boolean => (m.mentions ?? []).some((x) => x.me);
 
+/** Contact partagé (fiche lue dans sa vCard). */
+export const SharedContact = z.object({
+  name: z.string(),
+  /** numéros : affiché, identifiant WhatsApp (`waid`, chiffres) s'il est sur WhatsApp, type (mobile…) */
+  phones: z.array(z.object({ number: z.string(), waid: z.nullable(z.string()), label: z.nullable(z.string()) })),
+  emails: z.array(z.string()),
+  org: z.nullable(z.string()),
+  /** prénom et nom (champ N de la vCard), vides s'il manque */
+  first: z.string(),
+  last: z.string(),
+});
+export type SharedContact = z.infer<typeof SharedContact>;
+
+/** Valeur d'une ligne de vCard, échappements retirés (`\,` `\;` `\n`). */
+const vcardValue = (v: string): string =>
+  v
+    .replaceAll(/\\([,;\\])/gu, '$1')
+    .replaceAll(/\\n/giu, '\n')
+    .trim();
+
+/** Valeur échappée pour une vCard (`\\`, `,`, `;`, retours à la ligne). */
+const vcardEscape = (v: string): string =>
+  v
+    .replaceAll('\\', '\\\\')
+    .replaceAll(',', String.raw`\,`)
+    .replaceAll(';', String.raw`\;`)
+    .replaceAll('\n', String.raw`\n`);
+
+/**
+ * vCard 3.0 standard d'un contact partagé (celles de WhatsApp portent des paramètres propres,
+ * `waid=…`, que certains carnets d'adresses refusent : Thunderbird ouvre alors une fiche vide).
+ * Lignes CRLF, comme le veut la norme.
+ */
+export function cleanVcard(c: Pick<SharedContact, 'name' | 'first' | 'last' | 'phones' | 'emails' | 'org'>): string {
+  // nom structuré d'origine ; à défaut, prénom = premier mot du nom affiché
+  const [word = '', ...rest] = c.name.split(' ');
+  const structured = c.first !== '' || c.last !== '';
+  const first = structured ? c.first : word;
+  const last = structured ? c.last : rest.join(' ');
+  const types: Readonly<Record<string, string>> = { mobile: 'CELL', domicile: 'HOME', travail: 'WORK', principal: 'MAIN' };
+  const lines = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    `FN:${vcardEscape(c.name)}`,
+    // nom de famille ; prénom (premier mot du nom affiché)
+    `N:${vcardEscape(last)};${vcardEscape(first)};;;`,
+    ...(c.org === null ? [] : [`ORG:${vcardEscape(c.org)}`]),
+    ...c.phones.map((p) => `TEL;TYPE=${(p.label === null ? undefined : types[p.label]) ?? 'VOICE'}:${p.number}`),
+    ...c.emails.map((e) => `EMAIL;TYPE=INTERNET:${e}`),
+    'END:VCARD',
+  ];
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+/** Fiche d'une vCard (3.0 / 4.0, lignes repliées acceptées) ; `fallback` : nom si la carte n'en a pas. */
+export function parseVcard(vcard: string, fallback = ''): SharedContact {
+  const lines = vcard.replaceAll(/\r?\n[ \t]/gu, '').split(/\r?\n/u);
+  const out: { name: string; first: string; last: string; phones: SharedContact['phones']; emails: string[]; org: string | null } = {
+    name: '',
+    first: '',
+    last: '',
+    phones: [],
+    emails: [],
+    org: null,
+  };
+  for (const line of lines) {
+    const colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const [prop = '', ...params] = line.slice(0, colon).split(';');
+    const raw = line.slice(colon + 1);
+    // champs composés (N, ORG) : découpés sur les « ; » non échappés, puis déséchappés
+    const parts = raw.split(/(?<!\\);/u).map((p) => vcardValue(p));
+    const value = vcardValue(raw);
+    const key = prop.replace(/^item\d+\./iu, '').toUpperCase();
+    if (key === 'FN' && value !== '') out.name = value;
+    else if (key === 'N') {
+      out.last = parts[0] ?? '';
+      out.first = parts[1] ?? '';
+    } else if (key === 'TEL' && value !== '') {
+      const waid = params.find((p) => /^waid=/iu.test(p))?.split('=')[1] ?? null;
+      // types : `type=CELL;type=VOICE` ou groupés `TYPE=CELL,VOICE` ; voice et pref ignorés
+      const type =
+        params
+          .filter((p) => /^type=/iu.test(p))
+          .flatMap((p) => (p.split('=')[1] ?? '').split(','))
+          .find((t) => t !== '' && !/^(voice|pref)$/iu.test(t)) ?? null;
+      const label = type === null ? null : ({ cell: 'mobile', home: 'domicile', work: 'travail', main: 'principal' }[type.toLowerCase()] ?? type.toLowerCase());
+      out.phones.push({ number: value, waid: waid !== null && /^\d+$/u.test(waid) ? waid : null, label });
+    } else if (key === 'EMAIL' && value !== '') out.emails.push(value);
+    else if (key === 'ORG' && value !== '') out.org = parts.filter((p) => p !== '').join(', ');
+  }
+  const structured = [out.first, out.last].filter((p) => p !== '').join(' ');
+  return { ...out, name: out.name || structured || fallback };
+}
+
 export const Message = z.object({
   id: z.string(),
   chatId: z.string(),
@@ -296,6 +391,8 @@ export const Message = z.object({
   mentions: z.array(Mention),
   /** sondage (genre `poll`), sinon null */
   poll: z.nullable(Poll),
+  /** contacts partagés (genre `contact`), sinon null */
+  contacts: z.nullable(z.array(SharedContact)),
 });
 
 /** Texte affiché à la place d'un message supprimé pour tous. */

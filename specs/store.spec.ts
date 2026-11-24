@@ -1,7 +1,7 @@
 // État de l'application : application des événements du démon, ordre des messages.
 import GLib from 'gi://GLib';
 import type { Chat, Message } from '../src/shared/api.ts';
-import { editability, effectiveStatus, formatPhone, isMuted, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
+import { cleanVcard, editability, effectiveStatus, formatPhone, isMuted, parseVcard, previewOf, statusOf, uploadKind } from '../src/shared/api.ts';
 import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sameChat, sortChats, Store, typingText } from '../src/shared/store.ts';
 import { moveOf, spliceOf } from '../src/app/ChatListView.ts';
@@ -50,6 +50,7 @@ const msg = (id: string, timestamp: number, extra: Partial<Message> = {}): Messa
   viewOnce: false,
   mentions: [],
   poll: null,
+  contacts: null,
   ...extra,
 });
 const chat = (id: string, timestamp: number, name = id, extra: Partial<Chat> = {}): Chat => ({
@@ -859,5 +860,41 @@ describe('diagnostic', () => {
     expect(text).toContain('dernière erreur : Connection Failure');
     expect(text).toContain('coupures : 3');
     expect(text).toContain('[erreur] boum');
+  });
+});
+
+describe('contacts partagés', () => {
+  it('fiche lue dans une vCard', () => {
+    const c = parseVcard(
+      'BEGIN:VCARD\nVERSION:3.0\nN:Brami;Esther;;;\nFN:Esther Brami\nORG:Boulangerie\\, du port;Ventes\nitem1.TEL;type=CELL;type=VOICE;waid=972552860085:+972 55-286-0085\nTEL;type=HOME:+33 1 23\n 45\nEMAIL;type=INTERNET:e@x.fr\nEND:VCARD',
+    );
+    expect(c.name).toBe('Esther Brami');
+    expect(c.org).toBe('Boulangerie, du port, Ventes');
+    expect([c.first, c.last]).toEqual(['Esther', 'Brami']);
+    // « ; » échappé dans un champ composé, types groupés
+    const d = parseVcard('BEGIN:VCARD\nN:de La Tour;Jean\\;Pierre;;;\nORG:A\\; B;C\nTEL;TYPE=CELL,VOICE:+33 6\nEND:VCARD');
+    expect([d.first, d.last, d.org]).toEqual(['Jean;Pierre', 'de La Tour', 'A; B, C']);
+    expect(d.phones[0]?.label).toBe('mobile');
+    expect(c.phones).toEqual([
+      { number: '+972 55-286-0085', waid: '972552860085', label: 'mobile' },
+      { number: '+33 1 2345', waid: null, label: 'domicile' },
+    ]);
+    expect(c.emails).toEqual(['e@x.fr']);
+    // sans FN : nom structuré, sinon le nom affiché du message
+    expect(parseVcard('BEGIN:VCARD\nN:Martin;Alice;;;\nEND:VCARD').name).toBe('Alice Martin');
+    expect(parseVcard('BEGIN:VCARD\nEND:VCARD', 'Bob').name).toBe('Bob');
+    // carte standard pour le carnet d'adresses
+    expect(cleanVcard({ ...c, org: 'A; B' }).split('\r\n')).toEqual([
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'FN:Esther Brami',
+      'N:Brami;Esther;;;',
+      'ORG:A\\; B',
+      'TEL;TYPE=CELL:+972 55-286-0085',
+      'TEL;TYPE=HOME:+33 1 2345',
+      'EMAIL;TYPE=INTERNET:e@x.fr',
+      'END:VCARD',
+      '',
+    ]);
   });
 });

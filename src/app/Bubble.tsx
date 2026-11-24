@@ -22,6 +22,8 @@ import {
   QUICK_REACTIONS,
   REVOKE_WINDOW_S,
   type Quoted,
+  type SharedContact,
+  cleanVcard,
 } from '../shared/api.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { dayKey, emojiOnly, esc, fmtDay, fmtTime, MENTION_LINK, mentionMarkup, readMoreCut, waMarkup } from '../shared/format.ts';
@@ -31,7 +33,7 @@ import { settings } from './Preferences.ts';
 import { hideTranslation, languageName, translationOf, watchTranslation } from './Translate.ts';
 import { ReactionsRow } from './Reactions.ts';
 import { bindAvatar, type Pictures } from './pictures.ts';
-import { displaySize, type Loaded, type MediaLoader, openViewer, type Photo, thumbnailTexture } from './media.ts';
+import { displaySize, type Loaded, type MediaLoader, openExternal, openViewer, save, type Photo, thumbnailTexture } from './media.ts';
 import { MediaFrame } from './MediaFrame.ts';
 import { AudioView, DocumentView, VideoView } from './MediaViews.ts';
 import { asWidget, openLinks } from './widgets.ts';
@@ -637,6 +639,102 @@ export function MessagePicture(ctx: BubbleContext, m: Message & { media: Media }
   return frame;
 }
 
+/** Fiche .vcf d'un contact partagé, écrite dans le cache (ouverte par l'application des contacts). */
+function vcardFile(c: SharedContact): Gio.File {
+  const dir = GLib.build_filenamev([GLib.get_user_cache_dir(), 'wa-gnome', 'contacts']);
+  GLib.mkdir_with_parents(dir, 0o700);
+  const name = c.name.replaceAll(/[/\\\0]/gu, '_').slice(0, 80) || 'contact';
+  const path = GLib.build_filenamev([dir, `${name}.vcf`]);
+  // carte standard (celle de WhatsApp n'est pas lue par tous les carnets d'adresses)
+  GLib.file_set_contents(path, cleanVcard(c));
+  return Gio.File.new_for_path(path);
+}
+
+/**
+ * Contacts partagés : fiche de chacun (nom, société, numéros, e-mails) ; numéro sur WhatsApp :
+ * « Écrire » ouvre la discussion ; tout numéro peut être copié.
+ */
+function ContactCards(ctx: BubbleContext, contacts: readonly SharedContact[]): Gtk.Widget {
+  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 10, widthRequest: 260, cssClasses: ['shared-contacts'] });
+  for (const c of contacts) {
+    const card = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4, cssClasses: ['shared-contact'] });
+    const head = new Gtk.Box({ spacing: 10 });
+    head.append(new Adw.Avatar({ size: 40, text: avatarText(c.name), showInitials: /\p{L}/u.test(c.name) }));
+    const names = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, valign: Gtk.Align.CENTER });
+    names.append(new Gtk.Label({ label: c.name, xalign: 0, wrap: true, selectable: true, cssClasses: ['heading'] }));
+    if (c.org !== null) names.append(new Gtk.Label({ label: c.org, xalign: 0, wrap: true, cssClasses: ['caption', 'dim-label'] }));
+    names.hexpand = true;
+    head.append(names);
+    // carnet d'adresses de l'utilisateur : fiche .vcf ouverte par l'application associée
+    // (GNOME Contacts, Thunderbird, Evolution… : import proposé)
+    const add = new Gtk.Button({
+      iconName: 'contact-new-symbolic',
+      tooltipText: 'Ajouter au carnet d’adresses',
+      valign: Gtk.Align.CENTER,
+      cssClasses: ['flat', 'circular'],
+    });
+    add.connect('clicked', () => {
+      try {
+        void openExternal(add, vcardFile(c), ctx.toast);
+      } catch (error) {
+        ctx.toast(errorMessage(error));
+      }
+    });
+    head.append(add);
+    // enregistrée en .vcf : à importer dans un carnet qui ne lit pas les fiches ouvertes (Thunderbird)
+    const saveCard = new Gtk.Button({
+      iconName: 'document-save-symbolic',
+      tooltipText: 'Enregistrer la fiche…',
+      valign: Gtk.Align.CENTER,
+      cssClasses: ['flat', 'circular'],
+    });
+    saveCard.connect('clicked', () => {
+      try {
+        const file = vcardFile(c);
+        void save(saveCard, file.get_basename() ?? 'contact.vcf', file, ctx.toast);
+      } catch (error) {
+        ctx.toast(errorMessage(error));
+      }
+    });
+    head.append(saveCard);
+    card.append(head);
+    for (const p of c.phones) {
+      const row = new Gtk.Box({ spacing: 6 });
+      const text = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true, valign: Gtk.Align.CENTER });
+      text.append(new Gtk.Label({ label: p.number, xalign: 0, selectable: true, cssClasses: ['numeric'] }));
+      const kind = [p.label, p.waid === null ? 'pas sur WhatsApp' : null].filter((x) => x !== null).join(' · ');
+      if (kind !== '') text.append(new Gtk.Label({ label: kind, xalign: 0, cssClasses: ['caption', 'dim-label'] }));
+      row.append(text);
+      const waid = p.waid;
+      if (waid !== null) {
+        const write = new Gtk.Button({
+          iconName: 'chat-message-new-symbolic',
+          tooltipText: `Écrire à ${c.name}`,
+          valign: Gtk.Align.CENTER,
+          cssClasses: ['flat', 'circular'],
+        });
+        write.connect('clicked', () => ctx.openPerson(`${waid}@s.whatsapp.net`, c.name));
+        row.append(write);
+      }
+      const copy = new Gtk.Button({
+        iconName: 'edit-copy-symbolic',
+        tooltipText: 'Copier le numéro',
+        valign: Gtk.Align.CENTER,
+        cssClasses: ['flat', 'circular'],
+      });
+      copy.connect('clicked', () => {
+        copy.get_clipboard().set(p.number);
+        ctx.toast('Numéro copié');
+      });
+      row.append(copy);
+      card.append(row);
+    }
+    for (const e of c.emails) card.append(new Gtk.Label({ label: e, xalign: 0, selectable: true, cssClasses: ['caption'] }));
+    box.append(card);
+  }
+  return box;
+}
+
 /** Message supprimé pour tous : mention seule (pas de média, de citation ni de réactions). */
 export function DeletedBubble(ctx: BubbleContext, m: Message, msg: () => Message, live: Accessor<Item>): Gtk.Widget {
   return asWidget(
@@ -830,9 +928,11 @@ export function bubble(ctx: BubbleContext) {
       ? ViewOnceView(m)
       : m.kind === 'poll' && m.poll !== null
         ? PollView(ctx, msg, live)
-        : isPicture(m)
-          ? MessagePicture(ctx, m)
-          : mediaView(ctx, m);
+        : m.kind === 'contact' && m.contacts !== null && m.contacts.length > 0
+          ? ContactCards(ctx, m.contacts)
+          : isPicture(m)
+            ? MessagePicture(ctx, m)
+            : mediaView(ctx, m);
     // autocollant : sans bulle, comme dans WhatsApp
     const bare = picture !== null && m.kind === 'sticker';
     // émojis seuls (sans citation ni « Transféré ») : en grand, sans fond de bulle, comme WhatsApp
@@ -877,7 +977,7 @@ export function bubble(ctx: BubbleContext) {
               {m.quoted === null ? null : QuoteBlock(ctx, m.quoted)}
               {picture}
               <Gtk.Label
-                visible={live(() => (picture === null || msg().text !== '') && msg().kind !== 'poll')}
+                visible={live(() => (picture === null || msg().text !== '') && msg().kind !== 'poll' && !(msg().kind === 'contact' && picture !== null))}
                 // mise en forme WhatsApp (gras, italique, code, citations, listes)
                 useMarkup
                 label={live(() =>
