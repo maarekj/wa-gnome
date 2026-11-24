@@ -343,6 +343,12 @@ button.sender-link:hover label {
   min-height: 24px;
   font-size: 0.9em;
 }
+/* nombre de discussions non lues d'un filtre : discret, juste après le nom */
+.filter-count {
+  font-size: 0.85em;
+  font-weight: normal;
+  opacity: 0.6;
+}
 .read-more {
   padding: 0 2px;
   min-height: 0;

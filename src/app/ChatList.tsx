@@ -22,8 +22,32 @@ export { avatarText, previewMarkup } from './ChatListView.ts';
 /** Recherche dans les messages à partir de ce nombre de caractères. */
 const SEARCH_MIN = 2;
 
-/** Filtre de la liste principale : « all » (toutes) ou l'identifiant d'une liste de WhatsApp. */
+/**
+ * Filtre de la liste principale : « all » (toutes), `PEOPLE` (discussions avec des personnes :
+ * l'inverse de Groupes, propre à l'app) ou l'identifiant d'une liste de WhatsApp.
+ */
 export type Filter = string;
+export const PEOPLE = 'people';
+
+/** Boutons de filtre : Toutes, les listes de WhatsApp, « Personnes » juste après « Groupes ». */
+export function filterButtons(lists: readonly WaList[]): { id: Filter; label: string }[] {
+  const out: { id: Filter; label: string }[] = [{ id: 'all', label: 'Toutes' }];
+  for (const l of filterLists(lists)) {
+    out.push({ id: l.id, label: l.name });
+    if (l.kind === 'groups') out.push({ id: PEOPLE, label: 'Personnes' });
+  }
+  if (!out.some((b) => b.id === PEOPLE)) out.push({ id: PEOPLE, label: 'Personnes' });
+  return out;
+}
+
+/** Discussion retenue par un filtre (`list` : la liste de WhatsApp du filtre, s'il en est une). */
+const inFilter = (c: Chat, filter: Filter, list: WaList | undefined): boolean => (filter === PEOPLE ? !c.group : list === undefined || inList(c, list));
+
+/** Discussions non lues de la vue principale retenues par le filtre (pastille du bouton). */
+export function unreadIn(all: readonly Chat[], filter: Filter, lists: readonly WaList[]): number {
+  const list = lists.find((l) => l.id === filter);
+  return all.filter((c) => inView(c, 'main') && (c.unread > 0 || c.markedUnread) && inFilter(c, filter, list)).length;
+}
 
 /** Discussion retenue par une liste de WhatsApp. */
 export function inList(c: Chat, list: WaList): boolean {
@@ -70,8 +94,9 @@ const inView = (c: Chat, view: View): boolean => (view === 'channels' ? isChanne
 export function visibleChats(all: readonly Chat[], query: string, view: View, filter: Filter = 'all', lists: readonly WaList[] = []): readonly Chat[] {
   const q = fold(query.trim());
   if (q !== '') return all.filter((c) => fold(c.name).includes(q));
-  const list = view !== 'main' || filter === 'all' ? undefined : lists.find((l) => l.id === filter);
-  return all.filter((c) => inView(c, view) && (list === undefined || inList(c, list)));
+  if (view !== 'main' || filter === 'all') return all.filter((c) => inView(c, view));
+  const list = lists.find((l) => l.id === filter);
+  return all.filter((c) => inView(c, view) && inFilter(c, filter, list));
 }
 
 export function ChatList({
@@ -273,14 +298,37 @@ export function ChatList({
           cssClasses={['list-filters']}
           visible={createMemo(() => !archived() && query().trim() === '' && filterLists(store.lists()).length > 0)}
           $={(self: Gtk.FlowBox) => {
+            /** pastille de chaque filtre */
+            const counts = new Map<Filter, Gtk.Label>();
+            const updateCounts = (): void => {
+              const all = store.chats.peek();
+              const lists = store.lists.peek();
+              for (const [id, label] of counts) {
+                const n = unreadIn(all, id, lists);
+                label.label = n > 99 ? '99+' : String(n);
+                label.visible = n > 0;
+              }
+            };
             const build = (): void => {
               self.remove_all();
-              const lists = filterLists(store.lists.peek());
-              // liste disparue : retour à « Toutes »
-              if (filter.peek() !== 'all' && !lists.some((l) => l.id === filter.peek())) setFilter('all');
+              const buttons = filterButtons(store.lists.peek());
+              // liste disparue, ou plus aucune liste (filtres cachés) : retour à « Toutes »
+              if (!buttons.some((b) => b.id === filter.peek()) || filterLists(store.lists.peek()).length === 0) setFilter('all');
+              counts.clear();
               let first: Gtk.ToggleButton | null = null;
-              for (const [id, label] of [['all', 'Toutes'] as const, ...lists.map((l) => [l.id, l.name] as const)]) {
-                const b = new Gtk.ToggleButton({ label, active: filter.peek() === id, cssClasses: ['pill', 'filter-chip'] });
+              for (const { id, label } of buttons) {
+                // nom, puis nombre de discussions non lues (sauf « Toutes »)
+                // centré dans le bouton (les boutons d'une ligne ont la même largeur)
+                const content = new Gtk.Box({ spacing: 5, halign: Gtk.Align.CENTER });
+                content.append(new Gtk.Label({ label }));
+                if (id !== 'all') {
+                  const count = new Gtk.Label({ cssClasses: ['filter-count', 'numeric'], visible: false });
+                  content.append(count);
+                  counts.set(id, count);
+                }
+                const b = new Gtk.ToggleButton({ child: content, active: filter.peek() === id, cssClasses: ['pill', 'filter-chip'] });
+                // nom pour l'accessibilité (le contenu est une boîte : nom et pastille)
+                b.update_property([Gtk.AccessibleProperty.LABEL], [label]);
                 if (first === null) first = b;
                 else b.set_group(first);
                 b.connect('toggled', () => {
@@ -289,9 +337,12 @@ export function ChatList({
                 // pas de case sélectionnable autour du bouton (focus et clic directement sur lui)
                 self.append(new Gtk.FlowBoxChild({ child: b, focusable: false, cssClasses: ['filter-cell'] }));
               }
+              // pastilles des nouveaux boutons
+              updateCounts();
             };
             build();
             onCleanup(store.lists.subscribe(build));
+            onCleanup(store.chats.subscribe(updateCounts));
           }}
         />
         {/* liste toujours en place (dimensionnée dès le lancement : seules les lignes visibles sont

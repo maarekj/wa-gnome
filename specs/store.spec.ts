@@ -6,7 +6,7 @@ import { dispatch, WaClient } from '../src/shared/client.ts';
 import { mergeMessage, prependPage, sameChat, sortChats, Store, typingText } from '../src/shared/store.ts';
 import { moveOf, spliceOf } from '../src/app/ChatListView.ts';
 import { bigEmoji, itemsOf, myReaction, presenceLine, senderColor } from '../src/app/Bubble.tsx';
-import { fold, inList, neighbourChat, previewMarkup, visibleChats } from '../src/app/ChatList.tsx';
+import { filterButtons, fold, inList, neighbourChat, PEOPLE, previewMarkup, unreadIn, visibleChats } from '../src/app/ChatList.tsx';
 import { chatMenu } from '../src/app/ChatMenu.ts';
 import { ranked, score } from '../src/app/CommandPalette.ts';
 import { hostArgv } from '../src/app/Sandbox.ts';
@@ -279,6 +279,14 @@ describe('archivées, silencieux, menu', () => {
     expect(ids('3')).toEqual(['g']);
     expect(ids('4')).toEqual(['b']);
     expect(inList(chats[3] ?? chat('x', 0), lists[1])).toBeTrue();
+    // « Personnes » : l'inverse de Groupes, juste après lui
+    expect(ids(PEOPLE)).toEqual(['a', 'b']);
+    expect(filterButtons(lists).map((b) => b.label)).toEqual(['Toutes', 'Non lues', 'Favoris', 'Groupes', 'Personnes', 'École']);
+    // non lues par filtre (archivées exclues)
+    expect(unreadIn(chats, '1', lists)).toBe(2);
+    expect(unreadIn(chats, '2', lists)).toBe(0);
+    expect(unreadIn(chats, '3', lists)).toBe(1);
+    expect(unreadIn(chats, PEOPLE, lists)).toBe(1);
   });
 
   it('mode silencieux', () => {

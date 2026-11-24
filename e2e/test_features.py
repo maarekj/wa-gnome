@@ -833,3 +833,27 @@ def test_lecture_audio_globale(run_app):
     # arrêt : barre cachée
     app.click('button', 'Arrêter la lecture')
     wait_until(lambda: bar_title() == [], 5, 'barre cachée')
+
+
+def test_filtres_compteurs_et_personnes(run_app):
+    fake, app = run_app()
+
+    def count(name: str) -> str | None:
+        """Pastille (nombre de discussions non lues) du bouton de filtre `name`, ou None."""
+        button = app.root.findChild(lambda n: n.showing and n.roleName == 'toggle button' and n.findChild(lambda c: c.roleName == 'label' and c.name == name, retry=False, requireResult=False) is not None, retry=False, requireResult=False)
+        labels = [c.name for c in button.findChildren(lambda c: c.roleName == 'label' and c.showing)] if button else []
+        return next((t for t in labels if t != name), None)
+
+    # non lues : Famille (1) et Voisins (2) ; deux groupes ; aucune personne non lue ; pas sur « Toutes »
+    wait_until(lambda: count('Non lues') == '2', 5, 'pastille Non lues')
+    assert count('Groupes') == '2'
+    assert count('Personnes') is None
+    assert count('Toutes') is None
+    # message reçu d'Alice : compté dans « Non lues » et « Personnes »
+    fake.incoming(conftest.ALICE, 'Nouveau message')
+    wait_until(lambda: count('Personnes') == '1', 10, 'pastille Personnes')
+    assert count('Non lues') == '3'
+    # « Personnes » : l'inverse de Groupes
+    app.click('toggle button', 'Personnes')
+    app.text_gone('Famille', 5)
+    assert app.has('label', 'Alice Martin')
